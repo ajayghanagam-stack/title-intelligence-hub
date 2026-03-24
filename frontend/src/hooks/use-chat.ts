@@ -41,7 +41,7 @@ export function useChat(packId: string) {
 
     // Add optimistic user message
     const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: Math.random().toString(36).slice(2) + Date.now().toString(36),
       pack_id: packId,
       role: "user",
       content: message,
@@ -52,7 +52,7 @@ export function useChat(packId: string) {
     setMessages((prev) => [...prev, userMsg]);
 
     // Add placeholder assistant message for streaming
-    const assistantId = crypto.randomUUID();
+    const assistantId = Math.random().toString(36).slice(2) + Date.now().toString(36);
     const assistantMsg: ChatMessage = {
       id: assistantId,
       pack_id: packId,
