@@ -12,6 +12,7 @@ from app.micro_apps.title_intelligence.models.extraction import Extraction
 from app.micro_apps.title_intelligence.models.section import Section
 from app.micro_apps.title_intelligence.models.flag import Flag
 from app.micro_apps.title_intelligence.models.text_chunk import TextChunk
+from app.micro_apps.title_intelligence.models.pipeline_run import PipelineRun
 from app.micro_apps.title_intelligence.services.storage import StorageProvider
 from app.micro_apps.title_intelligence.services.readiness_service import calculate_readiness
 from app.core.logging import get_logger
@@ -21,6 +22,9 @@ MIN_EMBEDDED_TEXT_LEN = 50
 
 # OCR concurrency
 OCR_BATCH_SIZE = 5
+
+# Clone concurrency for file copies
+CLONE_BATCH_SIZE = 10
 
 
 async def stage_ingest(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, storage: StorageProvider):
@@ -40,13 +44,139 @@ async def stage_ingest(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, 
     log.info(f"Validated {len(files)} files")
 
 
+async def _find_donor_pack(
+    db: AsyncSession, org_id: uuid.UUID, pack_id: uuid.UUID, input_file_hash: str
+) -> uuid.UUID | None:
+    """Find a completed pack in the same org with identical file content.
+
+    Returns the donor pack_id if found, None otherwise.
+    """
+    # Find most recent completed PipelineRun with same input_file_hash, same org, different pack
+    result = await db.execute(
+        select(PipelineRun.pack_id)
+        .where(
+            PipelineRun.org_id == org_id,
+            PipelineRun.input_file_hash == input_file_hash,
+            PipelineRun.pack_id != pack_id,
+            PipelineRun.status == "completed",
+        )
+        .order_by(PipelineRun.completed_at.desc())
+        .limit(1)
+    )
+    donor_pack_id = result.scalar_one_or_none()
+    if donor_pack_id is None:
+        return None
+
+    # Verify donor pack still exists and is completed
+    donor_pack = (await db.execute(
+        select(Pack).where(Pack.id == donor_pack_id, Pack.org_id == org_id, Pack.status == "completed")
+    )).scalar_one_or_none()
+    if donor_pack is None:
+        return None
+
+    # Verify donor pack has pages (guard against cleaned/deleted data)
+    page_count = (await db.execute(
+        select(Page.id).where(Page.pack_id == donor_pack_id, Page.org_id == org_id).limit(1)
+    )).scalar_one_or_none()
+    if page_count is None:
+        return None
+
+    return donor_pack_id
+
+
+async def _clone_pages_from_donor(
+    donor_pack_id: uuid.UUID,
+    target_pack_id: uuid.UUID,
+    org_id: uuid.UUID,
+    db: AsyncSession,
+    storage: StorageProvider,
+) -> int:
+    """Clone page records and storage files from a donor pack.
+
+    Copies image + thumbnail files to the target pack's storage namespace
+    and creates new Page records with the target's pack_id and mapped file_ids.
+
+    Returns the number of pages cloned.
+    """
+    # Get donor pages
+    result = await db.execute(
+        select(Page).where(Page.pack_id == donor_pack_id, Page.org_id == org_id)
+        .order_by(Page.page_number)
+    )
+    donor_pages = list(result.scalars().all())
+    if not donor_pages:
+        return 0
+
+    # Build file_id mapping: donor file_id → target file_id (matched by filename)
+    donor_files_result = await db.execute(
+        select(PackFile).where(PackFile.pack_id == donor_pack_id, PackFile.org_id == org_id)
+    )
+    donor_files = {f.id: f for f in donor_files_result.scalars().all()}
+
+    target_files_result = await db.execute(
+        select(PackFile).where(PackFile.pack_id == target_pack_id, PackFile.org_id == org_id)
+    )
+    target_files = {f.filename: f for f in target_files_result.scalars().all()}
+
+    # Map donor file_id → target file_id by filename
+    file_id_map: dict[uuid.UUID, uuid.UUID] = {}
+    for donor_file_id, donor_file in donor_files.items():
+        target_file = target_files.get(donor_file.filename)
+        if target_file:
+            file_id_map[donor_file_id] = target_file.id
+            # Copy page_count from donor
+            if donor_file.page_count is not None:
+                target_file.page_count = donor_file.page_count
+
+    # Clone pages in batches
+    async def clone_one_page(donor_page: Page) -> None:
+        target_file_id = file_id_map.get(donor_page.file_id)
+        if target_file_id is None:
+            return
+
+        # Compute target storage paths
+        image_path = storage.make_page_path(org_id, target_pack_id, donor_page.page_number)
+        thumb_path = storage.make_thumb_path(org_id, target_pack_id, donor_page.page_number)
+
+        # Copy storage files concurrently
+        donor_image_data = await storage.read(donor_page.image_uri)
+        donor_thumb_data = await storage.read(donor_page.thumb_uri)
+        await asyncio.gather(
+            storage.save(image_path, donor_image_data),
+            storage.save(thumb_path, donor_thumb_data),
+        )
+
+        # Create new page record with target pack's data
+        db.add(Page(
+            pack_id=target_pack_id,
+            file_id=target_file_id,
+            org_id=org_id,
+            page_number=donor_page.page_number,
+            image_uri=image_path,
+            thumb_uri=thumb_path,
+            ocr_text=donor_page.ocr_text,
+            ocr_uri=donor_page.ocr_uri,
+        ))
+
+    for i in range(0, len(donor_pages), CLONE_BATCH_SIZE):
+        batch = donor_pages[i:i + CLONE_BATCH_SIZE]
+        await asyncio.gather(*[clone_one_page(p) for p in batch])
+
+    return len(donor_pages)
+
+
 async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, storage: StorageProvider):
     """Convert PDF files to JPEG page images + thumbnails.
 
     Also extracts embedded text from the PDF — pages with embedded text
     skip Vision OCR entirely, which is the #1 performance optimization.
+
+    Fast path: if a previously completed pack in the same org has identical
+    file content, clone its pages instead of re-rendering from scratch.
     """
-    import fitz  # PyMuPDF
+    from app.micro_apps.title_intelligence.pipeline.version_tracker import compute_input_file_hash
+
+    log = get_logger(__name__, org_id=org_id, pack_id=pack_id, stage="render")
 
     result = await db.execute(
         select(PackFile).where(PackFile.pack_id == pack_id, PackFile.org_id == org_id)
@@ -55,6 +185,28 @@ async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, 
 
     # Clear existing pages for idempotent retry
     await db.execute(delete(Page).where(Page.pack_id == pack_id, Page.org_id == org_id))
+
+    # --- Duplicate file fast path ---
+    # If all files have content_hash, check for a donor pack with identical content
+    if files and all(f.content_hash for f in files):
+        try:
+            input_file_hash = await compute_input_file_hash(storage, org_id, files)
+            donor_pack_id = await _find_donor_pack(db, org_id, pack_id, input_file_hash)
+            if donor_pack_id:
+                cloned = await _clone_pages_from_donor(donor_pack_id, pack_id, org_id, db, storage)
+                if cloned > 0:
+                    await db.commit()
+                    log.info(
+                        f"Duplicate detected — cloned {cloned} pages from donor pack {donor_pack_id}"
+                    )
+                    return
+        except Exception as e:
+            log.warning(f"Donor clone failed, falling back to normal render: {e}")
+            # Re-clear pages in case partial clone occurred
+            await db.execute(delete(Page).where(Page.pack_id == pack_id, Page.org_id == org_id))
+
+    # --- Normal render path ---
+    import fitz  # PyMuPDF
 
     global_page_num = 0
     text_pages = 0
@@ -118,7 +270,6 @@ async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, 
         doc.close()
 
     await db.commit()
-    log = get_logger(__name__, org_id=org_id, pack_id=pack_id, stage="render")
     log.info(f"Created {global_page_num} page images. {text_pages} had embedded text (skip OCR)")
 
 
