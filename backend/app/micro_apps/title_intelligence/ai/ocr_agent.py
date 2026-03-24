@@ -32,8 +32,13 @@ class OCRAgent:
         """
         image = Image.open(io.BytesIO(image_data))
 
-        # Get full text (single Tesseract call — fast)
-        text = pytesseract.image_to_string(image)
+        # Convert to grayscale — 66% less data for Tesseract to process
+        if image.mode != "L":
+            image = image.convert("L")
+
+        # --oem 1: LSTM only (faster than default LSTM+Legacy)
+        # --psm 6: Assume single uniform text block (skip page segmentation)
+        text = pytesseract.image_to_string(image, lang="eng", config="--oem 1 --psm 6")
 
         return {
             "text": text.strip(),

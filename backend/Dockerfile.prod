@@ -17,7 +17,9 @@ FROM python:3.12-slim AS runner
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -L -o /usr/share/tesseract-ocr/5/tessdata/eng.traineddata \
+       https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata
 
 COPY --from=builder /install /usr/local
 

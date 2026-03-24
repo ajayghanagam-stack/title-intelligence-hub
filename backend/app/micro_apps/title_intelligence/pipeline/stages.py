@@ -20,7 +20,7 @@ from app.core.logging import get_logger
 MIN_EMBEDDED_TEXT_LEN = 50
 
 # OCR concurrency
-OCR_BATCH_SIZE = 4
+OCR_BATCH_SIZE = 2
 
 
 async def stage_ingest(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, storage: StorageProvider):
@@ -70,6 +70,19 @@ async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, 
 
             # Extract embedded text directly from PDF (instant, no API call)
             embedded_text = page.get_text("text").strip()
+
+            # If simple extraction fails, try dict mode (handles CID fonts, unusual encodings)
+            if len(embedded_text) < MIN_EMBEDDED_TEXT_LEN:
+                blocks = page.get_text("dict").get("blocks", [])
+                texts = []
+                for block in blocks:
+                    if block.get("type") == 0:  # text block
+                        for line in block.get("lines", []):
+                            for span in line.get("spans", []):
+                                texts.append(span.get("text", ""))
+                alt_text = " ".join(texts).strip()
+                if len(alt_text) >= MIN_EMBEDDED_TEXT_LEN:
+                    embedded_text = alt_text
 
             # Render page image at 150 DPI (sufficient for OCR, half the size of 300 DPI)
             pix = page.get_pixmap(dpi=150)
