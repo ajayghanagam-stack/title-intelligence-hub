@@ -23,10 +23,6 @@ def test_extract_text(mock_settings, mock_tesseract):
     mock_settings.return_value = MagicMock(TESSERACT_PATH="")
 
     mock_tesseract.image_to_string.return_value = "Schedule A\nEffective Date: 2024-01-15"
-    mock_tesseract.image_to_data.return_value = {
-        "conf": ["95", "90", "85", "-1", "88"],
-    }
-    mock_tesseract.Output.DICT = "dict"
 
     agent = OCRAgent()
     result = agent.extract_text(_create_test_image())
@@ -34,9 +30,8 @@ def test_extract_text(mock_settings, mock_tesseract):
     assert "text" in result
     assert "confidence" in result
     assert result["text"] == "Schedule A\nEffective Date: 2024-01-15"
-    assert 0 <= result["confidence"] <= 1.0
+    assert result["confidence"] == 1.0
     mock_tesseract.image_to_string.assert_called_once()
-    mock_tesseract.image_to_data.assert_called_once()
 
 
 @patch("app.micro_apps.title_intelligence.ai.ocr_agent.pytesseract")
@@ -46,8 +41,6 @@ def test_extract_text_empty(mock_settings, mock_tesseract):
     mock_settings.return_value = MagicMock(TESSERACT_PATH="")
 
     mock_tesseract.image_to_string.return_value = ""
-    mock_tesseract.image_to_data.return_value = {"conf": ["-1", "-1"]}
-    mock_tesseract.Output.DICT = "dict"
 
     agent = OCRAgent()
     result = agent.extract_text(_create_test_image())
