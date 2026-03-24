@@ -23,6 +23,8 @@ COPY --from=builder /install /usr/local
 
 WORKDIR /app
 
+ENV PYTHONPATH=/app
+
 COPY . .
 
 RUN useradd --create-home --shell /bin/bash appuser \
