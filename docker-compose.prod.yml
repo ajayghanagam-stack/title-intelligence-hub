@@ -46,7 +46,7 @@ services:
       - STORAGE_PROVIDER=${STORAGE_PROVIDER:-local}
       - STORAGE_PATH=/app/storage
       - PIPELINE_BACKEND=${PIPELINE_BACKEND:-background_tasks}
-      - CORS_ORIGINS=${CORS_ORIGINS:-["https://${DOMAIN:-localhost}"]}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://${SERVER_IP:-localhost}"]}
       - DEBUG=false
     volumes:
       - storage_data:/app/storage
