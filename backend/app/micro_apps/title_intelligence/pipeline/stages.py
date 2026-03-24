@@ -20,7 +20,7 @@ from app.core.logging import get_logger
 MIN_EMBEDDED_TEXT_LEN = 50
 
 # OCR concurrency
-OCR_BATCH_SIZE = 10
+OCR_BATCH_SIZE = 4
 
 
 async def stage_ingest(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, storage: StorageProvider):
