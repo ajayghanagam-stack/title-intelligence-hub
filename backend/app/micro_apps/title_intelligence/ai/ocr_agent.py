@@ -32,20 +32,10 @@ class OCRAgent:
         """
         image = Image.open(io.BytesIO(image_data))
 
-        # Get detailed OCR data including per-word confidence
-        data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
-
-        # Get full text
+        # Get full text (single Tesseract call — fast)
         text = pytesseract.image_to_string(image)
-
-        # Calculate average confidence from words with positive confidence
-        confidences = [int(c) for c in data["conf"] if int(c) > 0]
-        if confidences:
-            avg_confidence = sum(confidences) / len(confidences) / 100
-        else:
-            avg_confidence = 0.0
 
         return {
             "text": text.strip(),
-            "confidence": round(avg_confidence, 2),
+            "confidence": 1.0 if text.strip() else 0.0,
         }
