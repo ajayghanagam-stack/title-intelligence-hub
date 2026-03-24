@@ -20,7 +20,7 @@ from app.core.logging import get_logger
 MIN_EMBEDDED_TEXT_LEN = 50
 
 # OCR concurrency
-OCR_BATCH_SIZE = 2
+OCR_BATCH_SIZE = 5
 
 
 async def stage_ingest(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, storage: StorageProvider):
@@ -156,7 +156,7 @@ async def stage_ocr(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, sto
     tesseract_version = _get_tesseract_version(settings.TESSERACT_PATH)
     ocr_version_hash = hash_string(tesseract_version)
 
-    log.info(f"{skipped}/{len(all_pages)} pages have embedded text. Running Tesseract on {len(pages_needing_ocr)} pages (version: {tesseract_version})")
+    log.info(f"{skipped}/{len(all_pages)} pages have embedded text. Running OCR on {len(pages_needing_ocr)} pages (version: {tesseract_version})")
 
     agent = OCRAgent()
     failed_pages = []
@@ -177,8 +177,8 @@ async def stage_ocr(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, sto
                 return
 
             image_data = await storage.read(page.image_uri)
-            # Tesseract is synchronous — run in thread pool
-            ocr_result = await asyncio.to_thread(agent.extract_text, image_data)
+            # Use async Vision API (falls back to Tesseract if no API key)
+            ocr_result = await agent.extract_text_async(image_data)
             page.ocr_text = ocr_result["text"]
             await storage.save(versioned_path, json.dumps(ocr_result).encode())
             page.ocr_uri = versioned_path
