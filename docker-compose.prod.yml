@@ -1,0 +1,116 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-title_intelligence_hub}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    image: ghcr.io/${GITHUB_REPOSITORY:-logikality/title-intelligence-hub}/backend:${IMAGE_TAG:-latest}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-title_intelligence_hub}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}
+      - AI_PLATFORM=${AI_PLATFORM:-anthropic}
+      - STORAGE_PROVIDER=${STORAGE_PROVIDER:-local}
+      - STORAGE_PATH=/app/storage
+      - PIPELINE_BACKEND=${PIPELINE_BACKEND:-background_tasks}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["https://${DOMAIN:-localhost}"]}
+      - DEBUG=false
+    volumes:
+      - storage_data:/app/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/${GITHUB_REPOSITORY:-logikality/title-intelligence-hub}/frontend:${IMAGE_TAG:-latest}
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD}
+      - POSTGRES_SEEDS=db
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "temporal:7233", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    profiles:
+      - temporal
+    restart: unless-stopped
+
+  temporal-worker:
+    image: ghcr.io/${GITHUB_REPOSITORY:-logikality/title-intelligence-hub}/backend:${IMAGE_TAG:-latest}
+    depends_on:
+      db:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-title_intelligence_hub}
+      - JWT_SECRET=${JWT_SECRET}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - AI_PLATFORM=${AI_PLATFORM:-anthropic}
+      - STORAGE_PROVIDER=${STORAGE_PROVIDER:-local}
+      - STORAGE_PATH=/app/storage
+      - PIPELINE_BACKEND=temporal
+    volumes:
+      - storage_data:/app/storage
+    command: ["python", "-m", "app.micro_apps.title_intelligence.pipeline.temporal_worker"]
+    profiles:
+      - temporal
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  storage_data:
+  caddy_data:
+  caddy_config:

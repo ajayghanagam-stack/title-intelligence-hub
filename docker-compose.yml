@@ -1,0 +1,96 @@
+services:
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5436:5432"
+    environment:
+      POSTGRES_DB: title_intelligence_hub
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    ports:
+      - "7233:7233"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PWD=postgres
+      - POSTGRES_SEEDS=db
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "temporal:7233", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    ports:
+      - "8085:8080"
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+
+  temporal-worker:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/title_intelligence_hub
+    volumes:
+      - ./backend:/app
+      - storage_data:/app/storage
+    command: python -m app.micro_apps.title_intelligence.pipeline.temporal_worker
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/title_intelligence_hub
+    volumes:
+      - ./backend:/app
+      - storage_data:/app/storage
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3001:3000"
+    env_file: .env
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npx next dev -H 0.0.0.0 -p 3000
+
+volumes:
+  pgdata:
+  storage_data:
+  temporal_data:

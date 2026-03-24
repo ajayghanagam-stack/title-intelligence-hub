@@ -1,0 +1,200 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --radius: 0.625rem;
+
+    /* Logikality brand palette — derived from logo:
+       Amber/Gold circle, Magenta arrows, Charcoal text */
+    --background: oklch(0.985 0.002 90);
+    --foreground: oklch(0.160 0.006 49);
+    --card: oklch(0.998 0.001 90);
+    --card-foreground: oklch(0.160 0.006 49);
+    --popover: oklch(0.998 0.001 90);
+    --popover-foreground: oklch(0.160 0.006 49);
+    --primary: oklch(0.666 0.179 58.318);
+    --primary-foreground: oklch(0.998 0 0);
+    --secondary: oklch(0.968 0.004 90);
+    --secondary-foreground: oklch(0.220 0.006 56);
+    --muted: oklch(0.960 0.004 90);
+    --muted-foreground: oklch(0.520 0.014 58);
+    --accent: oklch(0.960 0.004 90);
+    --accent-foreground: oklch(0.220 0.006 56);
+    --destructive: oklch(0.577 0.245 27.325);
+    --destructive-foreground: oklch(0.998 0 0);
+    --border: oklch(0.920 0.008 80);
+    --input: oklch(0.920 0.008 80);
+    --ring: oklch(0.666 0.179 58.318);
+
+    /* Clean white sidebar with brand accents */
+    --sidebar: oklch(0.998 0 0);
+    --sidebar-foreground: oklch(0.250 0.010 50);
+    --sidebar-primary: oklch(0.666 0.179 58.318);
+    --sidebar-primary-foreground: oklch(0.998 0 0);
+    --sidebar-accent: oklch(0.965 0.015 80);
+    --sidebar-accent-foreground: oklch(0.250 0.010 50);
+    --sidebar-border: oklch(0.925 0.008 80);
+    --sidebar-ring: oklch(0.666 0.179 58.318);
+    --sidebar-muted: oklch(0.960 0.004 90);
+    --sidebar-muted-foreground: oklch(0.520 0.014 58);
+
+    /* Brand palette */
+    --brand-amber: oklch(0.750 0.170 65);
+    --brand-magenta: oklch(0.560 0.230 340);
+    --brand-purple: oklch(0.480 0.200 300);
+    --brand-charcoal: oklch(0.178 0.010 50);
+
+    /* Success / Warning */
+    --success: oklch(0.600 0.180 145);
+    --success-foreground: oklch(0.998 0 0);
+    --warning: oklch(0.750 0.160 70);
+    --warning-foreground: oklch(0.998 0 0);
+
+    /* Chart colors */
+    --chart-1: oklch(0.750 0.170 65);
+    --chart-2: oklch(0.560 0.230 340);
+    --chart-3: oklch(0.480 0.200 300);
+    --chart-4: oklch(0.828 0.189 84.429);
+    --chart-5: oklch(0.600 0.180 145);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+/* Clean white sidebar */
+.sidebar-gradient {
+  background: #ffffff;
+}
+
+@layer components {
+  /* CTA button — brand amber with magenta hover shift */
+  .btn-cta {
+    background: linear-gradient(135deg, oklch(0.750 0.170 65) 0%, oklch(0.680 0.190 55) 100%);
+    color: white;
+    transition: all 0.2s ease;
+    @apply inline-flex items-center justify-center rounded-lg px-5 py-2.5 text-sm font-semibold shadow-md;
+  }
+  .btn-cta:hover {
+    background: linear-gradient(135deg, oklch(0.720 0.175 62) 0%, oklch(0.650 0.200 50) 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px oklch(0.750 0.170 65 / 0.30);
+  }
+  .btn-cta:active {
+    transform: translateY(0);
+  }
+  .btn-cta:disabled {
+    @apply opacity-50 cursor-not-allowed shadow-none;
+    transform: none;
+  }
+
+  /* Secondary button — outlined */
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-lg px-5 py-2.5 text-sm font-semibold border border-border text-muted-foreground;
+    transition: all 0.2s ease;
+  }
+  .btn-secondary:hover {
+    @apply bg-muted text-foreground;
+  }
+  .btn-secondary:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+
+  /* Ghost button — minimal */
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium text-muted-foreground;
+    transition: all 0.15s ease;
+  }
+  .btn-ghost:hover {
+    @apply bg-muted text-foreground;
+  }
+
+  /* Warm card with subtle shadow + hover lift */
+  .card-warm {
+    background: var(--card);
+    box-shadow:
+      0 1px 3px oklch(0.50 0.01 50 / 0.06),
+      0 1px 2px oklch(0.50 0.01 50 / 0.04);
+    transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+    @apply rounded-xl border;
+  }
+  .card-warm:hover {
+    box-shadow:
+      0 8px 25px -5px oklch(0.50 0.01 50 / 0.08),
+      0 4px 10px -5px oklch(0.50 0.01 50 / 0.04);
+  }
+
+  /* Glass card — frosted effect */
+  .card-glass {
+    background: oklch(0.998 0.001 90 / 0.7);
+    backdrop-filter: blur(16px);
+    @apply rounded-xl border border-white/60 shadow-sm;
+  }
+
+  /* Section card — for content sections */
+  .section-card {
+    background: var(--card);
+    box-shadow: 0 1px 3px oklch(0.50 0.01 50 / 0.05);
+    @apply rounded-xl border p-5;
+  }
+
+  /* Score ring animation */
+  @keyframes score-fill {
+    from { stroke-dashoffset: var(--circumference); }
+    to { stroke-dashoffset: var(--offset); }
+  }
+
+  /* Pulse glow for processing states — brand amber */
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 0 oklch(0.750 0.170 65 / 0.30); }
+    50% { box-shadow: 0 0 0 8px oklch(0.750 0.170 65 / 0); }
+  }
+  .pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  /* Brand gradient text — amber to magenta */
+  .text-gradient {
+    background: linear-gradient(135deg, oklch(0.750 0.170 65), oklch(0.560 0.230 340));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* OCR text overlay */
+  .ocr-text-overlay ::selection {
+    background: oklch(0.750 0.170 65 / 0.30);
+    color: transparent;
+  }
+
+  /* Smooth section divider */
+  .divider-gradient {
+    height: 1px;
+    background: linear-gradient(to right, transparent, oklch(0.920 0.008 80), transparent);
+  }
+
+  /* Brand divider — amber through center */
+  .divider-brand {
+    height: 1px;
+    background: linear-gradient(to right, transparent, oklch(0.750 0.170 65 / 0.4), transparent);
+  }
+
+  /* Sidebar nav active state — amber on white */
+  .sidebar-nav-active {
+    border-left: 3px solid oklch(0.750 0.170 65);
+    @apply bg-amber-50 text-amber-800;
+  }
+
+  /* Sidebar nav hover state — subtle warm */
+  .sidebar-nav-hover:hover {
+    @apply bg-sidebar-accent text-sidebar-accent-foreground;
+  }
+}
