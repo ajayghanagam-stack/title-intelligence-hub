@@ -36,7 +36,13 @@ You have access to tools to read document pages and create structured records.
 
 Your tasks:
 1. Read through all pages of the document
-2. Identify document sections (Schedule A, Schedule B-I Requirements, Schedule B-II Exceptions, Legal Description, Endorsements)
+2. Identify document sections:
+   - Schedule A (use section_type "schedule_a")
+   - Schedule B-I / Requirements (use section_type "schedule_b1")
+   - Schedule B-II / Exceptions (use section_type "schedule_b2")
+   - Schedule C (use section_type "schedule_c")
+   - Legal Description (use section_type "legal_description")
+   - Endorsements (use section_type "endorsements")
 3. Extract ALL structured data you can find:
    - Parties: buyer, seller, lender, title company, underwriter
    - Property info: address, APN/parcel number, county, state, legal description summary
@@ -146,7 +152,7 @@ Assign a confidence score (0.0-1.0) based on text clarity."""
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "section_type": {"type": "string", "enum": ["schedule_a", "schedule_b", "schedule_c", "endorsements", "legal_description"]},
+                                    "section_type": {"type": "string", "enum": ["schedule_a", "schedule_b1", "schedule_b2", "schedule_c", "endorsements", "legal_description"]},
                                     "start_page": {"type": "integer"},
                                     "end_page": {"type": "integer"},
                                     "confidence": {"type": "number"},

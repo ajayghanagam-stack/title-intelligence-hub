@@ -83,7 +83,7 @@ CREATE_SECTIONS_TOOL = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "section_type": {"type": "string", "enum": ["schedule_a", "schedule_b", "schedule_c", "endorsements", "legal_description"]},
+                        "section_type": {"type": "string", "enum": ["schedule_a", "schedule_b1", "schedule_b2", "schedule_c", "endorsements", "legal_description"]},
                         "start_page": {"type": "integer"},
                         "end_page": {"type": "integer"},
                         "confidence": {"type": "number"},

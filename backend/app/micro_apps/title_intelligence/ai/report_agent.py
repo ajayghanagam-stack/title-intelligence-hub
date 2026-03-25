@@ -121,18 +121,22 @@ Structure the report with clear sections:
                 f"Open Flags: {len(open_flags)} ({critical_count} critical, {high_count} high)\n\n"
                 f"Extractions:\n{extraction_text}\n\n"
                 f"Risk Flags:\n{flag_text}\n\n"
-                "Write a concise executive summary of the title commitment's closing readiness. "
-                "List ALL critical and high severity issues specifically. "
-                "Be specific about what needs attention. Do not use headers or bullet points. "
-                "Write in paragraph form, 3-5 sentences."
+                "Write an executive summary of the title commitment's closing readiness as bullet points.\n"
+                "Rules:\n"
+                "- Return ONLY bullet points, one per line, each starting with '- '\n"
+                "- First bullet: overall closing readiness status and score rationale\n"
+                "- Then one bullet per critical or high severity issue, naming it specifically\n"
+                "- Then one bullet summarizing any medium/low issues if they exist\n"
+                "- Final bullet: recommended next steps or confirmation of readiness\n"
+                "- 4-7 bullets total. Be specific and actionable. No headers, no numbering."
             ),
         }]
 
         return await self.call_haiku(
             system_prompt=(
                 "You are a title insurance analyst writing a dashboard summary. "
-                "Be concise, specific, and professional. Write 3-5 sentences covering all major issues. "
-                "Focus on actionable insights — what is blocking closing or what makes the title ready."
+                "Be concise, specific, and professional. Return ONLY bullet points, each on its own line "
+                "starting with '- '. Focus on actionable insights — what is blocking closing or what makes the title ready."
             ),
             messages=messages,
             max_tokens=1024,

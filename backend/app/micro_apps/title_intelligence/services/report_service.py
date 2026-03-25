@@ -1,7 +1,5 @@
-"""Report generation service supporting text, markdown, PDF, and JSON formats."""
+"""Data-driven report generation — no LLM needed."""
 
-import asyncio
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -14,222 +12,152 @@ from app.micro_apps.title_intelligence.models.flag import Flag
 from app.micro_apps.title_intelligence.models.pack import Pack
 from app.micro_apps.title_intelligence.services.readiness_service import calculate_readiness
 from app.micro_apps.title_intelligence.services.storage import StorageProvider
-from app.micro_apps.title_intelligence.ai.report_agent import ReportAgent
 from app.core.exceptions import ForbiddenError, NotFoundError
 
 logger = logging.getLogger(__name__)
 
-AUDIENCES = ["attorney", "lender", "buyer", "underwriter"]
+# Severity sort order
+_SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 
-async def generate_report(
-    db: AsyncSession,
-    org_id: uuid.UUID,
-    pack_id: uuid.UUID,
-    audience: str,
-    format: str = "text",
-    storage: StorageProvider | None = None,
-) -> dict:
-    """Generate a report in the specified format.
-
-    Returns: {"content": str, "uri": str | None}
-    - For text/markdown: content is the report text, uri is None
-    - For pdf/json: content is a summary, uri is the storage path
-
-    Reports are cached in storage by audience+format so repeat downloads
-    skip the AI generation call.
-    """
-    from app.micro_apps.title_intelligence.services.pdf_service import markdown_to_pdf
-
-    # Check cache first for downloadable formats
-    if storage and format in ("pdf", "json"):
-        ext = "pdf" if format == "pdf" else "json"
-        cached_uri = storage.make_report_path(org_id, pack_id, f"report_{audience}.{ext}")
-        try:
-            if await storage.exists(cached_uri):
-                logger.info("Serving cached report: %s", cached_uri)
-                if format == "pdf":
-                    pdf_data = await storage.read(cached_uri)
-                    return {"content": "", "uri": cached_uri, "_pdf_bytes": pdf_data}
-                else:
-                    json_data = await storage.read(cached_uri)
-                    return {"content": json_data.decode("utf-8"), "uri": cached_uri}
-        except Exception:
-            logger.debug("Cache miss or read error for %s, regenerating", cached_uri)
-
-    # Gather all data (prefetch pattern)
-    pack = (await db.execute(
-        select(Pack).where(Pack.id == pack_id, Pack.org_id == org_id)
-    )).scalar_one()
-
-    ext_result = await db.execute(
-        select(Extraction).where(Extraction.pack_id == pack_id, Extraction.org_id == org_id)
-    )
-    extractions = list(ext_result.scalars().all())
-
-    flag_result = await db.execute(
-        select(Flag).where(Flag.pack_id == pack_id, Flag.org_id == org_id)
-    )
-    flags = list(flag_result.scalars().all())
-
-    readiness = await calculate_readiness(db, org_id, pack_id)
-
-    agent = ReportAgent(org_id)
-
-    if format == "json":
-        # Structured JSON report
-        structured = await agent.generate_structured(
-            pack_name=pack.name,
-            audience=audience,
-            extractions=extractions,
-            flags=flags,
-            readiness_score=readiness.score,
-            readiness_summary=readiness.summary,
-        )
-
-        # Add metadata
-        report_data = {
-            "metadata": {
-                "pack_name": pack.name,
-                "audience": audience,
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "readiness_score": readiness.score,
-                "readiness_status": readiness.status,
-            },
-            "report": structured,
-        }
-
-        json_bytes = json.dumps(report_data, indent=2).encode("utf-8")
-
-        if storage:
-            uri = storage.make_report_path(org_id, pack_id, f"report_{audience}.json")
-            await storage.put_object(uri, json_bytes, content_type="application/json")
-            return {"content": json.dumps(report_data), "uri": uri}
-
-        return {"content": json.dumps(report_data), "uri": None}
-
-    elif format == "pdf":
-        # Generate markdown first, then convert to PDF
-        markdown_content = await agent.generate(
-            pack_name=pack.name,
-            audience=audience,
-            format="markdown",
-            extractions=extractions,
-            flags=flags,
-            readiness_score=readiness.score,
-            readiness_summary=readiness.summary,
-        )
-
-        pdf_bytes = markdown_to_pdf(
-            markdown_content,
-            title=f"Title Report - {audience.title()} - {pack.name}",
-        )
-
-        if storage:
-            uri = storage.make_report_path(org_id, pack_id, f"report_{audience}.pdf")
-            await storage.put_object(uri, pdf_bytes, content_type="application/pdf")
-            return {"content": markdown_content, "uri": uri}
-
-        return {"content": markdown_content, "uri": None, "_pdf_bytes": pdf_bytes}
-
-    else:
-        # Text or markdown
-        content = await agent.generate(
-            pack_name=pack.name,
-            audience=audience,
-            format=format,
-            extractions=extractions,
-            flags=flags,
-            readiness_score=readiness.score,
-            readiness_summary=readiness.summary,
-        )
-        return {"content": content, "uri": None}
-
-
-async def pregenerate_reports(
+async def generate_report_pdf(
     db: AsyncSession,
     org_id: uuid.UUID,
     pack_id: uuid.UUID,
     storage: StorageProvider,
-) -> None:
-    """Pre-generate PDF and JSON reports for all audiences.
+) -> bytes:
+    """Generate a data-driven Title Intelligence Report PDF.
 
-    Called during pipeline completion so downloads are instant.
-    Generates all audiences in parallel (2 AI calls per audience: markdown + structured).
+    Fetches pack data, builds structured inputs, renders PDF via pdf_service,
+    caches in storage, and returns PDF bytes.
     """
-    from app.micro_apps.title_intelligence.services.pdf_service import markdown_to_pdf
+    from app.micro_apps.title_intelligence.services.pdf_service import generate_pack_report_pdf
 
-    # Prefetch all data once
+    # Check cache
+    cache_uri = storage.make_report_path(org_id, pack_id, "report.pdf")
+    try:
+        if await storage.exists(cache_uri):
+            logger.info("Serving cached report: %s", cache_uri)
+            return await storage.read(cache_uri)
+    except Exception:
+        logger.debug("Cache miss or read error for %s, regenerating", cache_uri)
+
+    # Fetch pack
     pack = (await db.execute(
         select(Pack).where(Pack.id == pack_id, Pack.org_id == org_id)
     )).scalar_one()
 
+    # Fetch extractions
     ext_result = await db.execute(
         select(Extraction).where(Extraction.pack_id == pack_id, Extraction.org_id == org_id)
     )
     extractions = list(ext_result.scalars().all())
 
+    # Fetch flags
     flag_result = await db.execute(
         select(Flag).where(Flag.pack_id == pack_id, Flag.org_id == org_id)
     )
     flags = list(flag_result.scalars().all())
 
+    # Calculate readiness
     readiness = await calculate_readiness(db, org_id, pack_id)
-    agent = ReportAgent(org_id)
 
-    async def _generate_for_audience(audience: str) -> None:
-        try:
-            # Generate markdown (used for PDF) and structured JSON in parallel
-            markdown_task = agent.generate(
-                pack_name=pack.name,
-                audience=audience,
-                format="markdown",
-                extractions=extractions,
-                flags=flags,
-                readiness_score=readiness.score,
-                readiness_summary=readiness.summary,
-            )
-            structured_task = agent.generate_structured(
-                pack_name=pack.name,
-                audience=audience,
-                extractions=extractions,
-                flags=flags,
-                readiness_score=readiness.score,
-                readiness_summary=readiness.summary,
-            )
+    # Extract property info from extractions
+    property_address = _find_extraction(extractions, "property_info", "address", "property address", "full_address")
+    order_number = _find_extraction(extractions, "property_info", "commitment number", "order number", "order no", "commitment_number")
+    commitment_date = _find_extraction(extractions, "property_info", "effective date", "commitment date", "effective_date")
+    issued_by = _find_extraction(extractions, "party", "title company", "underwriter", "issuer", "issued by")
 
-            markdown_content, structured = await asyncio.gather(markdown_task, structured_task)
+    # Build exception rows from flags
+    sorted_flags = sorted(flags, key=lambda f: (_SEVERITY_ORDER.get(f.severity, 9), f.flag_type))
+    exceptions = []
+    for i, flag in enumerate(sorted_flags, start=1):
+        # Build doc ref from evidence_refs
+        doc_ref = ""
+        if flag.evidence_refs:
+            pages = sorted({ref.get("page_number", 0) for ref in flag.evidence_refs if ref.get("page_number")})
+            if pages:
+                doc_ref = "p. " + ", ".join(str(p) for p in pages)
 
-            # Save PDF
-            pdf_bytes = markdown_to_pdf(
-                markdown_content,
-                title=f"Title Report - {audience.title()} - {pack.name}",
-            )
-            pdf_uri = storage.make_report_path(org_id, pack_id, f"report_{audience}.pdf")
-            await storage.put_object(pdf_uri, pdf_bytes, content_type="application/pdf")
+        # Action based on severity
+        action = _action_for_severity(flag.severity)
 
-            # Save JSON
-            report_data = {
-                "metadata": {
-                    "pack_name": pack.name,
-                    "audience": audience,
-                    "generated_at": datetime.now(timezone.utc).isoformat(),
-                    "readiness_score": readiness.score,
-                    "readiness_status": readiness.status,
-                },
-                "report": structured,
-            }
-            json_bytes = json.dumps(report_data, indent=2).encode("utf-8")
-            json_uri = storage.make_report_path(org_id, pack_id, f"report_{audience}.json")
-            await storage.put_object(json_uri, json_bytes, content_type="application/json")
+        exceptions.append({
+            "id": i,
+            "severity": flag.severity,
+            "category": flag.flag_type.replace("_", " ").title(),
+            "description": flag.title,
+            "doc_ref": doc_ref,
+            "action": action,
+        })
 
-            logger.info("Pre-generated reports for audience=%s pack=%s", audience, pack_id)
-        except Exception:
-            logger.warning("Failed to pre-generate %s report for pack %s", audience, pack_id, exc_info=True)
+    # Compute counts
+    critical_count = sum(1 for f in flags if f.severity == "critical")
+    warning_count = sum(1 for f in flags if f.severity in ("high", "medium"))
+    review_count = sum(1 for f in flags if f.status in ("open", "escalated"))
+    validation_score = round(readiness.score / 10) if readiness else 0
 
-    # Run all audiences in parallel
-    await asyncio.gather(*[_generate_for_audience(a) for a in AUDIENCES])
-    logger.info("All reports pre-generated for pack %s", pack_id)
+    generated_at = datetime.now(timezone.utc).strftime("%B %d, %Y at %I:%M %p UTC")
+
+    # Generate PDF
+    pdf_bytes = generate_pack_report_pdf(
+        property_address=property_address or pack.name,
+        order_number=order_number,
+        commitment_date=commitment_date,
+        issued_by=issued_by,
+        generated_at=generated_at,
+        critical_count=critical_count,
+        warning_count=warning_count,
+        review_count=review_count,
+        validation_score=validation_score,
+        exceptions=exceptions,
+    )
+
+    # Cache
+    try:
+        await storage.put_object(cache_uri, pdf_bytes, content_type="application/pdf")
+        logger.info("Cached report at %s", cache_uri)
+    except Exception:
+        logger.warning("Failed to cache report (non-fatal)", exc_info=True)
+
+    return pdf_bytes
+
+
+def _find_extraction(extractions: list, ext_type: str, *label_patterns: str) -> str:
+    """Find a matching extraction value by type and label patterns."""
+    for pat in label_patterns:
+        lower_pat = pat.lower()
+        for ext in extractions:
+            if ext.extraction_type == ext_type and lower_pat in ext.label.lower():
+                val = _extract_value(ext.value)
+                if val:
+                    return val
+    return ""
+
+
+def _extract_value(v: object) -> str:
+    """Extract a string value from an extraction's value field."""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, dict):
+        for key in ("value", "address", "full_address", "name", "amount", "number", "date", "text"):
+            if isinstance(v.get(key), str):
+                return v[key]
+        for val in v.values():
+            if isinstance(val, str) and val:
+                return val
+    return ""
+
+
+def _action_for_severity(severity: str) -> str:
+    """Return a recommended action string based on flag severity."""
+    actions = {
+        "critical": "Must resolve before closing",
+        "high": "Resolve before closing",
+        "medium": "Review and address",
+        "low": "Note for record",
+    }
+    return actions.get(severity, "Review")
 
 
 async def get_report_by_uri_or_raise(
@@ -238,11 +166,7 @@ async def get_report_by_uri_or_raise(
     uri: str,
     storage: StorageProvider,
 ) -> bytes:
-    """Read a previously stored report by URI, validating tenant ownership.
-
-    Raises ForbiddenError if the URI doesn't belong to this org/pack.
-    Raises NotFoundError if the report file doesn't exist in storage.
-    """
+    """Read a previously stored report by URI, validating tenant ownership."""
     expected_prefix = f"{org_id}/{pack_id}/reports/"
     if not uri.startswith(expected_prefix):
         raise ForbiddenError("Report URI does not belong to this pack")

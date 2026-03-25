@@ -786,11 +786,11 @@ async def stage_complete(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession
     await db.commit()
     log.info(f"AI cache miss — readiness score: {readiness.score}, summary generated and cached")
 
-    # Pre-generate all export reports so downloads are instant
+    # Pre-generate PDF report so download is instant
     try:
-        from app.micro_apps.title_intelligence.services.report_service import pregenerate_reports
-        log.info("Pre-generating export reports...")
-        await pregenerate_reports(db, org_id, pack_id, storage)
-        log.info("Export reports pre-generated")
+        from app.micro_apps.title_intelligence.services.report_service import generate_report_pdf
+        log.info("Pre-generating PDF report...")
+        await generate_report_pdf(db, org_id, pack_id, storage)
+        log.info("PDF report pre-generated")
     except Exception:
-        log.warning("Failed to pre-generate reports (non-fatal)", exc_info=True)
+        log.warning("Failed to pre-generate report (non-fatal)", exc_info=True)

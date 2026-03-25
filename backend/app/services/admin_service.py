@@ -203,7 +203,12 @@ async def reset_user_password(
 
 
 async def delete_account(db: AsyncSession, org_id: uuid.UUID) -> None:
-    """Delete a customer organization and all associated data."""
+    """Delete a customer organization and all associated data.
+
+    Deletes in FK-safe order: micro app data → subscriptions → users → org.
+    """
+    from sqlalchemy import delete
+
     result = await db.execute(
         select(Organization).where(Organization.id == org_id)
     )
@@ -211,19 +216,44 @@ async def delete_account(db: AsyncSession, org_id: uuid.UUID) -> None:
     if org is None:
         raise NotFoundError("Organization", org_id)
 
-    # Delete subscriptions, then users, then org
-    subs = (await db.execute(
-        select(Subscription).where(Subscription.org_id == org_id)
-    )).scalars().all()
-    for sub in subs:
-        await db.delete(sub)
+    # Delete TI micro app data (child tables first due to FK constraints)
+    try:
+        from app.micro_apps.title_intelligence.models.text_chunk import TextChunk
+        from app.micro_apps.title_intelligence.models.chat_message import ChatMessage
+        from app.micro_apps.title_intelligence.models.flag import Flag, Review
+        from app.micro_apps.title_intelligence.models.extraction import Extraction
+        from app.micro_apps.title_intelligence.models.section import Section
+        from app.micro_apps.title_intelligence.models.page import Page
+        from app.micro_apps.title_intelligence.models.pipeline_run import PipelineRun
+        from app.micro_apps.title_intelligence.models.pack import Pack, PackFile
 
-    users = (await db.execute(
-        select(User).where(User.org_id == org_id)
-    )).scalars().all()
-    for user in users:
-        await db.delete(user)
+        for model in [TextChunk, ChatMessage, Review, Flag, Extraction, Section, Page, PipelineRun, PackFile, Pack]:
+            await db.execute(delete(model).where(model.org_id == org_id))
+    except ImportError:
+        pass
 
+    # Delete TSA micro app data (child tables first)
+    try:
+        from app.micro_apps.title_search.models.review import TAReview
+        from app.micro_apps.title_search.models.flag import TAFlag
+        from app.micro_apps.title_search.models.package import TAPackage
+        from app.micro_apps.title_search.models.chain_link import TAChainLink
+        from app.micro_apps.title_search.models.document import TADocument
+        from app.micro_apps.title_search.models.raw_document import TARawDocument
+        from app.micro_apps.title_search.models.source_assignment import TASourceAssignment
+        from app.micro_apps.title_search.models.pipeline_run import TAPipelineRun
+        from app.micro_apps.title_search.models.order import TAOrder
+
+        for model in [TAReview, TAFlag, TAPackage, TAChainLink, TADocument, TARawDocument, TASourceAssignment, TAPipelineRun, TAOrder]:
+            await db.execute(delete(model).where(model.org_id == org_id))
+    except ImportError:
+        pass
+
+    # Delete audit events, subscriptions, users, then org
+    from app.models.audit_event import AuditEvent
+    await db.execute(delete(AuditEvent).where(AuditEvent.org_id == org_id))
+    await db.execute(delete(Subscription).where(Subscription.org_id == org_id))
+    await db.execute(delete(User).where(User.org_id == org_id))
     await db.delete(org)
     await db.commit()
 
