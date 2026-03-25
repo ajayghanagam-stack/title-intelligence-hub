@@ -56,15 +56,13 @@ export function Onboarding() {
     <div className="flex h-screen items-center justify-center bg-muted/30">
       <div className="mx-auto w-full max-w-md space-y-8 p-8">
         <div className="text-center">
-          <div className="flex items-center justify-center gap-2.5 mb-4">
+          <div className="flex items-center justify-center mb-4">
             <Image
-              src="/logikality_logo.png"
+              src="/Logo_withTagline.svg"
               alt="Logikality"
-              width={36}
-              height={36}
-              className="rounded"
+              width={200}
+              height={56}
             />
-            <span className="text-xl font-semibold tracking-tight">logikality</span>
           </div>
           <h1 className="text-2xl font-bold">Welcome</h1>
           <p className="mt-2 text-sm text-muted-foreground">

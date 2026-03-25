@@ -15,15 +15,12 @@ export default function AuthLayout({
         <div className="absolute bottom-20 right-20 h-48 w-48 rounded-full bg-brand-magenta/5 blur-3xl" />
         <div className="relative z-10 flex flex-col items-center gap-6 px-12 text-center">
           <Image
-            src="/logikality_logo.png"
+            src="/Logo_rev_no-tagline.svg"
             alt="Logikality"
-            width={72}
-            height={72}
-            className="rounded-xl"
+            width={240}
+            height={64}
+            priority
           />
-          <h1 className="text-3xl font-bold text-white tracking-tight">
-            logikality
-          </h1>
           <p className="text-lg text-white/50 max-w-sm leading-relaxed">
             Decision-ready AI for mortgage operations
           </p>
@@ -34,17 +31,14 @@ export default function AuthLayout({
       <div className="flex flex-1 items-center justify-center bg-background px-6">
         <div className="w-full max-w-md">
           {/* Mobile logo */}
-          <div className="mb-8 flex items-center justify-center gap-2.5 lg:hidden">
+          <div className="mb-8 flex items-center justify-center lg:hidden">
             <Image
-              src="/logikality_logo.png"
+              src="/Logo_withTagline.svg"
               alt="Logikality"
-              width={32}
-              height={32}
-              className="rounded"
+              width={200}
+              height={56}
+              priority
             />
-            <span className="text-xl font-semibold tracking-tight">
-              logikality
-            </span>
           </div>
           {children}
         </div>

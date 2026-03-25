@@ -54,9 +54,9 @@ export default function NewPackPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Create New Pack</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Upload Documents</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Upload title commitment PDFs for AI-powered analysis
+          Upload your title search package files for AI-powered analysis.
         </p>
       </div>
 
@@ -116,18 +116,13 @@ export default function NewPackPage() {
         <button
           onClick={handleCreate}
           disabled={!name.trim() || files.length === 0 || creating}
-          className="w-full btn-cta gap-2 py-3"
+          className="w-full btn-cta py-3.5"
         >
           {creating
             ? uploading
               ? "Uploading files..."
               : "Creating pack..."
-            : (
-              <>
-                Create & Process Pack
-                <ArrowRight className="h-4 w-4" />
-              </>
-            )
+            : "Analyze Package"
           }
         </button>
       </div>

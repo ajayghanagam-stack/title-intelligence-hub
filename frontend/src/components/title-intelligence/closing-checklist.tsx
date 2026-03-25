@@ -157,7 +157,7 @@ export function ClosingChecklist({ items, packId, onAction }: ClosingChecklistPr
                   {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
                   {aiExplanation && (
                     <div className="rounded-xl bg-amber-50/60 border border-amber-200/40 px-3 py-2">
-                      <p className="flex items-center gap-1.5 text-xs font-medium text-amber-700 mb-0.5"><Sparkles className="h-3 w-3" />AI Recommendation</p>
+                      <p className="flex items-center gap-1.5 text-xs font-medium text-amber-700 mb-0.5"><Sparkles className="h-3 w-3" />Recommendation</p>
                       <p className="text-xs leading-relaxed text-amber-900">{aiExplanation}</p>
                     </div>
                   )}

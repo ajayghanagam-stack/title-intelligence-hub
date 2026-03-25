@@ -31,6 +31,7 @@ async function adminFetch(path: string, options: RequestInit = {}) {
     const err = await res.json().catch(() => ({ detail: "Request failed" }));
     throw new Error(err.detail || `Error ${res.status}`);
   }
+  if (res.status === 204) return null;
   return res.json();
 }
 

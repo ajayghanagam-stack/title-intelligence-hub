@@ -26,10 +26,12 @@ export const CATEGORY_LABELS: Record<string, string> = {
 
 export const SECTION_TYPE_LABELS: Record<string, string> = {
   schedule_a: "Schedule A",
-  schedule_b1: "Schedule B-1",
-  schedule_b2: "Schedule B-2",
+  schedule_b: "Schedule B",
+  schedule_b1: "Schedule B-I",
+  schedule_b2: "Schedule B-II",
   schedule_c: "Schedule C",
   cover: "Cover Page",
+  endorsements: "Endorsements",
   legal_description: "Legal Description",
   other: "Other",
 };

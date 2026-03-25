@@ -25,13 +25,6 @@ const CATEGORY_LABELS: Record<string, string> = {
   requirement_missing_proof: "Requirement Missing Proof",
 };
 
-const STATUS_STYLES: Record<string, string> = {
-  open: "bg-amber-50 text-amber-700 ring-1 ring-amber-200",
-  approved: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200",
-  rejected: "bg-red-50 text-red-700 ring-1 ring-red-200",
-  escalated: "bg-purple-50 text-purple-700 ring-1 ring-purple-200",
-};
-
 const severityOrder: Record<string, number> = {
   critical: 0,
   high: 1,
@@ -41,6 +34,7 @@ const severityOrder: Record<string, number> = {
 
 interface FlagRowProps {
   flag: Flag;
+  exceptionId: string;
   packId: string;
   isExpanded: boolean;
   isLoading: boolean;
@@ -49,74 +43,130 @@ interface FlagRowProps {
   onOpenDetail: (flag: Flag) => void;
 }
 
+function getRequiredAction(flag: Flag): string {
+  const text = flag.ai_explanation || flag.description || "";
+  const match = text.match(/^[^.!?]+[.!?]/);
+  return match ? match[0] : text.slice(0, 120);
+}
+
+function getDocumentRef(flag: Flag): string {
+  if (!flag.evidence_refs || flag.evidence_refs.length === 0) return "\u2014";
+  const first = flag.evidence_refs[0];
+  let label = `Page ${first.page_number}`;
+  if (flag.evidence_refs.length > 1) label += ` +${flag.evidence_refs.length - 1}`;
+  return label;
+}
+
+function getCategoryLabel(flagType: string): string {
+  return CATEGORY_LABELS[flagType] || flagType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 const FlagRow = memo(function FlagRow({
   flag,
-  packId,
+  exceptionId,
   isExpanded,
   isLoading,
   onToggle,
   onQuickAction,
   onOpenDetail,
 }: FlagRowProps) {
+  const docRef = getDocumentRef(flag);
+  const requiredAction = getRequiredAction(flag);
+  const category = getCategoryLabel(flag.flag_type);
+
   return (
     <div className={cn(
-      "rounded-xl border transition-all",
-      isExpanded ? "ring-1 ring-primary/10 shadow-sm" : "hover:border-border/80"
+      "transition-colors",
+      isExpanded ? "bg-muted/30" : "hover:bg-muted/15"
     )}>
+      {/* Row */}
       <div
-        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-muted/20 transition-colors rounded-xl"
+        className="flex items-start gap-0 cursor-pointer"
         onClick={() => onToggle(flag.id)}
       >
-        <div className="shrink-0 text-muted-foreground/50">
-          {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        {/* Chevron */}
+        <div className="shrink-0 w-9 flex items-center justify-center pt-3.5 text-muted-foreground/40">
+          {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
         </div>
-        <div className="shrink-0">
+        {/* ID */}
+        <div className="shrink-0 w-[60px] pt-3 pb-3 pr-2">
+          <span className="text-[12px] font-mono font-semibold text-muted-foreground">{exceptionId}</span>
+        </div>
+        {/* Severity */}
+        <div className="shrink-0 w-[80px] pt-2.5 pb-3">
           <SeverityBadge severity={flag.severity} />
         </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-foreground truncate">{flag.title}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {CATEGORY_LABELS[flag.flag_type] || flag.flag_type.replace(/_/g, " ")}
-          </p>
+        {/* Category — desktop only */}
+        <div className="shrink-0 w-[110px] pt-3 pb-3 pr-2 hidden lg:block">
+          <span className="text-[12px] font-medium text-muted-foreground">{category}</span>
         </div>
-        <span className={cn(
-          "shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium capitalize",
-          STATUS_STYLES[flag.status] || ""
-        )}>
-          {flag.status}
-        </span>
-        {flag.ai_explanation && <Sparkles className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
-        {flag.status === "open" && (
-          <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => onQuickAction(flag.id, "approve")} disabled={isLoading} className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50 transition-colors disabled:opacity-40" title="Approve"><CheckCircle className="h-4 w-4" /></button>
-            <button onClick={() => onQuickAction(flag.id, "reject")} disabled={isLoading} className="rounded-lg p-1.5 text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40" title="Reject"><XCircle className="h-4 w-4" /></button>
-            <button onClick={() => onQuickAction(flag.id, "escalate")} disabled={isLoading} className="rounded-lg p-1.5 text-amber-600 hover:bg-amber-50 transition-colors disabled:opacity-40" title="Escalate"><AlertTriangle className="h-4 w-4" /></button>
-          </div>
-        )}
+        {/* Description */}
+        <div className="flex-1 min-w-0 pt-3 pb-3 pr-3">
+          <p className="text-[13px] text-foreground leading-snug line-clamp-2">{flag.description || flag.title}</p>
+          {/* Mobile: show category below description */}
+          <p className="text-[11px] text-muted-foreground mt-0.5 lg:hidden">{category}</p>
+        </div>
+        {/* Doc Ref — desktop only */}
+        <div className="shrink-0 w-[120px] pt-3 pb-3 pr-2 hidden lg:block">
+          <span className="text-[12px] text-muted-foreground">{docRef}</span>
+        </div>
+        {/* Required Action — desktop only */}
+        <div className="shrink-0 w-[180px] pt-3 pb-3 pr-4 hidden lg:block">
+          <p className="text-[12px] text-muted-foreground leading-snug line-clamp-3">{requiredAction}</p>
+        </div>
       </div>
+
+      {/* Divider between rows */}
+      <div className="border-b border-border/50" />
+
+      {/* Expanded detail */}
       {isExpanded && (
-        <div className="border-t px-5 py-4 space-y-4 bg-muted/5">
-          <p className="text-sm text-muted-foreground leading-relaxed">{flag.description}</p>
+        <div className="pl-9 pr-5 py-4 space-y-3 border-b border-border/50 bg-muted/10">
+          <p className="text-[13px] text-muted-foreground leading-relaxed">{flag.description}</p>
+
           {flag.ai_explanation && (
-            <div className="rounded-xl bg-amber-50/60 border border-amber-200/40 px-4 py-3">
-              <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 mb-1.5"><Sparkles className="h-3.5 w-3.5" />AI Recommendation</p>
-              <p className="text-sm leading-relaxed text-amber-900/80">{flag.ai_explanation}</p>
+            <div className="rounded-lg bg-amber-50/70 border border-amber-200/50 px-4 py-3">
+              <p className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-700 mb-1">
+                <Sparkles className="h-3 w-3" />Recommendation
+              </p>
+              <p className="text-[13px] leading-relaxed text-amber-900/80">{flag.ai_explanation}</p>
             </div>
           )}
+
           {flag.evidence_refs.length > 0 && (
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Evidence ({flag.evidence_refs.length})</p>
-              <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                Evidence ({flag.evidence_refs.length})
+              </p>
+              <div className="space-y-1">
                 {flag.evidence_refs.map((ref, i) => (
-                  <div key={i} className="flex items-start gap-2 text-sm">
-                    <span className="shrink-0 inline-flex items-center gap-1 text-xs text-primary font-medium bg-primary/5 px-2 py-0.5 rounded"><FileText className="h-3 w-3" />Page {ref.page_number}</span>
-                    {ref.text_snippet && <p className="text-xs text-muted-foreground italic border-l-2 border-amber-300/60 pl-2 line-clamp-2">&ldquo;{ref.text_snippet}&rdquo;</p>}
+                  <div key={i} className="flex items-start gap-2">
+                    <span className="shrink-0 inline-flex items-center gap-1 text-[11px] text-primary font-medium bg-primary/5 px-2 py-0.5 rounded">
+                      <FileText className="h-3 w-3" />Page {ref.page_number}
+                    </span>
+                    {ref.text_snippet && (
+                      <p className="text-[11px] text-muted-foreground italic border-l-2 border-amber-300/60 pl-2 line-clamp-2">
+                        &ldquo;{ref.text_snippet}&rdquo;
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
             </div>
           )}
-          <button onClick={() => onOpenDetail(flag)} className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-semibold transition-colors">Open full detail<ArrowUpRight className="h-3 w-3" /></button>
+
+          <div className="flex items-center gap-2 pt-2">
+            {flag.status === "open" && (
+              <div className="flex items-center gap-1.5 mr-3" onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => onQuickAction(flag.id, "approve")} disabled={isLoading} className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 ring-1 ring-emerald-200/60 transition-colors disabled:opacity-40"><CheckCircle className="h-3 w-3" />Approve</button>
+                <button onClick={() => onQuickAction(flag.id, "reject")} disabled={isLoading} className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium text-red-700 bg-red-50 hover:bg-red-100 ring-1 ring-red-200/60 transition-colors disabled:opacity-40"><XCircle className="h-3 w-3" />Reject</button>
+                <button onClick={() => onQuickAction(flag.id, "escalate")} disabled={isLoading} className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 ring-1 ring-amber-200/60 transition-colors disabled:opacity-40"><AlertTriangle className="h-3 w-3" />Escalate</button>
+              </div>
+            )}
+            <button onClick={() => onOpenDetail(flag)} className="inline-flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold transition-colors">
+              View full detail <ArrowUpRight className="h-3 w-3" />
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -177,37 +227,59 @@ export function FlagsTable({
 
   if (flags.length === 0) {
     return (
-      <div className="flex flex-col items-center py-10 text-center">
-        <CheckCircle className="h-10 w-10 text-emerald-400 mb-3" />
-        <p className="text-sm font-medium text-foreground/80">No risk flags identified</p>
-        <p className="text-xs text-muted-foreground mt-1">This document appears to be clean</p>
+      <div className="flex flex-col items-center py-14 text-center">
+        <CheckCircle className="h-8 w-8 text-emerald-400 mb-2" />
+        <p className="text-sm font-medium text-foreground/80">No flags identified for this filter</p>
+        <p className="text-xs text-muted-foreground mt-0.5">Try a different filter or this document appears clean</p>
       </div>
     );
   }
 
   return (
     <>
-      <div className="space-y-2">
-        {pageItems.map((flag) => (
-          <FlagRow
-            key={flag.id}
-            flag={flag}
-            packId={packId}
-            isExpanded={expandedRows.has(flag.id)}
-            isLoading={actionLoading === flag.id || !!submitting}
-            onToggle={toggleRow}
-            onQuickAction={handleQuickAction}
-            onOpenDetail={handleOpenDetail}
-          />
-        ))}
+      {/* Table header */}
+      <div className="hidden lg:flex items-center gap-0 bg-muted/40 border-b text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="w-9" />
+        <span className="w-[60px] py-2.5 pr-2">ID</span>
+        <span className="w-[80px] py-2.5">Severity</span>
+        <span className="w-[110px] py-2.5 pr-2">Category</span>
+        <span className="flex-1 py-2.5 pr-3">Description</span>
+        <span className="w-[120px] py-2.5 pr-2">Doc Ref</span>
+        <span className="w-[180px] py-2.5 pr-4">Required Action</span>
       </div>
-      <Pagination
-        currentPage={currentPage}
-        totalPages={totalPages}
-        totalItems={sorted.length}
-        pageSize={PAGE_SIZE}
-        onPageChange={handlePageChange}
-      />
+
+      {/* Rows */}
+      <div>
+        {pageItems.map((flag, idx) => {
+          const globalIdx = (currentPage - 1) * PAGE_SIZE + idx;
+          const exceptionId = `EX-${String(globalIdx + 1).padStart(3, "0")}`;
+          return (
+            <FlagRow
+              key={flag.id}
+              flag={flag}
+              exceptionId={exceptionId}
+              packId={packId}
+              isExpanded={expandedRows.has(flag.id)}
+              isLoading={actionLoading === flag.id || !!submitting}
+              onToggle={toggleRow}
+              onQuickAction={handleQuickAction}
+              onOpenDetail={handleOpenDetail}
+            />
+          );
+        })}
+      </div>
+
+      {/* Pagination */}
+      <div className="px-4 py-3 border-t">
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={sorted.length}
+          pageSize={PAGE_SIZE}
+          onPageChange={handlePageChange}
+        />
+      </div>
+
       {selectedFlag && (
         <FlagDetailDialog
           flag={selectedFlag}

@@ -10,12 +10,22 @@ export function ChatSlidePanel({
   packId,
   open,
   onClose,
+  initialQuestion,
 }: {
   packId: string;
   open: boolean;
   onClose: () => void;
+  initialQuestion?: string;
 }) {
   const { messages, sending, sendMessage, cancelStream, clearChat } = useChat(packId);
+
+  // Auto-send initialQuestion when panel opens with one
+  useEffect(() => {
+    if (open && initialQuestion && !sending) {
+      sendMessage(initialQuestion);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialQuestion]);
   const trapRef = useFocusTrap(open);
 
   // Close on Escape

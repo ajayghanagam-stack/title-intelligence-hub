@@ -118,11 +118,30 @@ export default function PackOverviewPage() {
                 </span>
               </div>
               {pack.readiness_summary && (
-                <div className="flex items-start gap-2 mt-2">
-                  <Sparkles className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                  <p className="text-sm text-foreground/80 leading-relaxed">
-                    {pack.readiness_summary}
-                  </p>
+                <div className="mt-3 pt-3 border-t border-black/5">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <Sparkles className="h-3.5 w-3.5 text-amber-600" />
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Executive Summary
+                    </h3>
+                  </div>
+                  <ul className="space-y-1.5">
+                    {pack.readiness_summary
+                      .split("\n")
+                      .map((line) => line.replace(/^[-*]\s*/, "").trim())
+                      .filter((line) => line.length > 0)
+                      .map((point, i) => (
+                        <li key={i} className="flex items-start gap-2 text-sm text-foreground/80 leading-relaxed">
+                          <span className={cn(
+                            "mt-1.5 h-1.5 w-1.5 rounded-full shrink-0",
+                            scoreColor === "text-emerald-700" ? "bg-emerald-500"
+                              : scoreColor === "text-amber-700" ? "bg-amber-500"
+                              : "bg-red-500"
+                          )} />
+                          {point}
+                        </li>
+                      ))}
+                  </ul>
                 </div>
               )}
             </div>

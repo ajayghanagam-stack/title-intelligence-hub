@@ -68,9 +68,9 @@ export function FlagDetailDialog({
             <p className="text-sm text-muted-foreground leading-relaxed">{flag.description}</p>
           </div>
 
-          {/* AI Analysis */}
+          {/* Executive Summary */}
           <div className="rounded-lg bg-primary/5 border border-primary/20 p-4">
-            <h4 className="text-sm font-medium mb-1.5">AI Analysis</h4>
+            <h4 className="text-sm font-medium mb-1.5">Executive Summary</h4>
             <p className="text-sm text-muted-foreground leading-relaxed">{flag.ai_explanation}</p>
           </div>
 

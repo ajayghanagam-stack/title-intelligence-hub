@@ -33,7 +33,7 @@ export function ReviewAssistantPanel({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium">AI Review Assistant</span>
+            <span className="text-sm font-medium">Review Assistant</span>
           </div>
           <Button size="sm" variant="outline" onClick={handleGet}>
             Get Recommendation
@@ -72,7 +72,7 @@ export function ReviewAssistantPanel({
     <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
       <div className="flex items-center gap-2">
         <Sparkles className="h-4 w-4 text-primary" />
-        <span className="text-sm font-medium">AI Recommendation</span>
+        <span className="text-sm font-medium">Recommendation</span>
       </div>
       <div className="flex items-center gap-3">
         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${decisionColor}`}>

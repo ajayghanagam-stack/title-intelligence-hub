@@ -190,6 +190,10 @@ export default function PlatformLayout({
             </div>
           </header>
           <main className="flex-1 overflow-auto p-6">{children}</main>
+          {/* GAP-014: Footer bar */}
+          <footer className="flex h-9 items-center justify-center border-t bg-muted/30 px-6 text-[11px] text-muted-foreground shrink-0">
+            <span>{useOrgStore.getState().currentOrgName || "Logikality"} &middot; Powered by Logikality</span>
+          </footer>
         </div>
       </div>
     </ToastProvider>
