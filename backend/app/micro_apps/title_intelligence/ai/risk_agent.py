@@ -90,7 +90,7 @@ You MUST identify at least the most obvious risks. For each flag, provide:
             messages=messages,
             tools=tools,
             tool_handlers=all_handlers,
-            max_steps=10,
+            max_steps=20,
             max_tokens=8192,
         )
 

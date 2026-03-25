@@ -21,10 +21,13 @@ from app.core.logging import get_logger
 MIN_EMBEDDED_TEXT_LEN = 50
 
 # OCR concurrency
-OCR_BATCH_SIZE = 5
+OCR_BATCH_SIZE = 20
 
 # Clone concurrency for file copies
 CLONE_BATCH_SIZE = 10
+
+# Parallel page rendering concurrency (CPU-bound work offloaded to threads)
+RENDER_CONCURRENCY = 8
 
 
 async def stage_ingest(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, storage: StorageProvider):
@@ -210,25 +213,33 @@ async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, 
 
     global_page_num = 0
     text_pages = 0
+    sem = asyncio.Semaphore(RENDER_CONCURRENCY)
 
     for pack_file in files:
         pdf_data = await storage.read(pack_file.storage_path)
         doc = fitz.open(stream=pdf_data, filetype="pdf")
         pack_file.page_count = len(doc)
 
+        # Build list of (page_idx, global_page_number) for parallel dispatch
+        page_tasks: list[tuple[int, int]] = []
         for page_idx in range(len(doc)):
             global_page_num += 1
-            page = doc.load_page(page_idx)
+            page_tasks.append((page_idx, global_page_num))
 
-            # Extract embedded text directly from PDF (instant, no API call)
+        # Results collected from threads: (global_page_num, img_data, thumb_data, embedded_text)
+        results: list[tuple[int, bytes, bytes, str]] = [None] * len(page_tasks)  # type: ignore[list-item]
+
+        def _render_page(page_idx: int, doc_ref: Any) -> tuple[bytes, bytes, str]:
+            """CPU-bound work: extract text + render images. Runs in a thread."""
+            page = doc_ref.load_page(page_idx)
+
+            # Extract embedded text
             embedded_text = page.get_text("text").strip()
-
-            # If simple extraction fails, try dict mode (handles CID fonts, unusual encodings)
             if len(embedded_text) < MIN_EMBEDDED_TEXT_LEN:
                 blocks = page.get_text("dict").get("blocks", [])
                 texts = []
                 for block in blocks:
-                    if block.get("type") == 0:  # text block
+                    if block.get("type") == 0:
                         for line in block.get("lines", []):
                             for span in line.get("spans", []):
                                 texts.append(span.get("text", ""))
@@ -236,23 +247,30 @@ async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, 
                 if len(alt_text) >= MIN_EMBEDDED_TEXT_LEN:
                     embedded_text = alt_text
 
-            # Render page image at 150 DPI (sufficient for OCR, half the size of 300 DPI)
+            # Render page image at 150 DPI
             pix = page.get_pixmap(dpi=150)
             img_data = pix.tobytes("jpeg")
-            image_path = storage.make_page_path(org_id, pack_id, global_page_num)
 
             # Render thumbnail at 72 DPI
             thumb_pix = page.get_pixmap(dpi=72)
             thumb_data = thumb_pix.tobytes("jpeg")
-            thumb_path = storage.make_thumb_path(org_id, pack_id, global_page_num)
 
-            # Save both concurrently
+            return img_data, thumb_data, embedded_text
+
+        async def _process_page(idx: int, page_idx: int, gpn: int) -> None:
+            nonlocal text_pages
+            async with sem:
+                img_data, thumb_data, embedded_text = await asyncio.to_thread(
+                    _render_page, page_idx, doc
+                )
+
+            image_path = storage.make_page_path(org_id, pack_id, gpn)
+            thumb_path = storage.make_thumb_path(org_id, pack_id, gpn)
             await asyncio.gather(
                 storage.save(image_path, img_data),
                 storage.save(thumb_path, thumb_data),
             )
 
-            # If page has embedded text, store it now — skip Vision OCR later
             has_text = len(embedded_text) >= MIN_EMBEDDED_TEXT_LEN
             if has_text:
                 text_pages += 1
@@ -261,11 +279,16 @@ async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, 
                 pack_id=pack_id,
                 file_id=pack_file.id,
                 org_id=org_id,
-                page_number=global_page_num,
+                page_number=gpn,
                 image_uri=image_path,
                 thumb_uri=thumb_path,
                 ocr_text=embedded_text if has_text else None,
             ))
+
+        await asyncio.gather(*[
+            _process_page(i, pidx, gpn)
+            for i, (pidx, gpn) in enumerate(page_tasks)
+        ])
 
         doc.close()
 

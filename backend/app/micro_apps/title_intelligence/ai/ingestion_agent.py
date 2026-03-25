@@ -25,7 +25,7 @@ from app.micro_apps.title_intelligence.services.storage import StorageProvider
 logger = logging.getLogger(__name__)
 
 # Maximum characters of OCR text to send in one call (prefetched mode)
-MAX_TEXT_PER_CALL = 80000
+MAX_TEXT_PER_CALL = 200000
 
 
 class IngestionAgent(BaseAIService):
@@ -114,7 +114,7 @@ Assign a confidence score (0.0-1.0) based on text clarity."""
             messages=messages,
             tools=tools,
             tool_handlers=all_handlers,
-            max_steps=10,
+            max_steps=20,
             max_tokens=8192,
         )
 
