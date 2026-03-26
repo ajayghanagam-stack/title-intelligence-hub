@@ -1,1 +1,0 @@
-{"chain_links": [{"document_id": "edd349bd-39b5-455a-ae3f-779368eb85d6", "effective_date": "2020-01-15", "from_party": {"entity_type": "individual", "names": ["John Smith"]}, "gap_description": null, "is_gap": false, "link_type": "conveyance", "position": 1, "to_party": {"entity_type": "individual", "names": ["Jane Doe"]}}], "flags": []}
