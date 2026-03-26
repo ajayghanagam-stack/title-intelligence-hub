@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   Loader2,
   XCircle,
+  X,
   FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -99,7 +100,7 @@ export function Sidebar() {
 
   const isInsideTI_ = pathname.startsWith("/apps/title-intelligence");
 
-  useEffect(() => {
+  const fetchRecentPacks = useCallback(() => {
     if (!isInsideTI_ || isPlatformAdmin) return;
     orgFetch<{ packs: RecentPack[] }>("/api/v1/apps/title-intelligence/packs?limit=5")
       .then((data) => {
@@ -108,6 +109,20 @@ export function Sidebar() {
       })
       .catch(() => {});
   }, [isInsideTI_, isPlatformAdmin, orgFetch]);
+
+  useEffect(() => {
+    fetchRecentPacks();
+  }, [fetchRecentPacks]);
+
+  useEffect(() => {
+    const handler = () => fetchRecentPacks();
+    window.addEventListener("pack-deleted", handler);
+    return () => window.removeEventListener("pack-deleted", handler);
+  }, [fetchRecentPacks]);
+
+  const handleDismissRecentPack = useCallback((packId: string) => {
+    setRecentPacks((prev) => prev.filter((p) => p.id !== packId));
+  }, []);
 
   const isInsideTI = pathname.startsWith("/apps/title-intelligence");
   const isInsideTSA = pathname.startsWith("/apps/title-search");
@@ -218,9 +233,8 @@ export function Sidebar() {
               {recentPacks.map((pack) => {
                 const isActive = pathname.includes(pack.id);
                 return (
-                  <Link
+                  <div
                     key={pack.id}
-                    href={`/apps/title-intelligence/packs/${pack.id}/results`}
                     className={cn(
                       "group flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs transition-all",
                       isActive
@@ -228,29 +242,41 @@ export function Sidebar() {
                         : "text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground"
                     )}
                   >
-                    <div className="shrink-0">
-                      <PackStatusIcon status={pack.status} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={cn(
-                        "font-medium truncate leading-tight",
-                        isActive ? "text-amber-800" : "text-sidebar-foreground/80 group-hover:text-sidebar-foreground"
-                      )}>
-                        {pack.name}
-                      </p>
-                      <p className={cn(
-                        "text-[10px] mt-0.5",
-                        isActive ? "text-amber-600/60" : "text-sidebar-foreground/35"
-                      )}>
-                        {formatRelativeDate(pack.created_at)}
-                        {pack.readiness_score != null && (
-                          <span className="ml-1.5">
-                            &middot; {Math.round(pack.readiness_score / 10)}/10
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                  </Link>
+                    <Link
+                      href={`/apps/title-intelligence/packs/${pack.id}/results`}
+                      className="flex items-center gap-2.5 min-w-0 flex-1"
+                    >
+                      <div className="shrink-0">
+                        <PackStatusIcon status={pack.status} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className={cn(
+                          "font-medium truncate leading-tight",
+                          isActive ? "text-amber-800" : "text-sidebar-foreground/80 group-hover:text-sidebar-foreground"
+                        )}>
+                          {pack.name}
+                        </p>
+                        <p className={cn(
+                          "text-[10px] mt-0.5",
+                          isActive ? "text-amber-600/60" : "text-sidebar-foreground/35"
+                        )}>
+                          {formatRelativeDate(pack.created_at)}
+                          {pack.readiness_score != null && (
+                            <span className="ml-1.5">
+                              &middot; {Math.round(pack.readiness_score / 10)}/10
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    </Link>
+                    <button
+                      onClick={() => handleDismissRecentPack(pack.id)}
+                      className="shrink-0 opacity-0 group-hover:opacity-100 p-0.5 rounded text-sidebar-foreground/30 hover:text-red-500 hover:bg-red-50 transition-all"
+                      title="Dismiss from recents"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
                 );
               })}
             </div>

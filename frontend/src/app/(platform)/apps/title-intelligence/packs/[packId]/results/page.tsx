@@ -199,7 +199,7 @@ export default function ResultsPage() {
 
   const criticalCount = flags.filter((f) => f.severity === "critical").length;
   const warningCount = flags.filter((f) => f.severity === "high" || f.severity === "medium").length;
-  const underReviewCount = flags.filter((f) => f.status === "open" || f.status === "escalated").length;
+  const underReviewCount = flags.filter((f) => f.status !== "approved").length;
   const validationScore = readiness ? Math.round(readiness.score / 10) : 0;
 
   const analyzedAt = pack?.status === "completed" && pack?.updated_at
@@ -209,7 +209,7 @@ export default function ResultsPage() {
   const filteredFlags = flags.filter((f) => {
     if (activeFilter === "critical") return f.severity === "critical";
     if (activeFilter === "warning") return f.severity === "high" || f.severity === "medium";
-    if (activeFilter === "review") return f.status === "open" || f.status === "escalated";
+    if (activeFilter === "review") return f.status !== "approved";
     return true;
   });
 

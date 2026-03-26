@@ -25,5 +25,19 @@ export function usePacks() {
     fetchPacks();
   }, [fetchPacks]);
 
-  return { packs, loading, refetch: fetchPacks };
+  useEffect(() => {
+    const handler = () => fetchPacks();
+    window.addEventListener("pack-deleted", handler);
+    return () => window.removeEventListener("pack-deleted", handler);
+  }, [fetchPacks]);
+
+  const deletePack = useCallback(async (packId: string) => {
+    await orgFetch(`/api/v1/apps/title-intelligence/packs/${packId}`, {
+      method: "DELETE",
+    });
+    await fetchPacks();
+    window.dispatchEvent(new CustomEvent("pack-deleted"));
+  }, [orgFetch, fetchPacks]);
+
+  return { packs, loading, refetch: fetchPacks, deletePack };
 }

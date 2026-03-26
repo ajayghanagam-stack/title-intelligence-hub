@@ -1,8 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { PackStatusBadge } from "./pack-status-badge";
-import { Upload, ChevronRight, Shield, Calendar } from "lucide-react";
+import { Upload, ChevronRight, Shield, Calendar, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Pack } from "@/lib/ti-types";
 
@@ -24,7 +25,21 @@ function ScorePill({ score }: { score: number }) {
   );
 }
 
-export function PackList({ packs }: { packs: Pack[] }) {
+export function PackList({ packs, onDelete }: { packs: Pack[]; onDelete?: (id: string) => Promise<void> }) {
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete(packId: string) {
+    if (!onDelete) return;
+    setDeleting(true);
+    try {
+      await onDelete(packId);
+    } finally {
+      setDeleting(false);
+      setConfirmDeleteId(null);
+    }
+  }
+
   if (packs.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 rounded-2xl border-2 border-dashed border-border/60">
@@ -87,6 +102,37 @@ export function PackList({ packs }: { packs: Pack[] }) {
               </span>
             </div>
           </div>
+
+          {/* Delete */}
+          {onDelete && (
+            <div className="shrink-0" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+              {confirmDeleteId === pack.id ? (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDelete(pack.id); }}
+                    disabled={deleting}
+                    className="h-7 px-2 text-xs font-medium rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
+                  >
+                    {deleting ? "Deleting..." : "Confirm"}
+                  </button>
+                  <button
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirmDeleteId(null); }}
+                    className="h-7 px-2 text-xs font-medium rounded-md text-muted-foreground hover:bg-muted transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirmDeleteId(pack.id); }}
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground/50 hover:text-red-600 hover:bg-red-50 transition-colors"
+                  title="Delete pack"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Arrow */}
           <ChevronRight className="h-5 w-5 text-muted-foreground/30 group-hover:text-primary/60 transition-colors shrink-0" />

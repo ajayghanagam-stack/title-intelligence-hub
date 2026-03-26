@@ -6,7 +6,7 @@ import { PackList } from "@/components/title-intelligence/pack-list";
 import { usePacks } from "@/hooks/use-packs";
 
 export default function TitleIntelligencePage() {
-  const { packs, loading } = usePacks();
+  const { packs, loading, deletePack } = usePacks();
 
   return (
     <div className="space-y-8">
@@ -38,7 +38,7 @@ export default function TitleIntelligencePage() {
           <p className="text-sm text-muted-foreground">Loading packs...</p>
         </div>
       ) : (
-        <PackList packs={packs} />
+        <PackList packs={packs} onDelete={deletePack} />
       )}
     </div>
   );

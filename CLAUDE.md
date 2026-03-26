@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Prerequisites
 
-- **Python 3.11+** — backend
-- **Node 18+ / npm** — frontend (Next.js 14, React 18, TypeScript 5)
+- **Python 3.12** — backend (CI uses 3.12)
+- **Node 20 / npm** — frontend (Next.js 14, React 18, TypeScript 5)
 - **PostgreSQL 16** — production database (async via `asyncpg`)
 - **Tesseract OCR** — system dependency for `pytesseract` (`brew install tesseract` on macOS)
 - **Docker** — for `docker-compose` full-stack or Temporal orchestration
@@ -53,6 +53,23 @@ cd frontend && npm run lint     # ESLint
 ./start-dev.sh                  # starts Postgres, Temporal, backend, frontend
 docker-compose up               # full stack via Docker (db:5432, backend:8000, frontend:3000)
 ```
+
+### Production Deployment
+```bash
+git push origin main                              # triggers CI (tests + build) then CD (deploy to Hetzner)
+scripts/quick-deploy.sh "commit message"          # skip CI, rsync + restart on server (use sparingly)
+ssh deploy@37.27.210.85 "cd /opt/title-intelligence-hub && docker compose -f docker-compose.prod.yml down"   # stop prod
+ssh deploy@37.27.210.85 "cd /opt/title-intelligence-hub && docker compose -f docker-compose.prod.yml up -d"  # start prod
+scripts/factory-reset.sh                          # full production reset (destructive, prompts for confirm)
+```
+
+**Production URL**: `http://37.27.210.85` (Hetzner VPS, Caddy reverse proxy on :80)
+
+**CI/CD Pipeline** (GitHub Actions):
+- **CI** (`.github/workflows/ci.yml`): backend tests (Python 3.12) → frontend lint+build (Node 20) → Docker image build check. Runs on push to `main` and PRs.
+- **CD** (`.github/workflows/cd.yml`): builds backend+frontend Docker images in parallel → pushes to GHCR (`ghcr.io`) → SSHes into Hetzner and runs `scripts/deploy.sh` (pull → migrate → restart → health check). Runs on push to `main` only.
+
+**Production stack** (`docker-compose.prod.yml`): caddy, db (PostgreSQL 16), backend, frontend, temporal + temporal-worker (optional profile).
 
 ---
 
@@ -116,7 +133,6 @@ See [docs/Plan.md](docs/Plan.md) for the full product spec — database schema, 
 
 | Output | Reason |
 |--------|--------|
-| Report narrative text | LLM creative generation |
 | Chat responses | Conversational, context-dependent |
 | AI explanations on flags | Explanatory text varies |
 | Raw flag severity before rules | LLM judgment; clamped by `flag_rules.py` |
@@ -270,7 +286,7 @@ The first fully implemented micro app. Processes title commitment PDFs through a
 | `ti_packs` | Upload container with pipeline status | Yes |
 | `ti_pack_files` | Uploaded PDF metadata + storage path | Yes |
 | `ti_pages` | Page images + OCR text per rendered page | Yes |
-| `ti_sections` | Detected document sections (Schedule A/B/C, etc.) | Yes |
+| `ti_sections` | Detected document sections (schedule_a, schedule_b1, schedule_b2, schedule_c, legal_description, endorsements) | Yes |
 | `ti_extractions` | Structured data extracted by AI (parties, property, etc.) | Yes |
 | `ti_flags` | AI-identified risk flags with severity | Yes |
 | `ti_reviews` | Human decisions on flags (approve/reject/escalate) | Yes |
@@ -285,12 +301,15 @@ The first fully implemented micro app. Processes title commitment PDFs through a
 | `RiskAgent` | `analyze(extractions, sections)` → `[flags]` | Structured → structured |
 | `ChatAgent` | `answer(question, chunks, extractions, history)` → `(text, citations)` | Text → text (supports SSE streaming) |
 | `ReviewAssistant` | `recommend(flag, extractions)` → `{decision, reasoning, confidence}` | Structured → structured |
-| `ReportAgent` | `generate(pack_name, audience, ...)` → text | Structured → text/PDF/JSON/Markdown |
+| `ReportAgent` | `generate_executive_summary(...)` → bullet points | Structured → text (used in dashboard summary) |
+
+**Reports**: Report generation is **data-driven, no LLM needed**. `report_service.py` fetches pack data (extractions, flags, readiness) and passes structured inputs to `pdf_service.py` (`generate_pack_report_pdf()`) which renders via fpdf2. PDF is cached in storage for instant subsequent downloads.
 
 **Pipeline** (`pipeline/orchestrator.py`):
 - Dual backend: `PIPELINE_BACKEND` setting selects `background_tasks` (FastAPI BackgroundTasks) or `temporal` (durable Temporal workflows)
 - Each stage retries up to 3–5 times with exponential backoff
 - AI stages use delete-then-insert for idempotent retries
+- Complete stage pre-generates a cached PDF report for instant download
 - Pack status transitions: `uploading → processing → completed | failed`
 - Frontend polls `GET /packs/{id}/pipeline` every 3 seconds
 
@@ -386,7 +405,7 @@ TSA-specific: `TEST_ORDER_ID`, `TEST_SOURCE_ASSIGNMENT_ID`, `TEST_RAW_DOC_ID`, `
 - `/api/v1/organizations`, `/api/v1/subscriptions`, `/api/v1/micro-apps` — platform CRUD
 - `/api/v1/apps/{slug}/*` — micro app routes, gated by subscription middleware
 
-**Title Intelligence routes** mount at `/api/v1/apps/title-intelligence/packs/{packId}/` with sub-resources: `pipeline`, `pages`, `extractions`, `flags`, `readiness`, `chat` (+`/stream` for SSE), `reports`, `search`.
+**Title Intelligence routes** mount at `/api/v1/apps/title-intelligence/packs/{packId}/` with sub-resources: `pipeline`, `pages`, `extractions`, `flags`, `readiness`, `chat` (+`/stream` for SSE), `reports` (`/download` for PDF, GET by URI), `search`.
 
 **Title Search routes** mount at `/api/v1/apps/title-search/` with: `orders` (CRUD + `/process` + `/pipeline`), `orders/{orderId}/sources` (list + upload), `orders/{orderId}/documents` (list + correct), `orders/{orderId}/chain`, `orders/{orderId}/flags` (list + review), `orders/{orderId}/package` (get + issue + PDF), `county-sources` (platform admin CRUD).
 
@@ -421,7 +440,7 @@ All storage paths are tenant-scoped by org_id at the top level.
 | `JWT_EXPIRATION_MINUTES` | `1440` | Token lifetime (24h) |
 | `AI_PLATFORM` | `anthropic` | AI provider: anthropic/bedrock/openai/azure |
 | `STORAGE_PROVIDER` | `local` | Storage backend: local/s3 |
-| `PIPELINE_BACKEND` | `background_tasks` | Pipeline executor: background_tasks/temporal |
+| `PIPELINE_BACKEND` | `temporal` | Pipeline executor: background_tasks/temporal |
 | `TESSERACT_PATH` | (system default) | Custom Tesseract binary path |
 | `FILE_UPLOAD_MAX_SIZE` | `104857600` (100MB) | Max upload size |
 | `CORS_ORIGINS` | `["http://localhost:3000"]` | Allowed origins |
@@ -436,3 +455,6 @@ All storage paths are tenant-scoped by org_id at the top level.
 - **Storage type hints**: Always use `StorageProvider` (the abstract base), never `LocalStorage` directly — the implementation is selected at runtime by config.
 - **Tenant scoping in tests**: Tests seed a fixed org (`TEST_ORG_ID`). Any new test data must use this org ID or tenant middleware will reject it.
 - **AI tool definitions**: Written in Anthropic format. `BaseAIService._convert_tools()` auto-converts to OpenAI format when `AI_PLATFORM` is openai/azure. Don't write provider-specific tool schemas.
+- **Commit completeness before pushing**: When refactoring (e.g., renaming functions), ensure both the implementation files AND their test files are committed together. CI runs tests from the pushed code — a renamed function with an old test file will break the pipeline.
+- **`backend/storage/` is tracked by git**: Local dev data (uploaded PDFs, OCR output, AI cache, thumbnails) lives here and shows up in `git status`. Stage only `backend/app/` and `frontend/src/` code changes, not storage artifacts.
+- **`gh` CLI token**: The GitHub CLI token may expire. Re-authenticate with `gh auth login -h github.com` if `gh run list` fails.

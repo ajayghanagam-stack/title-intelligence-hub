@@ -59,7 +59,9 @@ async def delete_pack(
     if not pack:
         return False
     await storage.delete_dir(f"{org_id}/{pack_id}")
-    await db.delete(pack)
+    # Use SQL DELETE to let DB ON DELETE CASCADE handle child rows,
+    # avoiding SQLAlchemy ORM's attempt to SET NULL on loaded relationships.
+    await db.execute(delete(Pack).where(Pack.id == pack_id, Pack.org_id == org_id))
     await db.commit()
     return True
 
@@ -67,9 +69,9 @@ async def delete_pack(
 async def delete_pack_or_raise(
     db: AsyncSession, org_id: uuid.UUID, pack_id: uuid.UUID, storage: StorageProvider
 ) -> None:
-    pack = await get_pack_or_raise(db, org_id, pack_id)
+    await get_pack_or_raise(db, org_id, pack_id)
     await storage.delete_dir(f"{org_id}/{pack_id}")
-    await db.delete(pack)
+    await db.execute(delete(Pack).where(Pack.id == pack_id, Pack.org_id == org_id))
     await db.commit()
 
 

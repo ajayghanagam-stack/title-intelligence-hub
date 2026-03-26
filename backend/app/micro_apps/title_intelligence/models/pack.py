@@ -21,14 +21,14 @@ class Pack(Base, TenantMixin, TimestampMixin):
     readiness_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    files = relationship("PackFile", back_populates="pack", lazy="noload")
-    pages = relationship("Page", back_populates="pack", lazy="noload")
-    sections = relationship("Section", back_populates="pack", lazy="noload")
-    extractions = relationship("Extraction", back_populates="pack", lazy="noload")
-    flags = relationship("Flag", back_populates="pack", lazy="noload")
-    text_chunks = relationship("TextChunk", back_populates="pack", lazy="noload")
-    chat_messages = relationship("ChatMessage", back_populates="pack", lazy="noload")
-    pipeline_runs = relationship("PipelineRun", back_populates="pack", lazy="noload")
+    files = relationship("PackFile", back_populates="pack", lazy="noload", passive_deletes=True)
+    pages = relationship("Page", back_populates="pack", lazy="noload", passive_deletes=True)
+    sections = relationship("Section", back_populates="pack", lazy="noload", passive_deletes=True)
+    extractions = relationship("Extraction", back_populates="pack", lazy="noload", passive_deletes=True)
+    flags = relationship("Flag", back_populates="pack", lazy="noload", passive_deletes=True)
+    text_chunks = relationship("TextChunk", back_populates="pack", lazy="noload", passive_deletes=True)
+    chat_messages = relationship("ChatMessage", back_populates="pack", lazy="noload", passive_deletes=True)
+    pipeline_runs = relationship("PipelineRun", back_populates="pack", lazy="noload", passive_deletes=True)
 
 
 class PackFile(Base, TenantMixin):
