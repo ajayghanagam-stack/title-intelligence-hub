@@ -53,16 +53,16 @@ async def list_packs(
     )
     packs = list(result.scalars().all())
     
-    # Fetch buyer names for all packs
+    # Fetch company names (Underwriter) for all packs
     pack_ids = [p.id for p in packs]
-    buyer_names = {}
+    company_names = {}
     
     if pack_ids:
         extraction_result = await db.execute(
             select(Extraction.pack_id, Extraction.value)
             .where(
                 Extraction.pack_id.in_(pack_ids),
-                Extraction.label == "Buyer"
+                Extraction.label == "Underwriter"
             )
         )
         for pack_id, value in extraction_result.fetchall():
@@ -71,12 +71,17 @@ async def list_packs(
                     data = json.loads(value)
                 else:
                     data = value
-                if isinstance(data, dict) and "name" in data:
-                    buyer_names[pack_id] = data["name"]
+                if isinstance(data, dict):
+                    # Try field_value first (structured format), then name
+                    name = data.get("field_value") or data.get("name")
+                    if name:
+                        # Clean up the name (remove ", a Nebraska Corporation" etc.)
+                        name = name.split(",")[0].strip()
+                        company_names[pack_id] = name
             except (json.JSONDecodeError, TypeError):
                 pass
     
-    # Convert to list of dicts with buyer_name
+    # Convert to list of dicts with company_name
     return [
         {
             "id": p.id,
@@ -85,7 +90,7 @@ async def list_packs(
             "current_stage": p.current_stage,
             "readiness_score": p.readiness_score,
             "created_at": p.created_at,
-            "buyer_name": buyer_names.get(p.id),
+            "buyer_name": company_names.get(p.id),  # Using buyer_name field for company name
         }
         for p in packs
     ]
