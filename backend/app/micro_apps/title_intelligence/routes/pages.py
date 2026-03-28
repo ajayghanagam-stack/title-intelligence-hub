@@ -47,3 +47,18 @@ async def get_page_thumb(
 ):
     data = await page_service.get_page_thumb_data_or_raise(db, org_id, pack_id, page_number, storage)
     return Response(content=data, media_type="image/jpeg")
+
+
+@router.post("/packs/{pack_id}/pages/prerender")
+async def prerender_pages(
+    pack_id: uuid.UUID,
+    start_page: int = 1,
+    count: int = 20,
+    db: AsyncSession = Depends(get_db),
+    member: User = Depends(get_current_member),
+    org_id: uuid.UUID = Depends(get_org_id),
+    storage: StorageProvider = Depends(get_storage),
+):
+    """Pre-render pages for faster viewing."""
+    rendered = await page_service.prerender_pages(db, org_id, pack_id, storage, start_page, count)
+    return {"rendered": rendered, "start_page": start_page, "count": count}

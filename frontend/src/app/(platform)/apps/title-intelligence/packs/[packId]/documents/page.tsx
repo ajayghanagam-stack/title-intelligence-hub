@@ -104,7 +104,7 @@ export default function DocumentsPage() {
 
   const zoom = ZOOM_LEVELS[zoomIndex];
 
-  // Fetch pages
+  // Fetch pages and trigger pre-rendering
   useEffect(() => {
     orgFetch<PageData[]>(`/api/v1/apps/title-intelligence/packs/${packId}/pages`)
       .then((data) => {
@@ -117,6 +117,13 @@ export default function DocumentsPage() {
           }
         } else if (data.length > 0) {
           setSelectedPage(data[0].page_number);
+        }
+        
+        // Trigger pre-rendering of first 20 pages in background
+        if (data.length > 0) {
+          orgFetch(`/api/v1/apps/title-intelligence/packs/${packId}/pages/prerender?start_page=1&count=20`, {
+            method: 'POST'
+          }).catch(() => {}); // Silently fail if pre-render doesn't work
         }
       })
       .catch(() => { setPages([]); showToast("error", "Failed to load pages"); })
