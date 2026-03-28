@@ -19,6 +19,7 @@ class Pack(Base, TenantMixin, TimestampMixin):
     current_stage: Mapped[str | None] = mapped_column(String(50), nullable=True)
     readiness_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     readiness_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    examine_progress: Mapped[str | None] = mapped_column(String(100), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     files = relationship("PackFile", back_populates="pack", lazy="noload", passive_deletes=True)

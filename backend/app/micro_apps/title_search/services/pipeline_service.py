@@ -19,6 +19,8 @@ async def get_pipeline_status_or_raise(
 
     # Terminal statuses where pipeline_stage is None but all stages finished
     terminal_statuses = {"completed", "review_required"}
+    # Paused statuses where the pipeline is waiting for external input
+    paused_statuses = {"awaiting_abstractor"}
 
     stages = []
     if order.status in terminal_statuses and order.pipeline_stage is None:
@@ -27,6 +29,17 @@ async def get_pipeline_status_or_raise(
             PipelineStageStatusSchema(stage=s, status="completed")
             for s in PIPELINE_STAGES
         ]
+    elif order.status in paused_statuses:
+        # Pipeline paused — show completed stages + paused current stage
+        current_found = False
+        for stage_name in PIPELINE_STAGES:
+            if stage_name == order.pipeline_stage:
+                current_found = True
+                stages.append(PipelineStageStatusSchema(stage=stage_name, status="paused"))
+            elif not current_found:
+                stages.append(PipelineStageStatusSchema(stage=stage_name, status="completed"))
+            else:
+                stages.append(PipelineStageStatusSchema(stage=stage_name, status="pending"))
     elif order.pipeline_stage is None:
         # Pipeline hasn't started yet
         stages = [

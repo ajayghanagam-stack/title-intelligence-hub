@@ -3,7 +3,10 @@
 import pytest
 
 from app.micro_apps.title_intelligence.services.flag_rules import (
+    DETERMINISTIC_FLAG_TYPES,
     RULES_VERSION,
+    SEVERITY_CAP,
+    SEVERITY_FLOOR,
     VALID_FLAG_TYPES,
     VALID_SEVERITIES,
     normalize_flags,
@@ -169,7 +172,15 @@ def test_unknown_severity_defaults_to_medium():
 
 def test_rules_version_set():
     """RULES_VERSION constant is defined and non-empty."""
-    assert RULES_VERSION == "flag_rules_v1"
+    assert RULES_VERSION == "flag_rules_v4"
+
+
+# --- Deterministic flag types ---
+
+def test_deterministic_flag_types_defined():
+    """DETERMINISTIC_FLAG_TYPES is defined and all types are valid."""
+    assert len(DETERMINISTIC_FLAG_TYPES) == 4
+    assert DETERMINISTIC_FLAG_TYPES.issubset(VALID_FLAG_TYPES)
 
 
 # --- Input not mutated ---
@@ -181,3 +192,68 @@ def test_input_not_mutated():
     snapshot = copy.deepcopy(original)
     normalize_flags(original)
     assert original == snapshot
+
+
+# --- New flag types (v4) ---
+
+def test_new_flag_types_valid():
+    """All 5 new flag types are in VALID_FLAG_TYPES."""
+    new_types = {"mineral_rights", "trust_issue", "estate_issue", "vesting_issue", "tax_issue"}
+    assert new_types.issubset(VALID_FLAG_TYPES)
+    assert len(VALID_FLAG_TYPES) == 17
+
+
+def test_trust_issue_severity_floor():
+    """trust_issue severity must be at least high."""
+    flag = _make_flag(flag_type="trust_issue", severity="low")
+    result = normalize_flags([flag])
+    assert len(result) == 1
+    assert result[0]["severity"] == "high"
+
+
+def test_estate_issue_severity_floor():
+    """estate_issue severity must be at least high."""
+    flag = _make_flag(flag_type="estate_issue", severity="medium")
+    result = normalize_flags([flag])
+    assert len(result) == 1
+    assert result[0]["severity"] == "high"
+
+
+def test_mineral_rights_severity_cap():
+    """mineral_rights is capped at high."""
+    flag = _make_flag(flag_type="mineral_rights", severity="critical")
+    result = normalize_flags([flag])
+    assert len(result) == 1
+    assert result[0]["severity"] == "high"
+
+
+def test_mineral_rights_severity_cap_does_not_raise():
+    """mineral_rights cap should not raise a severity below the cap."""
+    flag = _make_flag(flag_type="mineral_rights", severity="low")
+    result = normalize_flags([flag])
+    assert result[0]["severity"] == "low"
+
+
+def test_tax_issue_severity_floor():
+    """tax_issue severity must be at least medium."""
+    flag = _make_flag(flag_type="tax_issue", severity="low")
+    result = normalize_flags([flag])
+    assert len(result) == 1
+    assert result[0]["severity"] == "medium"
+
+
+def test_vesting_issue_accepted():
+    """vesting_issue is a valid flag type and passes normalization."""
+    flag = _make_flag(flag_type="vesting_issue", severity="high")
+    result = normalize_flags([flag])
+    assert len(result) == 1
+    assert result[0]["flag_type"] == "vesting_issue"
+
+
+def test_rules_version_v4():
+    """RULES_VERSION is v4 after adding new flag types."""
+    assert RULES_VERSION == "flag_rules_v4"
+    assert "trust_issue" in SEVERITY_FLOOR
+    assert "estate_issue" in SEVERITY_FLOOR
+    assert "tax_issue" in SEVERITY_FLOOR
+    assert "mineral_rights" in SEVERITY_CAP

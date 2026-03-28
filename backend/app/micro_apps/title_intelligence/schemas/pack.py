@@ -56,4 +56,5 @@ class PipelineStatusResponse(BaseModel):
     status: str
     current_stage: str | None
     stages: list[PipelineStageStatus]
+    examine_progress: str | None = None
     error_message: str | None = None

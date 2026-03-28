@@ -87,6 +87,7 @@ export interface PageData {
   image_uri: string;
   thumb_uri: string;
   ocr_text: string | null;
+  page_type?: string;
 }
 
 export interface PackFile {
@@ -122,7 +123,16 @@ export interface TIPipelineStatus {
   status: string;
   current_stage: string | null;
   stages: StageStatus[];
+  examine_progress: string | null;
   error_message: string | null;
+}
+
+export interface FlagListResponse {
+  flags: Flag[];
+  counts: Record<string, number>;
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface Recommendation {

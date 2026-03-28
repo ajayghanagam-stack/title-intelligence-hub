@@ -15,7 +15,7 @@ async def test_pipeline_status(client: AsyncClient, sample_pack):
     data = response.json()
     assert data["pack_id"] == str(TEST_PACK_ID)
     assert "stages" in data
-    assert len(data["stages"]) == 7
+    assert len(data["stages"]) == 4
 
 
 @pytest.mark.asyncio

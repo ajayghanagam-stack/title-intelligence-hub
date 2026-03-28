@@ -1,4 +1,11 @@
-"""Data-driven report generation — no LLM needed."""
+"""Data-driven report generation — no LLM needed.
+
+Includes both PDF report generation and template-based executive summary
+generation. The summary generator replaces the LLM-based summary in
+stage_complete (Phase 7), saving ~10-15s per pipeline run.
+"""
+
+from __future__ import annotations
 
 import logging
 import uuid
@@ -18,6 +25,138 @@ logger = logging.getLogger(__name__)
 
 # Severity sort order
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+# Human-readable flag type labels
+_FLAG_TYPE_LABELS = {
+    "missing_endorsement": "missing endorsement",
+    "unacceptable_exception": "unacceptable exception",
+    "unresolved_lien": "unresolved lien",
+    "unreleased_mortgage": "unreleased mortgage",
+    "cross_section_mismatch": "cross-section mismatch",
+    "requirement_missing_proof": "requirement without proof of satisfaction",
+    "name_discrepancy": "party name discrepancy",
+    "marital_status_issue": "marital status issue",
+    "incomplete_document": "incomplete document",
+    "regulatory_compliance": "regulatory compliance concern",
+    "chain_of_title_gap": "chain of title gap",
+    "document_defect": "document defect",
+    "mineral_rights": "mineral rights concern",
+    "trust_issue": "trust documentation issue",
+    "estate_issue": "estate administration issue",
+    "vesting_issue": "vesting issue",
+    "tax_issue": "tax issue",
+}
+
+
+def generate_data_driven_summary(
+    pack_name: str,
+    extractions: list,
+    flags: list,
+    readiness_score: int,
+) -> str:
+    """Generate a bullet-point executive summary from structured data.
+
+    Produces the same format as the LLM-based summary (newline-separated
+    bullet points starting with '- ') but deterministically from data.
+    Eliminates the 10-15s LLM call from stage_complete.
+
+    Args:
+        pack_name: Display name of the title pack
+        extractions: List of Extraction model instances
+        flags: List of Flag model instances
+        readiness_score: Integer 0-100
+
+    Returns:
+        Bullet-point summary string (each line starts with '- ')
+    """
+    bullets: list[str] = []
+
+    # Categorize flags
+    open_flags = [f for f in flags if f.status == "open"]
+    critical_flags = [f for f in open_flags if f.severity == "critical"]
+    high_flags = [f for f in open_flags if f.severity == "high"]
+    medium_flags = [f for f in open_flags if f.severity == "medium"]
+    low_flags = [f for f in open_flags if f.severity == "low"]
+
+    # Extract key property/party info for context
+    property_address = _find_extraction_from_list(extractions, "policy_info", "address", "property address", "full_address")
+    if not property_address:
+        property_address = _find_extraction_from_list(extractions, "property", "address", "property address", "full_address")
+
+    # Bullet 1: Overall readiness status
+    if readiness_score >= 90:
+        status_text = f"Title commitment is ready to close with a readiness score of {readiness_score}/100"
+        if not open_flags:
+            status_text += ". No open issues remain."
+        else:
+            status_text += f", with {len(open_flags)} minor item{'s' if len(open_flags) != 1 else ''} remaining."
+    elif readiness_score >= 60:
+        status_text = (
+            f"Title commitment is at risk with a readiness score of {readiness_score}/100. "
+            f"{len(open_flags)} open issue{'s' if len(open_flags) != 1 else ''} "
+            f"require{'s' if len(open_flags) == 1 else ''} attention before closing."
+        )
+    else:
+        status_text = (
+            f"Title commitment is not ready to close (score: {readiness_score}/100). "
+            f"{len(open_flags)} open issue{'s' if len(open_flags) != 1 else ''} "
+            f"must be resolved."
+        )
+    bullets.append(status_text)
+
+    # Bullet per critical issue (name each specifically)
+    for f in critical_flags:
+        label = _FLAG_TYPE_LABELS.get(f.flag_type, f.flag_type.replace("_", " "))
+        bullets.append(f"CRITICAL: {f.title} — {label} that must be resolved before closing.")
+
+    # Bullet per high issue (name each specifically)
+    for f in high_flags:
+        label = _FLAG_TYPE_LABELS.get(f.flag_type, f.flag_type.replace("_", " "))
+        bullets.append(f"{f.title} — {label} that should be resolved before closing.")
+
+    # Summary bullet for medium/low issues
+    if medium_flags or low_flags:
+        parts = []
+        if medium_flags:
+            parts.append(f"{len(medium_flags)} medium-severity")
+        if low_flags:
+            parts.append(f"{len(low_flags)} low-severity")
+        count_text = " and ".join(parts)
+        bullets.append(f"Additionally, {count_text} item{'s' if (len(medium_flags) + len(low_flags)) != 1 else ''} should be reviewed.")
+
+    # Final bullet: next steps
+    if not open_flags:
+        bullets.append("All issues have been resolved. The title commitment is cleared for closing.")
+    elif critical_flags:
+        bullets.append(
+            f"Recommended next steps: resolve {len(critical_flags)} critical "
+            f"issue{'s' if len(critical_flags) != 1 else ''} immediately, "
+            f"then address remaining items before scheduling closing."
+        )
+    elif high_flags:
+        bullets.append(
+            f"Recommended next steps: address {len(high_flags)} high-priority "
+            f"issue{'s' if len(high_flags) != 1 else ''} to bring the title to closing readiness."
+        )
+    else:
+        bullets.append(
+            "Recommended next steps: review and address remaining items. "
+            "The title is approaching closing readiness."
+        )
+
+    return "\n".join(f"- {b}" for b in bullets)
+
+
+def _find_extraction_from_list(extractions: list, ext_type: str, *label_patterns: str) -> str:
+    """Find a matching extraction value from a list of Extraction model instances."""
+    for pat in label_patterns:
+        lower_pat = pat.lower()
+        for ext in extractions:
+            if ext.extraction_type == ext_type and lower_pat in ext.label.lower():
+                val = _extract_value(ext.value)
+                if val:
+                    return val
+    return ""
 
 
 async def generate_report_pdf(
@@ -62,11 +201,20 @@ async def generate_report_pdf(
     # Calculate readiness
     readiness = await calculate_readiness(db, org_id, pack_id)
 
-    # Extract property info from extractions
-    property_address = _find_extraction(extractions, "property_info", "address", "property address", "full_address")
-    order_number = _find_extraction(extractions, "property_info", "commitment number", "order number", "order no", "commitment_number")
-    commitment_date = _find_extraction(extractions, "property_info", "effective date", "commitment date", "effective_date")
-    issued_by = _find_extraction(extractions, "party", "title company", "underwriter", "issuer", "issued by")
+    # Extract property info from extractions (try policy_info first, then property)
+    property_address = (
+        _find_extraction(extractions, "policy_info", "address", "property address", "full_address")
+        or _find_extraction(extractions, "property", "address", "property address", "full_address", "insured property")
+    )
+    order_number = (
+        _find_extraction(extractions, "policy_info", "commitment number", "order number", "order no", "commitment_number")
+        or _find_extraction(extractions, "property", "commitment number", "order number", "order no")
+    )
+    commitment_date = (
+        _find_extraction(extractions, "policy_info", "effective date", "commitment date", "effective_date")
+        or _find_extraction(extractions, "property", "effective date", "commitment date")
+    )
+    issued_by = _find_extraction(extractions, "party", "title company", "underwriter", "issuer", "issued by", "issuing agent")
 
     # Build exception rows from flags
     sorted_flags = sorted(flags, key=lambda f: (_SEVERITY_ORDER.get(f.severity, 9), f.flag_type))
@@ -84,7 +232,7 @@ async def generate_report_pdf(
 
         exceptions.append({
             "id": i,
-            "severity": flag.severity,
+            "severity": {"critical": "critical", "high": "warning", "medium": "warning", "low": "review"}.get(flag.severity, flag.severity),
             "category": flag.flag_type.replace("_", " ").title(),
             "description": flag.title,
             "doc_ref": doc_ref,
@@ -140,7 +288,7 @@ def _extract_value(v: object) -> str:
     if isinstance(v, str):
         return v
     if isinstance(v, dict):
-        for key in ("value", "address", "full_address", "name", "amount", "number", "date", "text"):
+        for key in ("value", "field_value", "address", "full_address", "name", "amount", "number", "date", "text"):
             if isinstance(v.get(key), str):
                 return v[key]
         for val in v.values():

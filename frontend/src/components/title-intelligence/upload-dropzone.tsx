@@ -55,13 +55,13 @@ export function UploadDropzone({
           : "border-muted-foreground/20 hover:border-brand-amber/30"
       }`}
     >
-      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-amber/10 mx-auto">
-        <FileUp className="h-7 w-7 text-brand-amber" />
+      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-sky-100 mx-auto">
+        <FileUp className="h-7 w-7 text-sky-500" />
       </div>
-      <p className="mt-4 text-sm font-medium">
+      <p className="mt-4 text-sm font-semibold">
         Upload a Title Search Package
       </p>
-      <p className="mt-1 text-xs text-muted-foreground">
+      <p className="mt-1.5 text-xs text-muted-foreground">
         Supports PDF, PNG, and JPEG files. Upload all documents for a single package together.
       </p>
       <label htmlFor="file-upload" className="sr-only">Upload files</label>
@@ -75,11 +75,10 @@ export function UploadDropzone({
         disabled={uploading}
       />
       <button
-        className="mt-4 btn-secondary gap-2"
+        className="mt-4 btn-cta gap-2 px-6"
         onClick={() => document.getElementById("file-upload")?.click()}
         disabled={uploading}
       >
-        <Upload className="h-4 w-4" />
         {uploading ? "Uploading..." : "Select Files"}
       </button>
     </div>

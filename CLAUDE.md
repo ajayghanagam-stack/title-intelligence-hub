@@ -20,7 +20,7 @@ Copy `.env.example` and update (note: `.env.example` has stale Supabase referenc
 ```
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/title_intelligence_hub
 JWT_SECRET=<any-strong-secret>
-ANTHROPIC_API_KEY=sk-ant-...
+GOOGLE_API_KEY=<your-google-api-key>
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
@@ -51,8 +51,10 @@ cd frontend && npm run lint     # ESLint
 ### Full Stack
 ```bash
 ./start-dev.sh                  # starts Postgres, Temporal, backend, frontend
-docker-compose up               # full stack via Docker (db:5432, backend:8000, frontend:3000)
+docker-compose up               # full stack via Docker (db:5436 on host, backend:8000, frontend:3001 on host)
 ```
+
+**Dev port mapping** (docker-compose): PostgreSQL is exposed on host port **5436** (not 5432), frontend on **3001** (not 3000). Use `psql -h localhost -p 5436` for local DB access. `start-dev.sh` runs frontend on `:3000` and Temporal UI on `http://localhost:8085`.
 
 ### Production Deployment
 ```bash
@@ -69,7 +71,7 @@ scripts/factory-reset.sh                          # full production reset (destr
 - **CI** (`.github/workflows/ci.yml`): backend tests (Python 3.12) → frontend lint+build (Node 20) → Docker image build check. Runs on push to `main` and PRs.
 - **CD** (`.github/workflows/cd.yml`): builds backend+frontend Docker images in parallel → pushes to GHCR (`ghcr.io`) → SSHes into Hetzner and runs `scripts/deploy.sh` (pull → migrate → restart → health check). Runs on push to `main` only.
 
-**Production stack** (`docker-compose.prod.yml`): caddy, db (PostgreSQL 16), backend, frontend, temporal + temporal-worker (optional profile).
+**Production stack** (`docker-compose.prod.yml`): caddy (reverse proxy on :80/:443), db (PostgreSQL 16), backend, frontend, temporal + temporal-worker (optional profile — enable with `--profile temporal`).
 
 ---
 
@@ -98,8 +100,8 @@ scripts/factory-reset.sh                          # full production reset (destr
 ### Performance Expectations
 
 - **API response time**: < 200ms for CRUD operations, < 500ms for list queries.
-- **Pipeline throughput**: A 300-page title commitment should complete the full 7-stage pipeline in under 30 minutes.
-- **AI calls**: Haiku calls should return within 10–30 seconds per page/chunk. All AI calls retry with exponential backoff.
+- **Pipeline throughput**: A 50-page title commitment should complete the full 4-stage pipeline (ingest → render → examine → complete) in under 2 minutes. The examine stage uses parallel batched AI calls with progressive streaming.
+- **AI calls**: Gemini calls should return within 10–30 seconds per batch. All AI calls retry with exponential backoff.
 - **Database**: Every tenant-scoped query uses the `org_id` index. JSONB columns have GIN indexes where queried. `ti_text_chunks` has a tsvector GIN index for full-text search.
 
 ---
@@ -107,6 +109,8 @@ scripts/factory-reset.sh                          # full production reset (destr
 ## Business Rules
 
 See [docs/Plan.md](docs/Plan.md) for the full product spec — database schema, API contract, user roles, subscription lifecycle, pipeline stages, micro app descriptions, and acceptance criteria.
+
+See [docs/PRD_Platform_admin.md](docs/PRD_Platform_admin.md) for Platform Admin requirements — account onboarding, user management, subscription management, micro app CRUD, and admin frontend pages.
 
 ---
 
@@ -116,15 +120,15 @@ See [docs/Plan.md](docs/Plan.md) for the full product spec — database schema, 
 
 | Output | Condition |
 |--------|-----------|
-| OCR text | Same image bytes + same Tesseract version |
-| Text chunks | Same OCR text + same chunker version |
-| Readiness score, status, categories, estimated_days | Same flags + same rules version (`flag_rules_v1`) |
-| Extraction schemas | Same tool definition hash (`extraction_tool_hash`) |
+| Text chunks | Same page text + same chunker version |
+| Readiness score, status, categories, estimated_days | Same flags + same rules version (`weighted_5cat_v2`) |
+| AI cache key | Same `(page hashes + model + prompt hash + schema hash)` → identical cache key |
 
 ### Practically Stable (temp=0, same model+prompt → near-identical)
 
 | Output | Notes |
 |--------|-------|
+| Page transcriptions (OCR via Gemini Vision) | Stable for identical page images with temp=0 |
 | Extracted facts (parties, property, requirements) | Stable for identical document text with temp=0 |
 | Section boundaries | Stable for identical page text |
 | Flag types after rule normalization | Floor/cap/dedup rules guarantee bounds even if raw LLM output varies |
@@ -143,8 +147,16 @@ Any change to prompts, models, tool schemas, or rule sets **must** create a new 
 - `ai_platform`, `ai_model` — AI provider/model
 - `ingestion_prompt_hash`, `risk_prompt_hash` — system prompt hashes
 - `extraction_tool_hash`, `risk_tool_hash` — tool definition hashes
-- `ocr_engine` — Tesseract version string
+- `ocr_engine` — OCR engine identifier (e.g., `gemini_vision`)
 - `chunker_version`, `rules_version` — algorithm versions
+- `version_metadata` — JSONB with `pipeline_mode: "examiner"` and full version snapshot
+
+### Examiner Caching Contract
+
+AI output is cached per-pack, keyed by composite version hashes (computed by `pipeline/version_tracker.py`):
+- `compute_examiner_cache_key(page_hashes, version_info)` → deterministic cache key
+- Any change to model, prompts, schemas, or page content produces a different hash → automatic cache miss
+- Cached data is replayed via idempotent delete-then-insert (same as fresh run)
 
 ### Testing Requirement
 
@@ -236,12 +248,12 @@ This is a SaaS platform where **organizations** subscribe to **micro apps**. Eac
 
 ### Request Flow (Backend)
 
-Middleware executes in this order (Starlette LIFO — last added = outermost = runs first):
-1. **RequestIdMiddleware** — generates/propagates `X-Request-Id`
+Middleware runs in this order on each request (Starlette LIFO — last added = outermost = runs first):
+1. **RequestIdMiddleware** — generates/propagates `X-Request-Id` (outermost)
 2. **MetricsMiddleware** — request count + latency tracking
 3. **CORS** — allows configured frontend origins
 4. **TenantContextMiddleware** — resolves `org_id` from `X-Org-Id` header; sets `request.state.org_id`. Skips `/api/v1/admin/` routes.
-5. **MicroAppAccessMiddleware** — for routes matching `/api/v1/apps/{slug}/*`, queries DB to verify the org has an active subscription; returns 403 if not
+5. **MicroAppAccessMiddleware** — for routes matching `/api/v1/apps/{slug}/*`, queries DB to verify the org has an active subscription; returns 403 if not (innermost)
 
 FastAPI dependencies then handle auth/authz:
 - `get_current_user()` — decodes JWT → `AuthenticatedUser`
@@ -276,14 +288,14 @@ def __getattr__(name):
 
 ### Title Intelligence Micro App
 
-The first fully implemented micro app. Processes title commitment PDFs through a 7-stage pipeline (ingest → render → OCR → index → ingestion agent → risk agent → complete).
+The first fully implemented micro app. Processes title commitment PDFs through a **4-stage pipeline**: `ingest → render → examine → complete`.
 
 **Directory**: `backend/app/micro_apps/title_intelligence/`
 
 **Models** (all prefixed `ti_`):
 | Table | Purpose | Tenant-scoped |
 |-------|---------|:---:|
-| `ti_packs` | Upload container with pipeline status | Yes |
+| `ti_packs` | Upload container with pipeline status + `examine_progress` | Yes |
 | `ti_pack_files` | Uploaded PDF metadata + storage path | Yes |
 | `ti_pages` | Page images + OCR text per rendered page | Yes |
 | `ti_sections` | Detected document sections (schedule_a, schedule_b1, schedule_b2, schedule_c, legal_description, endorsements) | Yes |
@@ -296,22 +308,43 @@ The first fully implemented micro app. Processes title commitment PDFs through a
 **AI Agents** (all subclass `BaseAIService`):
 | Agent | Method | I/O |
 |-------|--------|-----|
-| `OCRAgent` | `extract_text(image_bytes)` → `{text, confidence}` | Uses Tesseract (`pytesseract`, sync wrapped in `asyncio.to_thread`) |
-| `IngestionAgent` | `analyze(pages_text)` → `{sections, extractions}` | Text → structured (supports iterative tool-calling) |
-| `RiskAgent` | `analyze(extractions, sections)` → `[flags]` | Structured → structured |
+| `TriageAgent` | `classify_pages_parallel(pdf_bytes, total_pages, chunk_size, concurrency)` → `TriageResult` | Lightweight page classifier: content/blank/cover/signature/transmittal/boilerplate + document type hints. Parallel chunking for large PDFs |
+| `TitleExaminerAgent` | `examine_document(pages, storage, on_batch_complete)` → `ExaminerConsolidatedResult` | Unified agent: OCR + extraction + flagging in one pass. Hybrid text+vision batching, Gemini context caching, progressive streaming |
 | `ChatAgent` | `answer(question, chunks, extractions, history)` → `(text, citations)` | Text → text (supports SSE streaming) |
 | `ReviewAssistant` | `recommend(flag, extractions)` → `{decision, reasoning, confidence}` | Structured → structured |
 | `ReportAgent` | `generate_executive_summary(...)` → bullet points | Structured → text (used in dashboard summary) |
+
+**TriageAgent architecture** (`ai/triage_agent.py`):
+- **Heuristic pre-triage**: Render stage extracts PyMuPDF text per page (<1ms/page). Pages with <20 chars (`HEURISTIC_BLANK_THRESHOLD`) marked as `page_type="blank"` and excluded from LLM triage
+- **Parallel chunking**: `classify_pages_parallel()` splits PDFs >50pp (`TRIAGE_CHUNK_SIZE`) into N chunks, dispatches parallel calls via `asyncio.Semaphore(TRIAGE_CONCURRENCY=4)`
+- **Safe fallback**: Failed chunks default all pages to `"content"` (conservative — more examined, never fewer)
+- **Page number remapping**: `_merge_chunk_results()` remaps chunk-local page numbers to global, sums tokens, uses max elapsed (parallel wall time)
+- **Context caching**: Pre-warms cache before parallel dispatch; all chunks reuse the same `TriageAgent` cache
+
+**TitleExaminerAgent architecture** (`ai/title_examiner_agent.py`):
+- **Hybrid text+vision**: Pages with embedded text (≥50 chars) sent as text; scanned pages sent as JPEG images
+- **Smart batch sizing**: Text pages batch at 25 (`EXAMINER_BATCH_SIZE_TEXT`), image pages at 10 (`EXAMINER_BATCH_SIZE`). Reduces API calls for text-heavy PDFs
+- **Dual JSON schema**: `EXAMINATION_JSON_SCHEMA` (with `page_transcriptions`) for image batches, `EXAMINATION_JSON_SCHEMA_TEXT_ONLY` (without) for text-only batches — saves output tokens
+- **Progressive streaming**: Uses `asyncio.as_completed` + `on_batch_complete` callback to write results to DB as each batch finishes. `Pack.examine_progress` tracks "3/6 batches, 12 flags" for frontend SSE updates
+- **Gemini context caching**: Uses `google-genai` SDK to cache system prompt + schema (TTL 10 min). All batch calls reference the cache, saving ~14K input tokens per run. Falls back to uncached `litellm` if caching fails. `_cache_lock` (asyncio.Lock) prevents double creation during concurrent pre-warm
+- **Cache pre-warming**: Context cache creation runs concurrently with triage via `asyncio.create_task`, saving 1-2s
+- **Pydantic schemas**: `schemas/examiner.py` defines `ExaminerConsolidatedResult`, `ExaminerBatchResult`, `ExaminerExtraction`, `ExaminerFlag`, `ExaminerSection`, `PageTranscription`
 
 **Reports**: Report generation is **data-driven, no LLM needed**. `report_service.py` fetches pack data (extractions, flags, readiness) and passes structured inputs to `pdf_service.py` (`generate_pack_report_pdf()`) which renders via fpdf2. PDF is cached in storage for instant subsequent downloads.
 
 **Pipeline** (`pipeline/orchestrator.py`):
 - Dual backend: `PIPELINE_BACKEND` setting selects `background_tasks` (FastAPI BackgroundTasks) or `temporal` (durable Temporal workflows)
 - Each stage retries up to 3–5 times with exponential backoff
-- AI stages use delete-then-insert for idempotent retries
+- Examine stage uses delete-then-insert for idempotent retries
 - Complete stage pre-generates a cached PDF report for instant download
 - Pack status transitions: `uploading → processing → completed | failed`
 - Frontend polls `GET /packs/{id}/pipeline` every 3 seconds
+- **Examine stage timeline** (native_pdf mode, 51pp PDF):
+  1. Heuristic pre-triage in render (~0s, PyMuPDF text extraction)
+  2. Triage + examiner cache pre-warm (parallel, ~5-8s)
+  3. Build content-only PDF + document grouping (~0.2s)
+  4. Examine batches (parallel, concurrency=8, ~10-15s)
+  5. Consolidation + deterministic flags + DB writes (~2s)
 
 ### Title Search & Abstracting Micro App
 
@@ -343,6 +376,7 @@ The second micro app. Automates county record searches, document parsing, chain-
 
 **Pipeline** (`pipeline/orchestrator.py`):
 - 6-stage pipeline: `order → retrieve → parse → chain → package → complete`
+- **BackgroundTasks only** for MVP (Temporal support not yet wired in, unlike TI)
 - Mock retrieval for MVP (no real county portal integration)
 - AI output caching at parse and chain stages (keyed by composite version hashes)
 - Deterministic flag detection via `services/flag_rules.py` with severity floor/cap rules
@@ -360,10 +394,13 @@ The second micro app. Automates county record searches, document parsing, chain-
 `BaseAIService` in `backend/app/ai/base_service.py` is the base class for all AI work. It takes `org_id` for tenant scoping and provides:
 - `call_haiku()` — text generation with 3-attempt exponential backoff
 - `call_haiku_structured()` — structured output via tool_use pattern
+- `call_json_structured()` — structured output via Gemini native JSON schema response format (faster than tool-use)
+- `call_json_structured_cached()` — same as above but uses a Gemini context cache (avoids resending system prompt)
+- `create_context_cache()` — creates a Gemini cached content object via `google-genai` SDK (TTL-based, stored in module-level `_context_cache_map`)
 - `call_with_tools()` — iterative tool-calling loop for multi-step agent workflows
 - `call_streaming()` — SSE streaming for real-time chat responses
 
-**Multi-provider**: Uses `litellm` under the hood. Set `AI_PLATFORM` to `anthropic`, `bedrock`, `openai`, or `azure`. Default model: `claude-haiku-4-5-20251001`. Tool definitions use Anthropic format (auto-converted to OpenAI format by `_convert_tools` when needed).
+**Gemini-only**: Uses `litellm` under the hood with `gemini/gemini-2.5-flash` as the single model for all roles. `google-genai` SDK used separately for context caching (direct SDK, not through litellm). Set `GOOGLE_API_KEY` in `.env`. Tool definitions use Anthropic format (auto-converted to OpenAI format by `_convert_tools` — Gemini uses the same format via litellm).
 
 ### Frontend ↔ Backend Connection
 
@@ -378,7 +415,7 @@ The second micro app. Automates county record searches, document parsing, chain-
 - **Tests**: SQLite via `aiosqlite` with table create/drop per test.
 - **ORM**: SQLAlchemy 2.0 async. `TenantMixin` adds `org_id` FK+index; `TimestampMixin` adds `created_at`/`updated_at`.
 - **Cross-DB Compatibility**: `app/models/compat.py` provides `UUID` and `JSONB` TypeDecorators that render as native PostgreSQL types in prod and `String(36)` / `JSON` in SQLite tests.
-- **Migrations**: Alembic with async engine. Target metadata comes from `app.models.Base`. All TI models are imported in `app/models/__init__.py` so Alembic detects them.
+- **Migrations**: Alembic with async engine. Target metadata comes from `app.models.Base`. All micro app models must be imported in `app/models/__init__.py` (via `ensure_micro_app_models()`) or Alembic won't detect them.
 - **Table naming**: Platform tables use plain names (`organizations`, `users`, etc.). Micro app tables are prefixed with an abbreviation (`ti_packs`, `ti_flags`, etc.) to prevent collisions.
 
 ### Test Setup
@@ -436,14 +473,24 @@ All storage paths are tenant-scoped by org_id at the top level.
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `DATABASE_URL` | `postgresql+asyncpg://...` | Database connection |
-| `JWT_SECRET` | (required) | HS256 signing key |
+| `JWT_SECRET` | `change-me-in-production` | HS256 signing key (fails startup if default + `DEBUG=false`) |
 | `JWT_EXPIRATION_MINUTES` | `1440` | Token lifetime (24h) |
-| `AI_PLATFORM` | `anthropic` | AI provider: anthropic/bedrock/openai/azure |
+| `GOOGLE_API_KEY` | `""` | Google AI API key for Gemini 2.5 Flash |
 | `STORAGE_PROVIDER` | `local` | Storage backend: local/s3 |
-| `PIPELINE_BACKEND` | `temporal` | Pipeline executor: background_tasks/temporal |
+| `STORAGE_PATH` | `./storage` | Local storage base path |
+| `PIPELINE_BACKEND` | `temporal` | Pipeline executor: background_tasks/temporal (TI only; TSA uses background_tasks) |
+| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address |
+| `TEMPORAL_TASK_QUEUE` | `title-intelligence` | Temporal task queue name |
 | `TESSERACT_PATH` | (system default) | Custom Tesseract binary path |
 | `FILE_UPLOAD_MAX_SIZE` | `104857600` (100MB) | Max upload size |
 | `CORS_ORIGINS` | `["http://localhost:3000"]` | Allowed origins |
+| `DEBUG` | `false` | Allows insecure JWT_SECRET default for development |
+| `EXAMINER_BATCH_SIZE` | `10` | Max pages per image batch in TitleExaminerAgent |
+| `EXAMINER_BATCH_SIZE_TEXT` | `25` | Max pages per text-only batch in TitleExaminerAgent |
+| `EXAMINER_BATCH_OVERLAP` | `1` | Page overlap between adjacent batches for context continuity |
+| `EXAMINER_BATCH_COOLDOWN` | `0.0` | Seconds between batch launches (rate limit protection) |
+| `EXAMINER_RENDER_DPI` | `72` | DPI for page image rendering |
+| `EXAMINER_MAX_OUTPUT_TOKENS` | `16384` | Max output tokens per examiner batch call |
 
 ---
 
@@ -454,7 +501,12 @@ All storage paths are tenant-scoped by org_id at the top level.
 - **fpdf2 multi_cell**: Must pass `new_x="LMARGIN", new_y="NEXT"` to avoid width issues in PDF report generation.
 - **Storage type hints**: Always use `StorageProvider` (the abstract base), never `LocalStorage` directly — the implementation is selected at runtime by config.
 - **Tenant scoping in tests**: Tests seed a fixed org (`TEST_ORG_ID`). Any new test data must use this org ID or tenant middleware will reject it.
-- **AI tool definitions**: Written in Anthropic format. `BaseAIService._convert_tools()` auto-converts to OpenAI format when `AI_PLATFORM` is openai/azure. Don't write provider-specific tool schemas.
+- **AI tool definitions**: Written in Anthropic format. `BaseAIService._convert_tools()` auto-converts to OpenAI format (used by Gemini via litellm). Don't write provider-specific tool schemas.
 - **Commit completeness before pushing**: When refactoring (e.g., renaming functions), ensure both the implementation files AND their test files are committed together. CI runs tests from the pushed code — a renamed function with an old test file will break the pipeline.
 - **`backend/storage/` is tracked by git**: Local dev data (uploaded PDFs, OCR output, AI cache, thumbnails) lives here and shows up in `git status`. Stage only `backend/app/` and `frontend/src/` code changes, not storage artifacts.
 - **`gh` CLI token**: The GitHub CLI token may expire. Re-authenticate with `gh auth login -h github.com` if `gh run list` fails.
+- **JWT_SECRET in dev**: With `DEBUG=false` (default), the app refuses to start if `JWT_SECRET` is the insecure default `change-me-in-production`. Set `DEBUG=true` in `.env` for local development, or set a real secret.
+- **Alembic model detection**: New models must be imported in `app/models/__init__.py` (add to `ensure_micro_app_models()`) or `alembic revision --autogenerate` won't generate migrations for them.
+- **Docker dev ports differ from local dev**: `docker-compose.yml` maps PostgreSQL to host port 5436 and frontend to 3001. `start-dev.sh` / local dev use the standard ports (5432, 3000).
+- **Alembic migrations must be applied**: After adding new columns/tables, run `cd backend && PYTHONPATH=. alembic upgrade head` to apply to the running database. Code changes without migration will cause `UndefinedColumnError` at runtime.
+- **google-genai SDK**: Used alongside litellm for Gemini context caching only. The `_context_cache_map` in `base_service.py` is module-level (in-memory, not persistent). Cache handles expire per TTL (default 10 min).

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Integer, Text, ForeignKey, DateTime
+from sqlalchemy import String, Integer, Text, ForeignKey, DateTime, Date
 from app.models.compat import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,14 +18,19 @@ class TAOrder(Base, TenantMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     property_address: Mapped[str] = mapped_column(Text, nullable=False)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    zip_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     parcel_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     county: Mapped[str] = mapped_column(String(100), nullable=False)
     state_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    borrower_name: Mapped[str | None] = mapped_column(String(500), nullable=True)
     legal_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     search_scope: Mapped[str] = mapped_column(
         String(20), nullable=False, default="full"
     )
     search_years: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    order_reference: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    effective_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
     pipeline_stage: Mapped[str | None] = mapped_column(String(50), nullable=True)
     pipeline_error: Mapped[str | None] = mapped_column(Text, nullable=True)

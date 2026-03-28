@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -26,12 +26,17 @@ US_STATES = {
 
 class OrderCreate(BaseModel):
     property_address: str = Field(..., min_length=1, max_length=500)
+    city: str | None = Field(None, max_length=100)
+    zip_code: str | None = Field(None, max_length=20)
     county: str = Field(..., min_length=1, max_length=100)
     state_code: str = Field(..., min_length=2, max_length=2)
+    borrower_name: str | None = Field(None, max_length=500)
     parcel_number: str | None = Field(None, max_length=100)
     legal_description: str | None = None
     search_scope: SearchScope = "full"
     search_years: int = Field(60, ge=1, le=200)
+    order_reference: str | None = Field(None, max_length=200)
+    effective_date: date | None = None
     linked_pack_id: uuid.UUID | None = None
 
     @field_validator("state_code")
@@ -48,12 +53,17 @@ class OrderResponse(BaseModel):
     org_id: uuid.UUID
     created_by: uuid.UUID
     property_address: str
+    city: str | None = None
+    zip_code: str | None = None
     parcel_number: str | None = None
     county: str
     state_code: str
+    borrower_name: str | None = None
     legal_description: str | None = None
     search_scope: SearchScope
     search_years: int
+    order_reference: str | None = None
+    effective_date: date | None = None
     status: OrderStatus
     pipeline_stage: PipelineStage | None = None
     pipeline_error: str | None = None
@@ -69,6 +79,7 @@ class OrderListResponse(BaseModel):
     property_address: str
     county: str
     state_code: str
+    borrower_name: str | None = None
     status: OrderStatus
     pipeline_stage: PipelineStage | None = None
     created_at: datetime

@@ -1,8 +1,11 @@
-"""Temporal workflow definition for the 7-stage pipeline.
+"""Temporal workflow definition for pipeline execution.
 
-Activity timeouts match V2:
-- Render/OCR/Index: 10 min start-to-close, 3 retries
-- AI activities: 20 min start-to-close, 5 retries, backoff coefficient 2
+4-stage pipeline: ingest → render → examine → complete
+
+Activity timeouts:
+- Render: 10 min start-to-close, 3 retries
+- Examine: 30 min start-to-close, 5 retries (single-pass Claude Vision)
+- Other infra: 10 min start-to-close, 3 retries
 """
 
 import logging
@@ -15,10 +18,7 @@ with workflow.unsafe.imports_passed_through():
     from app.micro_apps.title_intelligence.pipeline.temporal_activities import (
         activity_ingest,
         activity_render,
-        activity_ocr,
-        activity_index,
-        activity_ingestion_agent,
-        activity_risk_agent,
+        activity_examine,
         activity_complete,
         activity_mark_completed,
         activity_mark_failed,
@@ -28,7 +28,7 @@ with workflow.unsafe.imports_passed_through():
 
 logger = logging.getLogger(__name__)
 
-# Retry policies matching V2
+# Retry policies
 INFRA_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=2),
     maximum_interval=timedelta(seconds=30),
@@ -58,17 +58,14 @@ HEARTBEAT_TIMEOUT = timedelta(minutes=5)
 STAGES = [
     (activity_ingest, timedelta(minutes=10), INFRA_RETRY, "ingest"),
     (activity_render, timedelta(minutes=10), INFRA_RETRY, "render"),
-    (activity_ocr, timedelta(minutes=10), INFRA_RETRY, "ocr"),
-    (activity_index, timedelta(minutes=10), INFRA_RETRY, "index"),
-    (activity_ingestion_agent, timedelta(minutes=20), AI_RETRY, "ingestion_agent"),
-    (activity_risk_agent, timedelta(minutes=20), AI_RETRY, "risk_agent"),
+    (activity_examine, timedelta(minutes=30), AI_RETRY, "examine"),
     (activity_complete, timedelta(minutes=10), INFRA_RETRY, "complete"),
 ]
 
 
 @workflow.defn
 class ProcessPackWorkflow:
-    """Durable workflow for processing a title pack through 7 stages."""
+    """Durable workflow for processing a title pack through the pipeline."""
 
     @workflow.run
     async def run(self, pack_id: str, org_id: str) -> None:
@@ -86,8 +83,10 @@ class ProcessPackWorkflow:
         except Exception as e:
             workflow.logger.warning(f"Failed to create PipelineRun for pack {pack_id}: {e}")
 
+        failed_stage = "unknown"
         try:
             for activity_fn, timeout, retry_policy, stage_name in STAGES:
+                failed_stage = stage_name
                 await workflow.execute_activity(
                     activity_fn,
                     args=[pack_id, org_id],
@@ -119,12 +118,7 @@ class ProcessPackWorkflow:
             workflow.logger.info(f"Pipeline workflow completed for pack {pack_id}")
 
         except Exception as e:
-            workflow.logger.error(f"Pipeline workflow failed for pack {pack_id}: {e}")
-
-            # Determine which stage failed (last stage in the list that was attempted)
-            failed_stage = "unknown"
-            for _, _, _, stage_name in STAGES:
-                failed_stage = stage_name
+            workflow.logger.error(f"Pipeline workflow failed at stage '{failed_stage}' for pack {pack_id}: {e}")
 
             # Mark pack as failed with audit event
             try:

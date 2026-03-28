@@ -1,8 +1,10 @@
+import asyncio
 import hashlib
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, BackgroundTasks, status
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_settings
@@ -161,6 +163,52 @@ async def get_pipeline_status(
     org_id: uuid.UUID = Depends(get_org_id),
 ):
     return await pipeline_service.get_pipeline_status_or_raise(db, org_id, pack_id)
+
+
+@router.get("/packs/{pack_id}/pipeline/stream")
+async def stream_pipeline_status(
+    pack_id: uuid.UUID,
+    member: User = Depends(get_current_member),
+    org_id: uuid.UUID = Depends(get_org_id),
+):
+    """SSE endpoint that streams pipeline status updates until completion/failure.
+
+    Pushes status every 2 seconds. Clients receive real-time stage transitions
+    instead of polling every 3 seconds. Closes when pipeline completes or fails.
+    """
+    session_factory = get_session_factory()
+
+    async def event_stream():
+        prev_json = ""
+        while True:
+            async with session_factory() as db:
+                status_data = await pipeline_service.get_pipeline_status(db, org_id, pack_id)
+
+            if status_data is None:
+                yield f"data: {json.dumps({'error': 'Pack not found'})}\n\n"
+                return
+
+            current_json = json.dumps(status_data.model_dump(), default=str, sort_keys=True)
+            # Only send if changed (avoid unnecessary frontend re-renders)
+            if current_json != prev_json:
+                yield f"data: {current_json}\n\n"
+                prev_json = current_json
+
+            # Stop streaming on terminal states
+            if status_data.status in ("completed", "failed"):
+                return
+
+            await asyncio.sleep(2)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/packs/{pack_id}/files/{file_id}/download")

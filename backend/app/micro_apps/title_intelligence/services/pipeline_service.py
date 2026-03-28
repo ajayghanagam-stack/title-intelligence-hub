@@ -13,10 +13,7 @@ from app.core.exceptions import NotFoundError
 PIPELINE_STAGES = [
     "ingest",
     "render",
-    "ocr",
-    "index",
-    "ingestion_agent",
-    "risk_agent",
+    "examine",
     "complete",
 ]
 
@@ -55,6 +52,7 @@ async def get_pipeline_status(
         status=pack_status,
         current_stage=current,
         stages=stages,
+        examine_progress=pack.examine_progress if current == "examine" else None,
         error_message=pack.error_message,
     )
 

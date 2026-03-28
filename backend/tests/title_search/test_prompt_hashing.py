@@ -17,6 +17,9 @@ from app.micro_apps.title_search.ai.chain_builder_agent import (
 from app.micro_apps.title_search.ai.anomaly_detector_agent import (
     ANOMALY_SYSTEM_PROMPT, ANOMALY_TOOL,
 )
+from app.micro_apps.title_search.ai.chain_analysis_agent import (
+    CHAIN_ANALYSIS_SYSTEM_PROMPT, CHAIN_ANALYSIS_JSON_SCHEMA,
+)
 from app.micro_apps.title_search.pipeline.version_tracker import (
     hash_string,
     collect_version_info,
@@ -136,7 +139,7 @@ def test_tool_change_changes_hash():
 # ---------------------------------------------------------------------------
 
 def test_version_info_includes_all_hashes():
-    """collect_version_info includes hashes for all 3 agents."""
+    """collect_version_info includes hashes for all agents (combined chain+anomaly)."""
     import app.micro_apps.title_search.pipeline.version_tracker as vt
     vt._cached_version_info = None
     vt._cached_version_key = None
@@ -147,13 +150,13 @@ def test_version_info_includes_all_hashes():
     assert info["parser_prompt_hash"] == hash_string(PARSER_SYSTEM_PROMPT)
     assert info["parser_tool_hash"] == hash_string(json.dumps(PARSER_TOOL, sort_keys=True))
 
-    # Chain
-    assert info["chain_prompt_hash"] == hash_string(CHAIN_SYSTEM_PROMPT)
-    assert info["chain_tool_hash"] == hash_string(json.dumps(CHAIN_TOOL, sort_keys=True))
-
-    # Anomaly
-    assert info["anomaly_prompt_hash"] == hash_string(ANOMALY_SYSTEM_PROMPT)
-    assert info["anomaly_tool_hash"] == hash_string(json.dumps(ANOMALY_TOOL, sort_keys=True))
+    # Chain + Anomaly (both reference the combined ChainAnalysisAgent)
+    combined_prompt_hash = hash_string(CHAIN_ANALYSIS_SYSTEM_PROMPT)
+    combined_schema_hash = hash_string(json.dumps(CHAIN_ANALYSIS_JSON_SCHEMA, sort_keys=True))
+    assert info["chain_prompt_hash"] == combined_prompt_hash
+    assert info["chain_tool_hash"] == combined_schema_hash
+    assert info["anomaly_prompt_hash"] == combined_prompt_hash
+    assert info["anomaly_tool_hash"] == combined_schema_hash
 
 
 def test_version_info_includes_rules_version():

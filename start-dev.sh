@@ -36,6 +36,40 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 # ------------------------------------------------------------------
+# 0. Kill stale processes, clear caches, terminate orphan workflows
+# ------------------------------------------------------------------
+echo -e "${CYAN}[0/5] Cleaning up stale state...${NC}"
+
+# Kill any orphaned Temporal worker processes from previous sessions
+STALE_PIDS=$(pgrep -f "temporal_worker" 2>/dev/null || true)
+if [ -n "$STALE_PIDS" ]; then
+  echo -e "${YELLOW}       Killing stale Temporal worker(s): $STALE_PIDS${NC}"
+  echo "$STALE_PIDS" | xargs kill 2>/dev/null || true
+  sleep 2
+  # Force-kill any that didn't exit gracefully
+  REMAINING=$(pgrep -f "temporal_worker" 2>/dev/null || true)
+  if [ -n "$REMAINING" ]; then
+    echo -e "${YELLOW}       Force-killing stubborn worker(s): $REMAINING${NC}"
+    echo "$REMAINING" | xargs kill -9 2>/dev/null || true
+    sleep 1
+  fi
+fi
+
+# Kill any orphaned uvicorn processes on port 8000
+STALE_UVICORN=$(lsof -ti :8000 2>/dev/null || true)
+if [ -n "$STALE_UVICORN" ]; then
+  echo -e "${YELLOW}       Killing stale process(es) on port 8000: $STALE_UVICORN${NC}"
+  echo "$STALE_UVICORN" | xargs kill 2>/dev/null || true
+  sleep 1
+fi
+
+# Clear Python bytecode caches to ensure fresh imports
+echo -e "${CYAN}       Clearing __pycache__...${NC}"
+find "$BACKEND_DIR" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+echo -e "${GREEN}       Cleanup complete${NC}"
+
+# ------------------------------------------------------------------
 # 1. Start infrastructure (Postgres + Temporal) in Docker
 # ------------------------------------------------------------------
 echo -e "${CYAN}[1/5] Starting Postgres + Temporal (Docker)...${NC}"
@@ -62,6 +96,28 @@ for i in $(seq 1 90); do
   fi
   sleep 2
 done
+
+# Terminate any orphaned Temporal workflows (now that Temporal is up)
+echo -e "${CYAN}       Terminating stale Temporal workflows...${NC}"
+cd "$BACKEND_DIR"
+PYTHONPATH="$BACKEND_DIR" python -c "
+import asyncio
+from temporalio.client import Client
+
+async def cleanup():
+    client = await Client.connect('localhost:7233', namespace='default')
+    count = 0
+    async for wf in client.list_workflows(query=\"ExecutionStatus='Running'\"):
+        handle = client.get_workflow_handle(wf.id, run_id=wf.run_id)
+        await handle.terminate(reason='Stale workflow terminated by start-dev.sh')
+        count += 1
+    if count:
+        print(f'       Terminated {count} stale workflow(s)')
+    else:
+        print('       No stale workflows found')
+
+asyncio.run(cleanup())
+" 2>/dev/null || echo -e "${YELLOW}       Could not check Temporal workflows (non-fatal)${NC}"
 
 # ------------------------------------------------------------------
 # 2. Seed the database

@@ -9,7 +9,7 @@ DocType = Literal[
     "deed", "mortgage", "lien", "judgment", "easement",
     "hoa", "satisfaction", "release", "assignment", "other",
 ]
-ContentFormat = Literal["text", "pdf", "image"]
+ContentFormat = Literal["text", "pdf", "image", "html"]
 
 DOC_TYPE_LABELS: dict[str, str] = {
     "deed": "Deed",
@@ -52,6 +52,7 @@ class DocumentResponse(BaseModel):
     summary: str | None = None
     confidence: float | None = None
     needs_review: bool
+    doc_metadata: dict | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

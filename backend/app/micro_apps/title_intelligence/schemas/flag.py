@@ -40,7 +40,10 @@ class FlagResponse(BaseModel):
 
 class FlagListResponse(BaseModel):
     flags: list[FlagResponse]
-    counts: dict[str, int]  # severity → count
+    counts: dict[str, int]  # severity → count (unfiltered)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
 
 
 class RecommendationResponse(BaseModel):

@@ -20,11 +20,16 @@ export default function NewOrderPage() {
   const { currentOrgId } = useOrg();
   const [form, setForm] = useState({
     property_address: "",
+    city: "",
+    zip_code: "",
     county: "",
     state_code: "",
+    borrower_name: "",
     parcel_number: "",
     search_scope: "full",
     search_years: 60,
+    order_reference: "",
+    effective_date: new Date().toISOString().split("T")[0],
   });
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +42,12 @@ export default function NewOrderPage() {
     try {
       const order = await createOrder(currentOrgId, {
         ...form,
+        city: form.city || undefined,
+        zip_code: form.zip_code || undefined,
+        borrower_name: form.borrower_name || undefined,
         parcel_number: form.parcel_number || undefined,
+        order_reference: form.order_reference || undefined,
+        effective_date: form.effective_date || undefined,
       });
       await processOrder(currentOrgId, order.id);
       router.push(`/apps/title-search/orders/${order.id}`);
@@ -63,26 +73,40 @@ export default function NewOrderPage() {
         </div>
       )}
 
+      {/* Property Information */}
       <div className="section-card space-y-6">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Property Information</h2>
+
+        <div className="space-y-2">
+          <label htmlFor="ts-borrower" className="text-sm font-semibold">Borrower / Current Owner</label>
+          <Input
+            id="ts-borrower"
+            value={form.borrower_name}
+            onChange={(e) => setForm({ ...form, borrower_name: e.target.value })}
+            placeholder="Jane Doe"
+            className="h-11"
+          />
+        </div>
+
         <div className="space-y-2">
           <label htmlFor="ts-property-address" className="text-sm font-semibold">Property Address *</label>
           <Input
             id="ts-property-address"
             value={form.property_address}
             onChange={(e) => setForm({ ...form, property_address: e.target.value })}
-            placeholder="123 Main St, Springfield, IL 62701"
+            placeholder="4471 Sherman Hills Pkwy"
             className="h-11"
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           <div className="space-y-2">
-            <label htmlFor="ts-county" className="text-sm font-semibold">County *</label>
+            <label htmlFor="ts-city" className="text-sm font-semibold">City / Municipality</label>
             <Input
-              id="ts-county"
-              value={form.county}
-              onChange={(e) => setForm({ ...form, county: e.target.value })}
-              placeholder="Sangamon"
+              id="ts-city"
+              value={form.city}
+              onChange={(e) => setForm({ ...form, city: e.target.value })}
+              placeholder="Jacksonville"
               className="h-11"
             />
           </div>
@@ -100,22 +124,49 @@ export default function NewOrderPage() {
               ))}
             </select>
           </div>
-        </div>
-
-        <div className="space-y-2">
-          <label htmlFor="ts-parcel" className="text-sm font-semibold">Parcel Number (optional)</label>
-          <Input
-            id="ts-parcel"
-            value={form.parcel_number}
-            onChange={(e) => setForm({ ...form, parcel_number: e.target.value })}
-            placeholder="12-34-567-890"
-            className="h-11"
-          />
+          <div className="space-y-2">
+            <label htmlFor="ts-zip" className="text-sm font-semibold">ZIP Code</label>
+            <Input
+              id="ts-zip"
+              value={form.zip_code}
+              onChange={(e) => setForm({ ...form, zip_code: e.target.value })}
+              placeholder="32210"
+              className="h-11"
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <label htmlFor="ts-scope" className="text-sm font-semibold">Search Scope</label>
+            <label htmlFor="ts-county" className="text-sm font-semibold">County *</label>
+            <Input
+              id="ts-county"
+              value={form.county}
+              onChange={(e) => setForm({ ...form, county: e.target.value })}
+              placeholder="Duval"
+              className="h-11"
+            />
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="ts-parcel" className="text-sm font-semibold">Parcel Number</label>
+            <Input
+              id="ts-parcel"
+              value={form.parcel_number}
+              onChange={(e) => setForm({ ...form, parcel_number: e.target.value })}
+              placeholder="012875-1145"
+              className="h-11"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Search Parameters */}
+      <div className="section-card space-y-6">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Search Parameters</h2>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <label htmlFor="ts-scope" className="text-sm font-semibold">Product Type</label>
             <select
               id="ts-scope"
               value={form.search_scope}
@@ -123,8 +174,7 @@ export default function NewOrderPage() {
               className="h-11 w-full rounded-md border border-input bg-background px-3"
             >
               <option value="full">Full Search</option>
-              <option value="current_owner">Current Owner</option>
-              <option value="limited">Limited</option>
+              <option value="current_owner">Current Owner Search</option>
             </select>
           </div>
           <div className="space-y-2">
@@ -141,6 +191,32 @@ export default function NewOrderPage() {
           </div>
         </div>
 
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <label htmlFor="ts-effective-date" className="text-sm font-semibold">Effective Date</label>
+            <Input
+              id="ts-effective-date"
+              type="date"
+              value={form.effective_date}
+              onChange={(e) => setForm({ ...form, effective_date: e.target.value })}
+              className="h-11"
+            />
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="ts-order-ref" className="text-sm font-semibold">Order / Loan #</label>
+            <Input
+              id="ts-order-ref"
+              value={form.order_reference}
+              onChange={(e) => setForm({ ...form, order_reference: e.target.value })}
+              placeholder="Client reference number"
+              className="h-11"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Submit */}
+      <div className="section-card">
         <button
           onClick={handleCreate}
           disabled={!form.property_address || !form.county || !form.state_code || creating}

@@ -1,11 +1,13 @@
 """Temporal activity wrappers for pipeline stages.
 
 Each activity wraps a pipeline stage function with proper DB session management.
-Activity timeouts match V2:
-- Render/OCR/Index: 10 min start-to-close, 3 retries
-- AI activities: 20 min start-to-close, 5 retries, backoff coefficient 2
+Activity timeouts:
+- Render: 10 min start-to-close, 3 retries
+- Examine: 30 min start-to-close, 5 retries (single-pass Claude Vision)
+- Other infra: 10 min start-to-close, 3 retries
 """
 
+import asyncio
 import uuid
 import logging
 import traceback
@@ -16,11 +18,8 @@ from temporalio import activity
 from app.micro_apps.title_intelligence.pipeline.stages import (
     stage_ingest,
     stage_render,
-    stage_ocr,
-    stage_index,
-    stage_ingestion_agent,
-    stage_risk_agent,
     stage_complete,
+    stage_examine,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,10 +28,7 @@ logger = logging.getLogger(__name__)
 STAGE_NAMES = {
     stage_ingest: "ingest",
     stage_render: "render",
-    stage_ocr: "ocr",
-    stage_index: "index",
-    stage_ingestion_agent: "ingestion_agent",
-    stage_risk_agent: "risk_agent",
+    stage_examine: "examine",
     stage_complete: "complete",
 }
 
@@ -46,6 +42,13 @@ def configure_activities(session_factory, storage):
     global _session_factory, _storage
     _session_factory = session_factory
     _storage = storage
+
+
+async def _heartbeat_loop(stage_name: str, interval: float = 30.0):
+    """Send periodic Temporal heartbeats while a stage is running."""
+    while True:
+        await asyncio.sleep(interval)
+        activity.heartbeat(f"running_{stage_name}")
 
 
 async def _run_stage(stage_fn, pack_id: str, org_id: str):
@@ -71,11 +74,35 @@ async def _run_stage(stage_fn, pack_id: str, org_id: str):
         pack.status = "processing"
         await db.commit()
 
-    # Run the stage
+    # Run the stage with background heartbeat to prevent Temporal timeout
     async with _session_factory() as db:
-        await stage_fn(pack_uuid, org_uuid, db, _storage)
+        heartbeat_task = asyncio.create_task(_heartbeat_loop(stage_name))
+        try:
+            await stage_fn(pack_uuid, org_uuid, db, _storage)
+        except Exception as e:
+            # Truncate error details to prevent exceeding Temporal gRPC
+            # max message size (4 MB). Deep SQLAlchemy/asyncpg tracebacks
+            # with large SQL parameters can produce 10+ MB failure payloads.
+            error_msg = str(e)
+            MAX_ERROR_LEN = 5000
+            if len(error_msg) > MAX_ERROR_LEN:
+                error_msg = error_msg[:MAX_ERROR_LEN] + "... [truncated]"
+            tb = traceback.format_exc()
+            if len(tb) > MAX_ERROR_LEN:
+                tb = tb[:MAX_ERROR_LEN] + "... [truncated]"
+            logger.error(
+                f"Stage '{stage_name}' failed for pack {pack_id}: {error_msg}\n{tb}"
+            )
+            raise RuntimeError(
+                f"Stage '{stage_name}' failed: {error_msg}"
+            ) from None
+        finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
 
-    # Heartbeat after stage completion to signal liveness
     activity.heartbeat(f"completed_{stage_name}")
 
 
@@ -92,27 +119,9 @@ async def activity_render(pack_id: str, org_id: str) -> None:
 
 
 @activity.defn
-async def activity_ocr(pack_id: str, org_id: str) -> None:
-    logger.info(f"Temporal activity: ocr for pack {pack_id}")
-    await _run_stage(stage_ocr, pack_id, org_id)
-
-
-@activity.defn
-async def activity_index(pack_id: str, org_id: str) -> None:
-    logger.info(f"Temporal activity: index for pack {pack_id}")
-    await _run_stage(stage_index, pack_id, org_id)
-
-
-@activity.defn
-async def activity_ingestion_agent(pack_id: str, org_id: str) -> None:
-    logger.info(f"Temporal activity: ingestion_agent for pack {pack_id}")
-    await _run_stage(stage_ingestion_agent, pack_id, org_id)
-
-
-@activity.defn
-async def activity_risk_agent(pack_id: str, org_id: str) -> None:
-    logger.info(f"Temporal activity: risk_agent for pack {pack_id}")
-    await _run_stage(stage_risk_agent, pack_id, org_id)
+async def activity_examine(pack_id: str, org_id: str) -> None:
+    logger.info(f"Temporal activity: examine for pack {pack_id}")
+    await _run_stage(stage_examine, pack_id, org_id)
 
 
 @activity.defn
@@ -140,6 +149,20 @@ async def activity_create_pipeline_run(pack_id: str, org_id: str) -> str:
     settings = get_settings()
     version_info = collect_version_info(settings)
 
+    # Separate PipelineRun model columns from extra metadata keys
+    PIPELINE_RUN_COLUMNS = {
+        "ai_platform", "ai_model", "ingestion_prompt_hash", "risk_prompt_hash",
+        "extraction_tool_hash", "risk_tool_hash", "ocr_engine", "chunker_version",
+        "rules_version", "pipeline_backend", "version_metadata",
+    }
+    model_fields = {k: v for k, v in version_info.items() if k in PIPELINE_RUN_COLUMNS}
+    # Merge extra keys into version_metadata
+    extra_keys = {k: v for k, v in version_info.items() if k not in PIPELINE_RUN_COLUMNS}
+    if extra_keys:
+        meta = dict(model_fields.get("version_metadata") or {})
+        meta.update(extra_keys)
+        model_fields["version_metadata"] = meta
+
     async with _session_factory() as db:
         pack_files = (await db.execute(
             select(PackFile).where(PackFile.pack_id == pack_uuid, PackFile.org_id == org_uuid)
@@ -151,7 +174,7 @@ async def activity_create_pipeline_run(pack_id: str, org_id: str) -> str:
             pack_id=pack_uuid,
             input_file_hash=input_file_hash,
             status="running",
-            **version_info,
+            **model_fields,
         )
         db.add(pipeline_run)
         await db.commit()

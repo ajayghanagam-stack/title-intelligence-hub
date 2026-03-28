@@ -374,6 +374,7 @@ def test_parse_serialization_roundtrip_golden():
     for doc in docs:
         doc.needs_review = doc.confidence < LOW_CONFIDENCE_THRESHOLD if doc.confidence else False
         doc.raw_document_id = None
+        doc.doc_metadata = None
 
     serialized = _serialize_parse_output(docs)
     deserialized = json.loads(serialized)
@@ -432,6 +433,9 @@ async def golden_pipeline_order(db_session: AsyncSession, seed_data):
     cs = TACountySource(
         county="Golden", state_code="IL",
         source_type="recorder", availability="digital", is_active=True,
+        portal_type="beacon",
+        portal_url="https://beacon.schneidercorp.com/Application.aspx?AppID=999",
+        search_config={"app_id": "999", "layer_id": "1", "page_id": "1"},
     )
     db_session.add(cs)
 
@@ -447,57 +451,139 @@ async def golden_pipeline_order(db_session: AsyncSession, seed_data):
     return order_id
 
 
+def _golden_pipeline_mocks():
+    """Return patchers for fetch + AI agents used in golden pipeline test."""
+    from unittest.mock import patch, MagicMock, AsyncMock
+    from app.micro_apps.title_search.services.county_data_fetcher import FetchResult
+
+    # Mock county fetch
+    fetch_result = FetchResult(
+        content="<html>Golden county data</html>",
+        content_format="html",
+        source_url="https://beacon.schneidercorp.com/test",
+        success=True,
+    )
+    mock_fetcher_cls = MagicMock()
+    mock_fetcher_inst = MagicMock()
+    mock_fetcher_inst.fetch = AsyncMock(return_value=fetch_result)
+    mock_fetcher_inst.close = AsyncMock()
+    mock_fetcher_inst.__aenter__ = AsyncMock(return_value=mock_fetcher_inst)
+    mock_fetcher_inst.__aexit__ = AsyncMock(return_value=False)
+    mock_fetcher_cls.return_value = mock_fetcher_inst
+
+    # Mock AI extractor
+    mock_extractor_cls = MagicMock()
+    mock_extractor_inst = AsyncMock()
+    mock_extractor_inst.extract_all = AsyncMock(return_value={
+        "property_info": {
+            "owner_name": "Golden Owner",
+            "address": "999 Golden St",
+            "parcel_number": "G-001",
+        },
+        "deeds": [{
+            "doc_type": "deed",
+            "recording_date": "2020-01-15",
+            "instrument_number": "2020-001234",
+            "grantor": "John Smith",
+            "grantee": "Jane Doe",
+            "consideration": 250000.0,
+        }],
+        "mortgages": [{
+            "borrower": "Jane Doe",
+            "lender": "First National Bank",
+            "recording_date": "2020-02-01",
+            "instrument_number": "2020-001235",
+            "loan_amount": 200000.0,
+        }],
+        "liens": [],
+        "confidence": 0.92,
+    })
+    mock_extractor_cls.return_value = mock_extractor_inst
+
+    # Mock combined chain analysis agent
+    mock_analysis_cls = MagicMock()
+    mock_analysis_inst = AsyncMock()
+    def _analysis_analyze(documents):
+        links = []
+        for i, doc in enumerate(documents):
+            links.append({
+                "position": i + 1,
+                "link_type": "conveyance" if doc.get("doc_type") == "deed" else "encumbrance",
+                "document_id": doc.get("id"),
+                "from_party": doc.get("grantor"),
+                "to_party": doc.get("grantee"),
+                "effective_date": doc.get("recording_date"),
+                "is_gap": False,
+            })
+        return {"chain_links": links, "anomalies": [], "chain_complete": True}
+    mock_analysis_inst.analyze = AsyncMock(side_effect=_analysis_analyze)
+    mock_analysis_cls.return_value = mock_analysis_inst
+
+    return [
+        patch("app.micro_apps.title_search.services.county_data_fetcher.CountyDataFetcher", mock_fetcher_cls),
+        patch("app.micro_apps.title_search.ai.property_data_extractor.PropertyDataExtractorAgent", mock_extractor_cls),
+        patch("app.micro_apps.title_search.ai.chain_analysis_agent.ChainAnalysisAgent", mock_analysis_cls),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_pipeline_output_deterministic(golden_pipeline_order):
     """Run the full pipeline twice — documents, chain links, and flags must be identical."""
     order_id = golden_pipeline_order
 
-    # First run
-    await run_pipeline(order_id, TEST_ORG_ID, test_session_factory)
+    patchers = _golden_pipeline_mocks()
+    for p in patchers:
+        p.start()
+    try:
+        # First run
+        await run_pipeline(order_id, TEST_ORG_ID, test_session_factory)
 
-    async with test_session_factory() as db:
-        docs1 = (await db.execute(
-            select(TADocument).where(TADocument.order_id == order_id).order_by(TADocument.recording_ref)
-        )).scalars().all()
-        links1 = (await db.execute(
-            select(TAChainLink).where(TAChainLink.order_id == order_id).order_by(TAChainLink.position)
-        )).scalars().all()
-        flags1 = (await db.execute(
-            select(TAFlag).where(TAFlag.order_id == order_id).order_by(TAFlag.flag_type, TAFlag.description)
-        )).scalars().all()
-
-    doc_types_1 = [(d.doc_type, d.recording_ref, d.confidence) for d in docs1]
-    link_types_1 = [(l.position, l.link_type) for l in links1]
-    flag_types_1 = [(f.flag_type, f.severity, f.description) for f in flags1]
-
-    assert len(docs1) >= 1
-
-    # Second run — re-run parse/chain/package/complete stages directly
-    # (skipping order/retrieve to avoid duplicate source assignments)
-    for stage_name in ("parse", "chain", "package", "complete"):
         async with test_session_factory() as db:
-            await STAGE_HANDLERS[stage_name](order_id, TEST_ORG_ID, db)
-            await db.commit()
+            docs1 = (await db.execute(
+                select(TADocument).where(TADocument.order_id == order_id).order_by(TADocument.recording_ref)
+            )).scalars().all()
+            links1 = (await db.execute(
+                select(TAChainLink).where(TAChainLink.order_id == order_id).order_by(TAChainLink.position)
+            )).scalars().all()
+            flags1 = (await db.execute(
+                select(TAFlag).where(TAFlag.order_id == order_id).order_by(TAFlag.flag_type, TAFlag.description)
+            )).scalars().all()
 
-    async with test_session_factory() as db:
-        docs2 = (await db.execute(
-            select(TADocument).where(TADocument.order_id == order_id).order_by(TADocument.recording_ref)
-        )).scalars().all()
-        links2 = (await db.execute(
-            select(TAChainLink).where(TAChainLink.order_id == order_id).order_by(TAChainLink.position)
-        )).scalars().all()
-        flags2 = (await db.execute(
-            select(TAFlag).where(TAFlag.order_id == order_id).order_by(TAFlag.flag_type, TAFlag.description)
-        )).scalars().all()
+        doc_types_1 = [(d.doc_type, d.recording_ref, d.confidence) for d in docs1]
+        link_types_1 = [(l.position, l.link_type) for l in links1]
+        flag_types_1 = [(f.flag_type, f.severity, f.description) for f in flags1]
 
-    doc_types_2 = [(d.doc_type, d.recording_ref, d.confidence) for d in docs2]
-    link_types_2 = [(l.position, l.link_type) for l in links2]
-    flag_types_2 = [(f.flag_type, f.severity, f.description) for f in flags2]
+        assert len(docs1) >= 1
 
-    # Identical business outputs
-    assert doc_types_2 == doc_types_1, "Documents differ between runs"
-    assert link_types_2 == link_types_1, "Chain links differ between runs"
-    assert flag_types_2 == flag_types_1, "Flags differ between runs"
+        # Second run — re-run parse/chain/package/complete stages directly
+        # (skipping order/retrieve to avoid duplicate source assignments)
+        for stage_name in ("parse", "chain", "package", "complete"):
+            async with test_session_factory() as db:
+                await STAGE_HANDLERS[stage_name](order_id, TEST_ORG_ID, db)
+                await db.commit()
+
+        async with test_session_factory() as db:
+            docs2 = (await db.execute(
+                select(TADocument).where(TADocument.order_id == order_id).order_by(TADocument.recording_ref)
+            )).scalars().all()
+            links2 = (await db.execute(
+                select(TAChainLink).where(TAChainLink.order_id == order_id).order_by(TAChainLink.position)
+            )).scalars().all()
+            flags2 = (await db.execute(
+                select(TAFlag).where(TAFlag.order_id == order_id).order_by(TAFlag.flag_type, TAFlag.description)
+            )).scalars().all()
+
+        doc_types_2 = [(d.doc_type, d.recording_ref, d.confidence) for d in docs2]
+        link_types_2 = [(l.position, l.link_type) for l in links2]
+        flag_types_2 = [(f.flag_type, f.severity, f.description) for f in flags2]
+
+        # Identical business outputs
+        assert doc_types_2 == doc_types_1, "Documents differ between runs"
+        assert link_types_2 == link_types_1, "Chain links differ between runs"
+        assert flag_types_2 == flag_types_1, "Flags differ between runs"
+    finally:
+        for p in patchers:
+            p.stop()
 
 
 # ---------------------------------------------------------------------------

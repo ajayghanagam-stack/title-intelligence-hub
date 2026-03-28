@@ -9,6 +9,16 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+
+# Silence noisy third-party loggers that dump full request/response payloads
+# (including raw PDF binary bytes from Gemini API calls)
+for _noisy in ("httpx", "httpcore", "litellm", "LiteLLM", "google.genai",
+               "google.auth", "google.api_core", "googleapis", "urllib3",
+               "asyncpg", "grpc", "hpack"):
+    _logger = logging.getLogger(_noisy)
+    _logger.setLevel(logging.WARNING)
+    # LiteLLM adds its own StreamHandler at DEBUG level — remove it
+    _logger.handlers = [h for h in _logger.handlers if h.level > logging.INFO]
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 

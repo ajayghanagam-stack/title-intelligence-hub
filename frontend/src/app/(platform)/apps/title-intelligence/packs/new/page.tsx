@@ -2,32 +2,32 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { Input } from "@/components/ui/input";
 import { UploadDropzone } from "@/components/title-intelligence/upload-dropzone";
 import { useOrg } from "@/hooks/use-org";
 import { uploadFiles } from "@/lib/api";
-import { X, FileText, ArrowRight } from "lucide-react";
+import { X, FileText } from "lucide-react";
 import type { Pack } from "@/lib/ti-types";
 
 export default function NewPackPage() {
   const router = useRouter();
   const { currentOrgId, orgFetch } = useOrg();
-  const [name, setName] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [creating, setCreating] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleCreate = async () => {
-    if (!name.trim() || files.length === 0 || !currentOrgId) return;
+    if (files.length === 0 || !currentOrgId) return;
+
+    // Auto-generate pack name from first file (strip extension)
+    const autoName = files[0].name.replace(/\.[^.]+$/, "");
 
     setCreating(true);
     setError(null);
     try {
       const pack = await orgFetch<Pack>("/api/v1/apps/title-intelligence/packs", {
         method: "POST",
-        body: JSON.stringify({ name: name.trim() }),
+        body: JSON.stringify({ name: autoName }),
       });
 
       setUploading(true);
@@ -67,65 +67,51 @@ export default function NewPackPage() {
       )}
 
       <div className="section-card space-y-6">
-        <div className="space-y-2">
-          <label htmlFor="pack-name" className="text-sm font-semibold">Pack Name</label>
-          <Input
-            id="pack-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g., 123 Main Street Title Commitment"
-            className="h-11"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <label htmlFor="file-upload" className="text-sm font-semibold">Upload PDFs</label>
-          <UploadDropzone
-            onFilesSelected={(selected) =>
-              setFiles((prev) => [...prev, ...selected])
-            }
-            uploading={uploading}
-          />
-          {files.length > 0 && (
-            <div className="mt-3 space-y-2">
-              {files.map((f, i) => (
-                <div
-                  key={i}
-                  className="flex items-center justify-between rounded-lg bg-muted/40 px-4 py-2.5 text-sm group"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <FileText className="h-4 w-4 text-muted-foreground" />
-                    <span className="truncate font-medium">{f.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {(f.size / 1024 / 1024).toFixed(1)} MB
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
-                    aria-label={`Remove ${f.name}`}
-                    className="rounded-full p-1.5 text-muted-foreground hover:bg-background hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <button
-          onClick={handleCreate}
-          disabled={!name.trim() || files.length === 0 || creating}
-          className="w-full btn-cta py-3.5"
-        >
-          {creating
-            ? uploading
-              ? "Uploading files..."
-              : "Creating pack..."
-            : "Analyze Package"
+        <UploadDropzone
+          onFilesSelected={(selected) =>
+            setFiles((prev) => [...prev, ...selected])
           }
-        </button>
+          uploading={uploading}
+        />
+        {files.length > 0 && (
+          <div className="space-y-2">
+            {files.map((f, i) => (
+              <div
+                key={i}
+                className="flex items-center justify-between rounded-lg bg-muted/40 px-4 py-2.5 text-sm group"
+              >
+                <div className="flex items-center gap-2.5">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  <span className="truncate font-medium">{f.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {(f.size / 1024 / 1024).toFixed(1)} MB
+                  </span>
+                </div>
+                <button
+                  onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
+                  aria-label={`Remove ${f.name}`}
+                  className="rounded-full p-1.5 text-muted-foreground hover:bg-background hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      <button
+        onClick={handleCreate}
+        disabled={files.length === 0 || creating}
+        className="w-full btn-cta py-3.5"
+      >
+        {creating
+          ? uploading
+            ? "Uploading files..."
+            : "Creating pack..."
+          : "Analyze Package"
+        }
+      </button>
     </div>
   );
 }

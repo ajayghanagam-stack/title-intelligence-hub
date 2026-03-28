@@ -13,6 +13,7 @@ class PageResponse(BaseModel):
     thumb_uri: str
     ocr_uri: str | None = None
     ocr_text: str | None = None
+    page_type: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

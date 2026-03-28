@@ -5,17 +5,9 @@ import { cn } from "@/lib/utils";
 import { STAGE_LABELS } from "@/lib/ti-constants";
 import type { StageStatus } from "@/lib/ti-types";
 
-const STAGES = [
-  "ingest",
-  "render",
-  "ocr",
-  "index",
-  "ingestion_agent",
-  "risk_agent",
-  "complete",
-];
-
-export function PipelineProgress({ stages }: { stages: StageStatus[] }) {
+export function PipelineProgress({ stages, examineProgress }: { stages: StageStatus[]; examineProgress?: string | null }) {
+  // Derive stage keys from the API response instead of a hardcoded list
+  const stageKeys = stages.map((s) => s.stage);
   const stageMap = new Map(stages.map((s) => [s.stage, s.status]));
   const completed = stages.filter((s) => s.status === "completed").length;
   const failed = stages.some((s) => s.status === "failed");
@@ -64,7 +56,7 @@ export function PipelineProgress({ stages }: { stages: StageStatus[] }) {
 
       {/* Pipeline stages — circles + connecting lines */}
       <div className="flex items-start gap-0 overflow-x-auto pb-1">
-        {STAGES.map((stageKey, i) => {
+        {stageKeys.map((stageKey, i) => {
           const status = stageMap.get(stageKey) || "pending";
           const isCompleted = status === "completed";
           const isCurrent = status === "running";
@@ -104,8 +96,13 @@ export function PipelineProgress({ stages }: { stages: StageStatus[] }) {
                 >
                   {STAGE_LABELS[stageKey] || stageKey}
                 </span>
+                {isCurrent && stageKey === "examine" && examineProgress && (
+                  <span className="mt-0.5 text-[9px] text-amber-600/80 whitespace-nowrap">
+                    {examineProgress}
+                  </span>
+                )}
               </div>
-              {i < STAGES.length - 1 && (
+              {i < stageKeys.length - 1 && (
                 <div
                   className={cn(
                     "mt-[18px] mx-1.5 h-0.5 w-10 flex-shrink-0 rounded-full transition-colors duration-500",

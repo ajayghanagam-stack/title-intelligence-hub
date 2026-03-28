@@ -21,8 +21,12 @@ boto3==1.35.*
 aiobotocore==2.15.*
 # AI Provider (Phase 3: Multi-provider via litellm)
 litellm==1.55.*
+# Gemini context caching (direct SDK for explicit cache control)
+google-genai>=1.0.0
 # Report Export (Phase 7: PDF generation)
 fpdf2==2.8.*
+# Fuzzy string matching for deterministic party name comparison
+rapidfuzz>=3.0.0
 # Rate limiting
 slowapi>=0.1.9
 # Pipeline (Phase 9: Optional Temporal orchestration)

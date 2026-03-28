@@ -229,12 +229,23 @@ export default function DocumentsPage() {
                 />
               )}
               <div className={cn(
-                "flex items-center justify-center py-1 text-[10px] font-semibold transition-colors",
+                "flex items-center justify-center gap-1 py-1 text-[10px] font-semibold transition-colors",
                 isActive
                   ? "bg-primary text-primary-foreground"
                   : "bg-muted/60 text-muted-foreground group-hover:bg-muted"
               )}>
                 {page.page_number}
+                {page.page_type && page.page_type !== "content" && (
+                  <span className={cn(
+                    "text-[8px] px-1 rounded font-medium leading-none",
+                    page.page_type === "blank" && "bg-gray-200 text-gray-500",
+                    page.page_type === "cover" && "bg-blue-100 text-blue-600",
+                    page.page_type === "signature" && "bg-amber-100 text-amber-600",
+                    !["blank", "cover", "signature"].includes(page.page_type) && "bg-muted text-muted-foreground",
+                  )}>
+                    {page.page_type}
+                  </span>
+                )}
               </div>
               {/* Section indicator dot */}
               {pageSection && (

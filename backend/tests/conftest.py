@@ -6,7 +6,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.core.auth import AuthenticatedUser
 from app.core.deps import get_db, get_current_member, require_platform_admin
 from app.models import Base, ensure_micro_app_models
@@ -25,11 +25,22 @@ def get_test_settings():
         JWT_SECRET="test-secret-key",
         CORS_ORIGINS=["http://localhost:3000"],
         STORAGE_PATH="./test_storage",
+        PIPELINE_MODE="legacy",
     )
 
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
 test_session_factory = async_sessionmaker(test_engine, expire_on_commit=False)
+
+# Ensure PIPELINE_MODE env var is valid for tests, overriding any .env file value.
+# This prevents pydantic validation errors when Settings() reads PIPELINE_MODE=examiner
+# from the local .env file.
+import os
+os.environ.setdefault("PIPELINE_MODE", "legacy")
+if os.environ.get("PIPELINE_MODE") not in ("native_pdf", "legacy"):
+    os.environ["PIPELINE_MODE"] = "legacy"
+# Clear any cached settings from prior test runs
+get_settings.cache_clear()
 
 # Fixed test IDs
 TEST_AUTH_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")

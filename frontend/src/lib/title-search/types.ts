@@ -3,12 +3,17 @@ export interface TSOrder {
   org_id: string;
   created_by: string;
   property_address: string;
+  city: string | null;
+  zip_code: string | null;
   parcel_number: string | null;
   county: string;
   state_code: string;
+  borrower_name: string | null;
   legal_description: string | null;
   search_scope: string;
   search_years: number;
+  order_reference: string | null;
+  effective_date: string | null;
   status: string;
   pipeline_stage: string | null;
   pipeline_error: string | null;
@@ -22,6 +27,7 @@ export interface TSOrderListItem {
   property_address: string;
   county: string;
   state_code: string;
+  borrower_name: string | null;
   status: string;
   pipeline_stage: string | null;
   created_at: string;

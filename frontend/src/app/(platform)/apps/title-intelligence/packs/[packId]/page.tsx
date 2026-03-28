@@ -182,7 +182,7 @@ export default function PackOverviewPage() {
       </div>
 
       {/* Pipeline Progress */}
-      {pipeline && <PipelineProgress stages={pipeline.stages} />}
+      {pipeline && <PipelineProgress stages={pipeline.stages} examineProgress={pipeline.examine_progress} />}
 
       {/* Error message */}
       {pack.error_message && (

@@ -22,6 +22,35 @@ async def test_list_flags(client: AsyncClient, sample_pack_with_data):
     assert len(data["flags"]) == 1
     assert data["flags"][0]["flag_type"] == "unresolved_lien"
     assert data["counts"]["high"] == 1
+    assert data["total"] == 1
+    assert data["limit"] == 50
+    assert data["offset"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_flags_with_severity_filter(client: AsyncClient, sample_pack_with_data):
+    response = await client.get(
+        f"/api/v1/apps/title-intelligence/packs/{TEST_PACK_ID}/flags?severity=critical",
+        headers={"X-Org-Id": str(TEST_ORG_ID)},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["flags"]) == 0
+    assert data["total"] == 0
+    # counts remain unfiltered
+    assert data["counts"]["high"] == 1
+
+
+@pytest.mark.asyncio
+async def test_list_flags_with_pagination_params(client: AsyncClient, sample_pack_with_data):
+    response = await client.get(
+        f"/api/v1/apps/title-intelligence/packs/{TEST_PACK_ID}/flags?limit=10&offset=0",
+        headers={"X-Org-Id": str(TEST_ORG_ID)},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["limit"] == 10
+    assert data["offset"] == 0
 
 
 @pytest.mark.asyncio

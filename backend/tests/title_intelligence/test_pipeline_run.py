@@ -41,13 +41,13 @@ async def test_create_pipeline_run(db_session: AsyncSession, sample_pack):
         org_id=TEST_ORG_ID,
         pack_id=TEST_PACK_ID,
         input_file_hash="abc123",
-        ai_platform="anthropic",
-        ai_model="claude-haiku-4-5-20251001",
+        ai_platform="gemini",
+        ai_model="gemini/gemini-2.5-flash",
         ingestion_prompt_hash="hash1",
         risk_prompt_hash="hash2",
         extraction_tool_hash="ext_hash_abc",
         risk_tool_hash="risk_hash_xyz",
-        ocr_engine="tesseract 5.3.0",
+        ocr_engine="gemini_vision",
         chunker_version="hierarchical_v1",
         rules_version="weighted_5cat_v2",
         pipeline_backend="background_tasks",
@@ -64,8 +64,8 @@ async def test_create_pipeline_run(db_session: AsyncSession, sample_pack):
 
     assert retrieved.pack_id == TEST_PACK_ID
     assert retrieved.org_id == TEST_ORG_ID
-    assert retrieved.ai_platform == "anthropic"
-    assert retrieved.ai_model == "claude-haiku-4-5-20251001"
+    assert retrieved.ai_platform == "gemini"
+    assert retrieved.ai_model == "gemini/gemini-2.5-flash"
     assert retrieved.extraction_tool_hash == "ext_hash_abc"
     assert retrieved.risk_tool_hash == "risk_hash_xyz"
     assert retrieved.status == "running"
@@ -82,13 +82,13 @@ async def test_pipeline_run_tenant_scoped(db_session: AsyncSession, sample_pack)
     run = PipelineRun(
         org_id=TEST_ORG_ID,
         pack_id=TEST_PACK_ID,
-        ai_platform="anthropic",
-        ai_model="claude-haiku-4-5-20251001",
+        ai_platform="gemini",
+        ai_model="gemini/gemini-2.5-flash",
         ingestion_prompt_hash="hash1",
         risk_prompt_hash="hash2",
         extraction_tool_hash="ext_hash",
         risk_tool_hash="risk_hash",
-        ocr_engine="tesseract 5.3.0",
+        ocr_engine="gemini_vision",
         chunker_version="hierarchical_v1",
         rules_version="weighted_5cat_v2",
         pipeline_backend="background_tasks",
@@ -137,8 +137,8 @@ def test_collect_version_info_returns_required_keys():
     settings = Settings(
         DATABASE_URL="sqlite+aiosqlite:///./test.db",
         JWT_SECRET="test-secret",
-        AI_PLATFORM="anthropic",
         PIPELINE_BACKEND="background_tasks",
+        PIPELINE_MODE="legacy",
         DEBUG=True,
     )
     info = collect_version_info(settings)
@@ -158,8 +158,8 @@ def test_collect_version_info_returns_required_keys():
     }
     assert required_keys.issubset(info.keys())
 
-    assert info["ai_platform"] == "anthropic"
-    assert info["ai_model"] == "claude-haiku-4-5-20251001"
+    assert info["ai_platform"] == "gemini"
+    assert info["ai_model"] == "gemini/gemini-2.5-flash"
     assert info["chunker_version"] == "hierarchical_v1"
     assert info["rules_version"] == "weighted_5cat_v2"
     assert info["pipeline_backend"] == "background_tasks"

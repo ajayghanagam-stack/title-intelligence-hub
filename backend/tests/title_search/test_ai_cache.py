@@ -1,6 +1,7 @@
 """Tests for TSA AI output caching and replay."""
 import json
 import uuid
+from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -19,7 +20,62 @@ from app.micro_apps.title_search.pipeline.orchestrator import (
     _replay_parse_cache,
     _replay_chain_cache,
 )
+from app.micro_apps.title_search.services.county_data_fetcher import FetchResult
 from tests.conftest import TEST_ORG_ID, TEST_USER_ID, test_session_factory
+
+
+def _cache_test_mocks():
+    """Return patchers for fetch + AI agents used in cache tests."""
+    fetch_result = FetchResult(
+        content="<html>Cache test data</html>",
+        content_format="html",
+        source_url="https://test.example.com",
+        success=True,
+    )
+    mock_fetcher_cls = MagicMock()
+    mock_fetcher_inst = MagicMock()
+    mock_fetcher_inst.fetch = AsyncMock(return_value=fetch_result)
+    mock_fetcher_inst.close = AsyncMock()
+    mock_fetcher_inst.__aenter__ = AsyncMock(return_value=mock_fetcher_inst)
+    mock_fetcher_inst.__aexit__ = AsyncMock(return_value=False)
+    mock_fetcher_cls.return_value = mock_fetcher_inst
+
+    mock_extractor_cls = MagicMock()
+    mock_extractor_inst = AsyncMock()
+    mock_extractor_inst.extract_all = AsyncMock(return_value={
+        "property_info": {"owner_name": "Cache Owner", "address": "100 Cache St", "parcel_number": "C-001"},
+        "deeds": [{"doc_type": "deed", "recording_date": "2020-01-15", "instrument_number": "C-001234",
+                    "grantor": "Seller", "grantee": "Buyer", "consideration": 200000.0}],
+        "mortgages": [{"borrower": "Buyer", "lender": "Bank", "recording_date": "2020-02-01",
+                        "instrument_number": "C-001235", "loan_amount": 160000.0}],
+        "liens": [],
+        "confidence": 0.90,
+    })
+    mock_extractor_cls.return_value = mock_extractor_inst
+
+    mock_analysis_cls = MagicMock()
+    mock_analysis_inst = AsyncMock()
+    def _analysis_analyze(documents):
+        links = []
+        for i, doc in enumerate(documents):
+            links.append({
+                "position": i + 1,
+                "link_type": "conveyance" if doc.get("doc_type") == "deed" else "encumbrance",
+                "document_id": doc.get("id"),
+                "from_party": doc.get("grantor"),
+                "to_party": doc.get("grantee"),
+                "effective_date": doc.get("recording_date"),
+                "is_gap": False,
+            })
+        return {"chain_links": links, "anomalies": [], "chain_complete": True}
+    mock_analysis_inst.analyze = AsyncMock(side_effect=_analysis_analyze)
+    mock_analysis_cls.return_value = mock_analysis_inst
+
+    return [
+        patch("app.micro_apps.title_search.services.county_data_fetcher.CountyDataFetcher", mock_fetcher_cls),
+        patch("app.micro_apps.title_search.ai.property_data_extractor.PropertyDataExtractorAgent", mock_extractor_cls),
+        patch("app.micro_apps.title_search.ai.chain_analysis_agent.ChainAnalysisAgent", mock_analysis_cls),
+    ]
 
 
 @pytest_asyncio.fixture
@@ -28,6 +84,9 @@ async def cache_order(db_session: AsyncSession, seed_data):
     cs = TACountySource(
         county="Cache", state_code="IL",
         source_type="recorder", availability="digital", is_active=True,
+        portal_type="beacon",
+        portal_url="https://beacon.schneidercorp.com/Application.aspx?AppID=888",
+        search_config={"app_id": "888", "layer_id": "1", "page_id": "1"},
     )
     db_session.add(cs)
 
@@ -45,7 +104,6 @@ async def cache_order(db_session: AsyncSession, seed_data):
 
 def test_serialize_parse_roundtrip():
     """Parse serialization produces valid JSON that round-trips."""
-    # Create mock ORM-like objects
     class MockDoc:
         def __init__(self, **kw):
             for k, v in kw.items():
@@ -57,7 +115,7 @@ def test_serialize_parse_roundtrip():
             recording_ref="REF-001", grantor={"names": ["A"]},
             grantee={"names": ["B"]}, consideration=250000.0,
             summary="test", confidence=0.92, needs_review=False,
-            raw_document_id=uuid.uuid4(),
+            raw_document_id=uuid.uuid4(), doc_metadata=None,
         ),
     ]
     data = _serialize_parse_output(docs)
@@ -115,14 +173,14 @@ async def test_replay_parse_cache(db_session: AsyncSession, seed_data):
             "recording_ref": "REF-001", "grantor": {"names": ["A"]},
             "grantee": {"names": ["B"]}, "consideration": 250000.0,
             "summary": "test", "confidence": 0.92, "needs_review": False,
-            "raw_document_id": None,
+            "raw_document_id": None, "doc_metadata": None,
         },
         {
             "doc_type": "mortgage", "recording_date": "2020-02-01",
             "recording_ref": "REF-002", "grantor": {"names": ["B"]},
             "grantee": {"names": ["Bank"]}, "consideration": 200000.0,
             "summary": "mortgage", "confidence": 0.88, "needs_review": False,
-            "raw_document_id": None,
+            "raw_document_id": None, "doc_metadata": None,
         },
     ]
     await _replay_parse_cache(db_session, TEST_ORG_ID, order_id, cached)
@@ -186,44 +244,51 @@ async def test_parse_stage_cache_hit(cache_order):
 
     order_id = cache_order
 
-    # First full run — populates cache
-    await run_pipeline(order_id, TEST_ORG_ID, test_session_factory)
+    patchers = _cache_test_mocks()
+    for p in patchers:
+        p.start()
+    try:
+        # First full run — populates cache
+        await run_pipeline(order_id, TEST_ORG_ID, test_session_factory)
 
-    async with test_session_factory() as db:
-        docs1 = (await db.execute(
-            select(TADocument).where(TADocument.order_id == order_id)
-        )).scalars().all()
-        flags1 = (await db.execute(
-            select(TAFlag).where(TAFlag.order_id == order_id)
-        )).scalars().all()
+        async with test_session_factory() as db:
+            docs1 = (await db.execute(
+                select(TADocument).where(TADocument.order_id == order_id)
+            )).scalars().all()
+            flags1 = (await db.execute(
+                select(TAFlag).where(TAFlag.order_id == order_id)
+            )).scalars().all()
 
-    doc_types_1 = sorted(d.doc_type for d in docs1)
-    flag_types_1 = sorted(f.flag_type for f in flags1)
-    doc_count_1 = len(docs1)
+        doc_types_1 = sorted(d.doc_type for d in docs1)
+        flag_types_1 = sorted(f.flag_type for f in flags1)
+        doc_count_1 = len(docs1)
 
-    assert doc_count_1 >= 1  # sanity
+        assert doc_count_1 >= 1  # sanity
 
-    # Re-run parse and chain stages directly — should hit cache
-    async with test_session_factory() as db:
-        await STAGE_HANDLERS["parse"](order_id, TEST_ORG_ID, db)
-        await db.commit()
+        # Re-run parse and chain stages directly — should hit cache
+        async with test_session_factory() as db:
+            await STAGE_HANDLERS["parse"](order_id, TEST_ORG_ID, db)
+            await db.commit()
 
-    async with test_session_factory() as db:
-        await STAGE_HANDLERS["chain"](order_id, TEST_ORG_ID, db)
-        await db.commit()
+        async with test_session_factory() as db:
+            await STAGE_HANDLERS["chain"](order_id, TEST_ORG_ID, db)
+            await db.commit()
 
-    async with test_session_factory() as db:
-        docs2 = (await db.execute(
-            select(TADocument).where(TADocument.order_id == order_id)
-        )).scalars().all()
-        flags2 = (await db.execute(
-            select(TAFlag).where(TAFlag.order_id == order_id)
-        )).scalars().all()
+        async with test_session_factory() as db:
+            docs2 = (await db.execute(
+                select(TADocument).where(TADocument.order_id == order_id)
+            )).scalars().all()
+            flags2 = (await db.execute(
+                select(TAFlag).where(TAFlag.order_id == order_id)
+            )).scalars().all()
 
-    doc_types_2 = sorted(d.doc_type for d in docs2)
-    flag_types_2 = sorted(f.flag_type for f in flags2)
+        doc_types_2 = sorted(d.doc_type for d in docs2)
+        flag_types_2 = sorted(f.flag_type for f in flags2)
 
-    # Same doc types and flag types after cache replay
-    assert doc_types_2 == doc_types_1
-    assert flag_types_2 == flag_types_1
-    assert len(docs2) == doc_count_1
+        # Same doc types and flag types after cache replay
+        assert doc_types_2 == doc_types_1
+        assert flag_types_2 == flag_types_1
+        assert len(docs2) == doc_count_1
+    finally:
+        for p in patchers:
+            p.stop()

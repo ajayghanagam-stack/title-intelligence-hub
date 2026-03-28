@@ -89,7 +89,7 @@ def test_collect_version_info_cached():
 def test_parse_cache_key_deterministic():
     """Same inputs produce the same parse cache key."""
     version_info = {
-        "ai_model": "claude-haiku-4-5-20251001",
+        "ai_model": "gemini/gemini-2.5-flash",
         "parser_prompt_hash": "a" * 64,
         "parser_tool_hash": "b" * 64,
     }
@@ -101,7 +101,7 @@ def test_parse_cache_key_deterministic():
 def test_parse_cache_key_sensitive_to_model():
     """Changing model produces a different cache key."""
     base = {
-        "ai_model": "claude-haiku-4-5-20251001",
+        "ai_model": "gemini/gemini-2.5-flash",
         "parser_prompt_hash": "a" * 64,
         "parser_tool_hash": "b" * 64,
     }
@@ -125,7 +125,7 @@ def test_parse_output_hash_order_independent():
 def test_chain_cache_key_sensitive_to_rules():
     """Changing rules version produces a different chain cache key."""
     base = {
-        "ai_model": "claude-haiku-4-5-20251001",
+        "ai_model": "gemini/gemini-2.5-flash",
         "chain_prompt_hash": "c" * 64,
         "chain_tool_hash": "d" * 64,
         "anomaly_prompt_hash": "e" * 64,
@@ -147,6 +147,9 @@ async def pipeline_order_for_version(db_session: AsyncSession, seed_data):
         source_type="recorder",
         availability="digital",
         is_active=True,
+        portal_type="beacon",
+        portal_url="https://beacon.schneidercorp.com/Application.aspx?AppID=777",
+        search_config={"app_id": "777", "layer_id": "1", "page_id": "1"},
     )
     db_session.add(cs)
 
@@ -169,8 +172,56 @@ async def pipeline_order_for_version(db_session: AsyncSession, seed_data):
 @pytest.mark.asyncio
 async def test_pipeline_creates_run_record(pipeline_order_for_version):
     """Running the pipeline creates a TAPipelineRun record with version metadata."""
+    from unittest.mock import patch, MagicMock, AsyncMock
+    from app.micro_apps.title_search.services.county_data_fetcher import FetchResult
+
+    fetch_result = FetchResult(
+        content="<html>Version test</html>", content_format="html",
+        source_url="https://test.example.com", success=True,
+    )
+    mock_fetcher_cls = MagicMock()
+    mock_fetcher_inst = MagicMock()
+    mock_fetcher_inst.fetch = AsyncMock(return_value=fetch_result)
+    mock_fetcher_inst.close = AsyncMock()
+    mock_fetcher_inst.__aenter__ = AsyncMock(return_value=mock_fetcher_inst)
+    mock_fetcher_inst.__aexit__ = AsyncMock(return_value=False)
+    mock_fetcher_cls.return_value = mock_fetcher_inst
+
+    mock_extractor_cls = MagicMock()
+    mock_extractor_inst = AsyncMock()
+    mock_extractor_inst.extract_all = AsyncMock(return_value={
+        "property_info": {"owner_name": "V", "address": "V St", "parcel_number": "V-1"},
+        "deeds": [{"doc_type": "deed", "recording_date": "2020-01-15",
+                    "instrument_number": "V-001", "grantor": "A", "grantee": "B", "consideration": 100000}],
+        "mortgages": [], "liens": [], "confidence": 0.90,
+    })
+    mock_extractor_cls.return_value = mock_extractor_inst
+
+    mock_analysis_cls = MagicMock()
+    mock_analysis_inst = AsyncMock()
+    mock_analysis_inst.analyze = AsyncMock(return_value={
+        "chain_links": [{"position": 1, "link_type": "conveyance", "document_id": None,
+                          "from_party": {"names": ["A"]}, "to_party": {"names": ["B"]},
+                          "effective_date": "2020-01-15", "is_gap": False}],
+        "anomalies": [],
+        "chain_complete": True,
+    })
+    mock_analysis_cls.return_value = mock_analysis_inst
+
+    patchers = [
+        patch("app.micro_apps.title_search.services.county_data_fetcher.CountyDataFetcher", mock_fetcher_cls),
+        patch("app.micro_apps.title_search.ai.property_data_extractor.PropertyDataExtractorAgent", mock_extractor_cls),
+        patch("app.micro_apps.title_search.ai.chain_analysis_agent.ChainAnalysisAgent", mock_analysis_cls),
+    ]
+
     order_id = pipeline_order_for_version
-    await run_pipeline(order_id, TEST_ORG_ID, test_session_factory)
+    for p in patchers:
+        p.start()
+    try:
+        await run_pipeline(order_id, TEST_ORG_ID, test_session_factory)
+    finally:
+        for p in patchers:
+            p.stop()
 
     async with test_session_factory() as db:
         runs = (await db.execute(

@@ -59,9 +59,6 @@ export const SUGGESTED_QUESTIONS = [
 export const STAGE_LABELS: Record<string, string> = {
   ingest: "File Validation",
   render: "PDF Rendering",
-  ocr: "Text Extraction (OCR)",
-  index: "Text Indexing",
-  ingestion_agent: "AI Data Extraction",
-  risk_agent: "AI Risk Analysis",
+  examine: "Title Examination",
   complete: "Finalization",
 };

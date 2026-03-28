@@ -26,12 +26,23 @@ router = APIRouter()
 @router.get("/packs/{pack_id}/flags", response_model=FlagListResponse)
 async def get_flags(
     pack_id: uuid.UUID,
+    severity: str | None = None,
+    status: str | None = None,
+    sort_by: str = "severity",
+    limit: int = 50,
+    offset: int = 0,
     db: AsyncSession = Depends(get_db),
     member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
 ):
-    flags, counts = await list_flags(db, org_id, pack_id)
-    return FlagListResponse(flags=flags, counts=counts)
+    flags, counts, total = await list_flags(
+        db, org_id, pack_id,
+        severity=severity, status=status, sort_by=sort_by,
+        limit=limit, offset=offset,
+    )
+    return FlagListResponse(
+        flags=flags, counts=counts, total=total, limit=limit, offset=offset,
+    )
 
 
 @router.get("/packs/{pack_id}/flags/{flag_id}", response_model=FlagResponse)

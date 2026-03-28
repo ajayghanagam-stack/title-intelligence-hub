@@ -46,12 +46,13 @@ async def test_get_order_wrong_org(db_session: AsyncSession, sample_order):
 
 
 @pytest.mark.asyncio
-async def test_delete_order_not_pending(db_session: AsyncSession, sample_order):
-    """delete_order_or_raise raises ConflictError for non-pending orders."""
+async def test_delete_order_any_status(db_session: AsyncSession, sample_order):
+    """delete_order_or_raise works for any status."""
     sample_order.status = "processing"
     await db_session.commit()
-    with pytest.raises(ConflictError):
-        await order_service.delete_order_or_raise(db_session, TEST_ORG_ID, TEST_ORDER_ID)
+    await order_service.delete_order_or_raise(db_session, TEST_ORG_ID, TEST_ORDER_ID)
+    order = await order_service.get_order(db_session, TEST_ORG_ID, TEST_ORDER_ID)
+    assert order is None
 
 
 @pytest.mark.asyncio

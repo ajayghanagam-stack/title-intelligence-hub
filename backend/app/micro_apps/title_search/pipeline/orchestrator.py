@@ -1,22 +1,20 @@
 """Pipeline orchestrator for Title Search & Abstracting.
 
 6-stage pipeline: order → retrieve → parse → chain → package → complete
-Uses BackgroundTasks for MVP (Temporal support can be added later).
+Uses BackgroundTasks (Temporal support can be added later).
 
-MVP Note: Parse, chain, and anomaly stages use deterministic mock functions
-instead of AI agents (DocumentParserAgent, ChainBuilderAgent,
-AnomalyDetectorAgent). When AI agents are wired in, they will be called from
-this orchestrator via the service layer. The mock functions produce the same
-output shape as the agents, so all downstream logic (flag rules, caching,
-package generation) works identically. The agent classes and their tests exist
-in ai/ and tests/title_search/test_*_agent.py respectively.
+AI agents (DocumentParserAgent, ChainAnalysisAgent) are called from this
+orchestrator. Deterministic flag rules (detect_all_flags) run alongside
+AI anomaly detection; results are merged via normalize_flags.
 """
 
 import json
+import time
 import uuid
 import asyncio
 import traceback
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import select, delete
@@ -31,6 +29,7 @@ from app.micro_apps.title_search.models.chain_link import TAChainLink
 from app.micro_apps.title_search.models.flag import TAFlag
 from app.micro_apps.title_search.models.package import TAPackage
 from app.micro_apps.title_search.models.pipeline_run import TAPipelineRun
+from app.micro_apps.title_search.models.county_source import TACountySource
 from app.micro_apps.title_search.ai.source_resolver_agent import resolve_sources_for_order
 from app.micro_apps.title_search.services.flag_rules import detect_all_flags, normalize_flags
 from app.micro_apps.title_search.pipeline.version_tracker import (
@@ -46,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 PIPELINE_STAGES = [
     ("order", 3),
-    ("retrieve", 3),
+    ("retrieve", 3),  # race-based fetch with per-stage timeout
     ("parse", 3),
     ("chain", 3),
     ("package", 3),
@@ -54,6 +53,8 @@ PIPELINE_STAGES = [
 ]
 
 PIPELINE_TIMEOUT = 30 * 60  # 30 minutes
+STAGE_TIMEOUT = 5 * 60  # 5 minutes per stage
+DISCOVERY_TIMEOUT = 60  # 60 seconds for AI portal discovery
 
 
 async def trigger_pipeline(
@@ -126,11 +127,13 @@ async def stage_order(order_id, org_id, db):
 
 @_register_stage("retrieve")
 async def stage_retrieve(order_id, org_id, db):
-    """Mock retrieval — create sample raw documents for each source assignment.
+    """Fetch property data via race-based parallel portal fetching.
 
-    In production, this would use DocumentRetrievalAgent to navigate county portals.
-    If any source is non_digital, the pipeline pauses (awaiting_abstractor).
+    Fires all registered portals AND AI discovery concurrently.
+    First successful fetch wins; all other tasks are cancelled immediately.
     """
+    from app.micro_apps.title_search.services.county_data_fetcher import CountyDataFetcher
+
     assignments = (await db.execute(
         select(TASourceAssignment).where(
             TASourceAssignment.order_id == order_id,
@@ -138,38 +141,142 @@ async def stage_retrieve(order_id, org_id, db):
         )
     )).scalars().all()
 
-    has_non_digital = any(a.availability == "non_digital" for a in assignments)
+    order = (await db.execute(
+        select(TAOrder).where(TAOrder.id == order_id, TAOrder.org_id == org_id)
+    )).scalar_one()
 
+    # Batch-load all county sources in one query
+    portal_ids = [
+        a.portal_config_id for a in assignments
+        if a.portal_config_id and a.status == "pending"
+        and not (a.availability == "non_digital")
+    ]
+    county_sources_map: dict = {}
+    if portal_ids:
+        cs_rows = (await db.execute(
+            select(TACountySource).where(TACountySource.id.in_(portal_ids))
+        )).scalars().all()
+        county_sources_map = {cs.id: cs for cs in cs_rows}
+
+    # Collect fetchable assignments
+    fetchable: list[tuple] = []  # (assignment, county_source)
+    fetch_errors: list[str] = []
     for assignment in assignments:
         if assignment.availability == "non_digital" and assignment.status == "pending":
-            # Non-digital source — skip retrieval, await ground abstractor upload
+            continue
+        if assignment.status != "pending":
             continue
 
-        # For digital/partial sources, create mock raw documents
-        if assignment.status == "pending":
-            raw_doc = TARawDocument(
-                org_id=org_id,
-                order_id=order_id,
-                source_assignment_id=assignment.id,
-                document_ref=f"MOCK-{assignment.source_type.upper()}-001",
-                raw_content=_mock_raw_content(assignment.source_type),
-                content_format="text",
+        county_source = county_sources_map.get(assignment.portal_config_id)
+        if county_source:
+            fetchable.append((assignment, county_source))
+        else:
+            logger.warning(
+                f"No portal config for assignment {assignment.id} on order {order_id}"
             )
-            db.add(raw_doc)
-            assignment.status = "completed"
+            assignment.status = "failed"
+            fetch_errors.append("No portal configuration found")
 
-    # Check if any non-digital sources are still pending
+    # Check for non-digital sources first
     pending_non_digital = any(
         a.availability == "non_digital" and a.status == "pending"
         for a in assignments
     )
     if pending_non_digital:
-        order = (await db.execute(
-            select(TAOrder).where(TAOrder.id == order_id, TAOrder.org_id == org_id)
-        )).scalar_one()
         order.status = "awaiting_abstractor"
         await db.commit()
         raise _PipelinePause("Awaiting ground abstractor upload")
+
+    # Race all sources: registered portals + AI discovery in parallel
+    async with CountyDataFetcher() as fetcher:
+        race_result, race_errors = await _race_fetch(
+            fetcher, fetchable, order, org_id,
+        )
+    fetch_errors.extend(race_errors)
+
+    if race_result:
+        # Winner found — write to DB
+        if race_result.assignment and race_result.county_source:
+            # Registered portal won
+            raw_doc = TARawDocument(
+                org_id=org_id,
+                order_id=order_id,
+                source_assignment_id=race_result.assignment.id,
+                document_ref=(
+                    f"{race_result.county_source.county.upper()}-"
+                    f"{race_result.assignment.source_type.upper()}"
+                ),
+                raw_content=race_result.fetch_result.content,
+                content_format=race_result.fetch_result.content_format,
+                source_url=race_result.fetch_result.source_url,
+            )
+            db.add(raw_doc)
+            race_result.assignment.status = "completed"
+            # Mark other assignments as failed
+            for a, _ in fetchable:
+                if a.id != race_result.assignment.id:
+                    a.status = "failed"
+        else:
+            # Discovered portal won — save to registry
+            portal_info = race_result.portal_info or {}
+            portal_type = portal_info.get("portal_type", "generic_web")
+            url_template = portal_info.get("url", race_result.fetch_result.source_url)
+
+            # Upsert: check for existing county source with same key
+            existing_cs = (await db.execute(
+                select(TACountySource).where(
+                    TACountySource.county == order.county,
+                    TACountySource.state_code == order.state_code,
+                    TACountySource.source_type == "recorder",
+                )
+            )).scalar_one_or_none()
+            if existing_cs:
+                existing_cs.portal_url = url_template
+                existing_cs.search_config = portal_info.get("search_config")
+                existing_cs.portal_type = portal_type
+                existing_cs.is_active = True
+                cs = existing_cs
+            else:
+                cs = TACountySource(
+                    county=order.county,
+                    state_code=order.state_code,
+                    source_type="recorder",
+                    availability="digital",
+                    portal_type=portal_type,
+                    portal_url=url_template,
+                    search_config=portal_info.get("search_config"),
+                    is_active=True,
+                )
+                db.add(cs)
+            await db.flush()
+
+            raw_doc = TARawDocument(
+                org_id=org_id,
+                order_id=order_id,
+                document_ref=f"{order.county.upper()}-DISCOVERED",
+                raw_content=race_result.fetch_result.content,
+                content_format=race_result.fetch_result.content_format,
+                source_url=race_result.fetch_result.source_url,
+            )
+            db.add(raw_doc)
+
+            assignment = TASourceAssignment(
+                org_id=org_id,
+                order_id=order_id,
+                source_type="recorder",
+                availability="digital",
+                portal_config_id=cs.id,
+                status="completed",
+            )
+            db.add(assignment)
+    else:
+        # All sources failed
+        county_label = f"{order.county} County, {order.state_code}"
+        error_detail = "; ".join(fetch_errors[:3])
+        raise RuntimeError(
+            f"Unable to retrieve property records for {county_label}. "
+            f"No accessible portal found. Errors: {error_detail}"
+        )
 
 
 @_register_stage("parse")
@@ -203,28 +310,23 @@ async def stage_parse(order_id, org_id, db):
         logger.info(f"TSA parse cache hit — replayed {len(cached_docs)} documents for order {order_id}")
         return
 
-    # Cache miss — run parser (mock for MVP)
+    # Cache miss — run AI parser
     await db.execute(
         delete(TADocument).where(TADocument.order_id == order_id, TADocument.org_id == org_id)
     )
 
+    # Load order for context (address, search_scope)
+    order = (await db.execute(
+        select(TAOrder).where(TAOrder.id == order_id, TAOrder.org_id == org_id)
+    )).scalar_one()
+
     for raw_doc in raw_docs:
-        parsed = _mock_parse(raw_doc.raw_content or "", raw_doc.document_ref or "")
-        doc = TADocument(
-            org_id=org_id,
-            order_id=order_id,
-            raw_document_id=raw_doc.id,
-            doc_type=parsed["doc_type"],
-            recording_date=parsed.get("recording_date"),
-            recording_ref=parsed.get("recording_ref"),
-            grantor=parsed.get("grantor"),
-            grantee=parsed.get("grantee"),
-            consideration=parsed.get("consideration"),
-            summary=parsed.get("summary"),
-            confidence=parsed.get("confidence", 0.85),
-            needs_review=parsed.get("confidence", 0.85) < 0.70,
-        )
-        db.add(doc)
+        if raw_doc.content_format == "html":
+            # HTML from county portal — use PropertyDataExtractorAgent
+            await _parse_html_document(db, org_id, order_id, raw_doc, order)
+        else:
+            # Plain text — use existing DocumentParserAgent (backward compat)
+            await _parse_text_document(db, org_id, order_id, raw_doc)
 
     # Flush to get IDs, then serialize and cache
     await db.flush()
@@ -281,7 +383,9 @@ async def stage_chain(order_id, org_id, db):
         logger.info(f"TSA chain cache hit — replayed {n_links} links, {n_flags} flags for order {order_id}")
         return
 
-    # Cache miss — run chain building + anomaly detection
+    # Cache miss — run combined AI chain analysis
+    from app.micro_apps.title_search.ai.chain_analysis_agent import ChainAnalysisAgent
+
     await db.execute(
         delete(TAChainLink).where(TAChainLink.order_id == order_id, TAChainLink.org_id == org_id)
     )
@@ -289,49 +393,65 @@ async def stage_chain(order_id, org_id, db):
         delete(TAFlag).where(TAFlag.order_id == order_id, TAFlag.org_id == org_id)
     )
 
-    # Build chain links from parsed documents
-    position = 1
-    for doc in documents:
-        if doc.doc_type in ("deed", "assignment"):
-            link = TAChainLink(
-                org_id=org_id,
-                order_id=order_id,
-                document_id=doc.id,
-                position=position,
-                link_type="conveyance",
-                from_party=doc.grantor,
-                to_party=doc.grantee,
-                effective_date=doc.recording_date,
-                is_gap=False,
-            )
-            db.add(link)
-            position += 1
-        elif doc.doc_type in ("mortgage", "lien", "easement"):
-            link = TAChainLink(
-                org_id=org_id,
-                order_id=order_id,
-                document_id=doc.id,
-                position=position,
-                link_type="encumbrance",
-                from_party=doc.grantor,
-                to_party=doc.grantee,
-                effective_date=doc.recording_date,
-                is_gap=False,
-            )
-            db.add(link)
-            position += 1
+    # Build chain of title + detect anomalies in a single LLM call
+    docs_for_chain = [
+        {
+            "id": str(d.id),
+            "doc_type": d.doc_type,
+            "recording_date": d.recording_date,
+            "recording_ref": d.recording_ref,
+            "grantor": d.grantor,
+            "grantee": d.grantee,
+            "consideration": float(d.consideration) if d.consideration else None,
+            "confidence": d.confidence,
+        }
+        for d in documents
+    ]
 
-    # Deterministic flag detection via rules engine
-    raw_flags = detect_all_flags(documents)
-    for rf in raw_flags:
+    analysis_agent = ChainAnalysisAgent(org_id)
+    analysis_result = await analysis_agent.analyze(docs_for_chain)
+
+    # Insert chain links from AI result
+    for cl in analysis_result.get("chain_links", []):
+        doc_id = cl.get("document_id")
+        if doc_id and not isinstance(doc_id, uuid.UUID):
+            doc_id = uuid.UUID(doc_id)
+        link = TAChainLink(
+            org_id=org_id,
+            order_id=order_id,
+            document_id=doc_id or None,
+            position=cl.get("position", 0),
+            link_type=cl.get("link_type", "conveyance"),
+            from_party=cl.get("from_party"),
+            to_party=cl.get("to_party"),
+            effective_date=cl.get("effective_date"),
+            is_gap=cl.get("is_gap", False),
+            gap_description=cl.get("gap_description"),
+        )
+        db.add(link)
+
+    # AI anomalies + deterministic rules — merge results
+    ai_flags = analysis_result.get("anomalies", [])
+    rule_flags = detect_all_flags(documents)
+    all_flags = normalize_flags(ai_flags + rule_flags)
+
+    for rf in all_flags:
+        _doc_id = rf.get("document_id")
+        if _doc_id and not isinstance(_doc_id, uuid.UUID):
+            _doc_id = uuid.UUID(_doc_id)
+        _cl_id = rf.get("chain_link_id")
+        if _cl_id and not isinstance(_cl_id, uuid.UUID):
+            _cl_id = uuid.UUID(_cl_id)
         flag = TAFlag(
             org_id=org_id,
             order_id=order_id,
-            document_id=rf.get("document_id"),
+            document_id=_doc_id or None,
+            chain_link_id=_cl_id or None,
             flag_type=rf["flag_type"],
             severity=rf["severity"],
             title=rf["title"],
             description=rf["description"],
+            ai_explanation=rf.get("ai_explanation"),
             evidence_refs=rf.get("evidence_refs", []),
         )
         db.add(flag)
@@ -405,6 +525,23 @@ async def stage_package(order_id, org_id, db):
     # Check if auto-issue conditions are met
     can_auto_issue = chain_complete and open_critical_high == 0
 
+    property_summary = {
+        "address": order.property_address,
+        "county": order.county,
+        "state": order.state_code,
+        "parcel_number": order.parcel_number,
+    }
+
+    # Generate data-driven narrative (no LLM call)
+    narrative = _generate_data_driven_narrative(
+        order=order,
+        documents=documents,
+        chain_links=chain_links,
+        flags=flags,
+        chain_complete=chain_complete,
+    )
+    property_summary["narrative"] = narrative
+
     pkg = TAPackage(
         org_id=org_id,
         order_id=order_id,
@@ -415,12 +552,7 @@ async def stage_package(order_id, org_id, db):
         total_documents=len(documents),
         chain_complete=chain_complete,
         open_flags_count=len(flags),
-        property_summary={
-            "address": order.property_address,
-            "county": order.county,
-            "state": order.state_code,
-            "parcel_number": order.parcel_number,
-        },
+        property_summary=property_summary,
         issued_by="auto" if can_auto_issue else None,
         issued_at=now if can_auto_issue else None,
     )
@@ -450,6 +582,260 @@ async def stage_complete(order_id, org_id, db):
         order.status = "completed"
 
     order.pipeline_stage = None
+
+
+def _generate_data_driven_narrative(
+    order, documents, chain_links, flags, chain_complete: bool,
+) -> str:
+    """Build a bullet-point narrative from structured data (no LLM call)."""
+    address = order.property_address or "Unknown"
+    county = order.county or "Unknown"
+    state = order.state_code or "Unknown"
+    scope = order.search_scope or "full"
+    years = order.search_years or 30
+
+    doc_types: dict[str, int] = {}
+    for d in documents:
+        dt = d.doc_type if hasattr(d, "doc_type") else d.get("doc_type", "other")
+        doc_types[dt] = doc_types.get(dt, 0) + 1
+
+    type_parts = []
+    for dt in ("deed", "mortgage", "lien", "easement", "satisfaction", "other"):
+        count = doc_types.get(dt, 0)
+        if count:
+            type_parts.append(f"{count} {dt}{'s' if count != 1 else ''}")
+
+    sev_counts: dict[str, int] = {}
+    for f in flags:
+        sev = f.severity if hasattr(f, "severity") else f.get("severity", "low")
+        sev_counts[sev] = sev_counts.get(sev, 0) + 1
+
+    chain_status = "complete" if chain_complete else "incomplete — gaps detected"
+
+    lines = [
+        f"Title search for {address}, {county} County, {state}.",
+        f"{scope.capitalize()} search covering {years} years.",
+        f"{len(documents)} documents found: {', '.join(type_parts) if type_parts else 'none'}.",
+        f"Chain of title: {len(chain_links)} links, {chain_status}.",
+    ]
+
+    if flags:
+        flag_parts = []
+        for sev in ("critical", "high", "medium", "low"):
+            cnt = sev_counts.get(sev, 0)
+            if cnt:
+                flag_parts.append(f"{cnt} {sev}")
+        lines.append(f"{len(flags)} flags: {', '.join(flag_parts)}.")
+    else:
+        lines.append("No flags detected.")
+
+    return "\n".join(lines)
+
+
+@dataclass
+class _RaceResult:
+    """Result from the portal race."""
+    fetch_result: object  # FetchResult
+    assignment: object | None = None  # TASourceAssignment if registered portal won
+    county_source: object | None = None  # TACountySource if registered portal won
+    portal_info: dict | None = None  # if discovered portal won
+
+
+# Sentinel to tag tasks so we know what they represent
+_DISCOVERY_TAG = "_discovery_"
+
+
+async def _race_fetch(
+    fetcher,
+    fetchable: list[tuple],
+    order: TAOrder,
+    org_id: uuid.UUID,
+) -> tuple["_RaceResult | None", list[str]]:
+    """Race registered portals against AI discovery — first success wins.
+
+    Fires all registered portal fetches and AI discovery concurrently.
+    When discovery completes, spawns fetch tasks for discovered URLs.
+    First successful fetch cancels all remaining tasks.
+
+    Returns (winner_result_or_None, error_list).
+    """
+    from app.micro_apps.title_search.ai.portal_discovery_agent import PortalDiscoveryAgent
+    from app.micro_apps.title_search.services.county_data_fetcher import FetchResult
+    from urllib.parse import quote_plus
+
+    errors: list[str] = []
+    pending: set[asyncio.Task] = set()
+    # Map task → metadata for identifying winners
+    task_meta: dict[asyncio.Task, dict] = {}
+
+    # --- Helper: create a fetch task for a registered portal ---
+    async def _fetch_registered(assignment, county_source):
+        return await fetcher.fetch(
+            county_source=county_source,
+            address=order.property_address,
+            parcel=order.parcel_number,
+        )
+
+    # --- Helper: create a fetch task for a discovered URL (with DNS check) ---
+    async def _fetch_discovered(url: str):
+        import socket
+        from urllib.parse import urlparse
+        from app.micro_apps.title_search.services.county_data_fetcher import FetchResult
+        # Quick DNS check to reject hallucinated domains before wasting 30s on connect
+        try:
+            hostname = urlparse(url).hostname
+            if hostname:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, socket.getaddrinfo, hostname, None,
+                )
+        except socket.gaierror:
+            return FetchResult(
+                success=False,
+                error=f"Domain does not exist: {hostname}",
+                source_url=url,
+            )
+        return await fetcher.fetch_url(url)
+
+    # --- Helper: run AI discovery (with timeout) ---
+    async def _run_discovery():
+        agent = PortalDiscoveryAgent(org_id)
+        return await asyncio.wait_for(
+            agent.discover(order.county, order.state_code),
+            timeout=DISCOVERY_TIMEOUT,
+        )
+
+    # Phase 1: Launch registered portal fetch tasks
+    for assignment, county_source in fetchable:
+        task = asyncio.create_task(
+            _fetch_registered(assignment, county_source),
+            name=f"fetch-{county_source.portal_url}",
+        )
+        pending.add(task)
+        task_meta[task] = {
+            "type": "registered",
+            "assignment": assignment,
+            "county_source": county_source,
+        }
+
+    # Phase 2: Launch AI discovery task concurrently
+    discovery_task = asyncio.create_task(
+        _run_discovery(), name="discovery",
+    )
+    pending.add(discovery_task)
+    task_meta[discovery_task] = {"type": _DISCOVERY_TAG}
+
+    # If no fetchable portals and no discovery, bail early
+    if not pending:
+        return None, ["No portal sources available"]
+
+    winner: _RaceResult | None = None
+
+    try:
+        while pending and winner is None:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for task in done:
+                meta = task_meta.pop(task, {})
+                exc = task.exception() if not task.cancelled() else None
+
+                if meta.get("type") == _DISCOVERY_TAG:
+                    # Discovery finished — spawn fetch tasks for any portals found
+                    if exc:
+                        logger.warning(f"Portal discovery failed: {exc}")
+                        errors.append(f"AI discovery error: {exc}")
+                        continue
+
+                    discovery = task.result()
+                    portals = discovery.get("portals", [])
+                    if not portals:
+                        has_digital = discovery.get("county_has_digital_records", True)
+                        if not has_digital:
+                            errors.append(
+                                f"{order.county} County, {order.state_code} does not "
+                                "appear to have digitized records online"
+                            )
+                        else:
+                            errors.append(
+                                f"AI found no portals for "
+                                f"{order.county} County, {order.state_code}"
+                            )
+                        continue
+
+                    # Spawn parallel fetch tasks for discovered URLs
+                    for portal_info in portals:
+                        url_template = portal_info.get("url", "")
+                        if not url_template:
+                            continue
+                        url = url_template.replace(
+                            "{address}", quote_plus(order.property_address),
+                        )
+                        url = url.replace(
+                            "{parcel}", quote_plus(order.parcel_number or ""),
+                        )
+                        dtask = asyncio.create_task(
+                            _fetch_discovered(url),
+                            name=f"fetch-discovered-{url[:60]}",
+                        )
+                        pending.add(dtask)
+                        task_meta[dtask] = {
+                            "type": "discovered",
+                            "portal_info": portal_info,
+                            "url": url,
+                        }
+                    continue
+
+                # It's a fetch task (registered or discovered)
+                if exc:
+                    label = meta.get("county_source")
+                    portal_url = getattr(label, "portal_url", None) or meta.get("url", "unknown")
+                    err = f"{portal_url}: {exc}"
+                    logger.warning(f"Fetch task exception: {err}")
+                    errors.append(err)
+                    if meta.get("type") == "registered" and meta.get("assignment"):
+                        meta["assignment"].status = "failed"
+                    continue
+
+                result: FetchResult = task.result()
+                if result.success:
+                    if meta.get("type") == "registered":
+                        winner = _RaceResult(
+                            fetch_result=result,
+                            assignment=meta["assignment"],
+                            county_source=meta["county_source"],
+                        )
+                    else:
+                        winner = _RaceResult(
+                            fetch_result=result,
+                            portal_info=meta.get("portal_info"),
+                        )
+                    logger.info(
+                        f"Race winner ({meta.get('type')}): "
+                        f"{result.source_url} in {result.elapsed_seconds}s"
+                    )
+                    break
+                else:
+                    portal_url = (
+                        getattr(meta.get("county_source"), "portal_url", None)
+                        or meta.get("url", "unknown")
+                    )
+                    err = f"{portal_url}: {result.error}"
+                    logger.warning(f"Fetch failed: {err}")
+                    errors.append(err)
+                    if meta.get("type") == "registered" and meta.get("assignment"):
+                        meta["assignment"].status = "failed"
+    finally:
+        # Cancel all remaining tasks
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        # Clean up metadata for cancelled tasks
+        for task in pending:
+            task_meta.pop(task, None)
+
+    return winner, errors
 
 
 class _PipelinePause(Exception):
@@ -489,6 +875,9 @@ async def _run_pipeline_inner(
         await db.refresh(run)
         pipeline_run_id = run.id
 
+    pipeline_start = time.monotonic()
+    stage_timings: dict[str, float] = {}
+
     for stage_name, max_retries in PIPELINE_STAGES:
         logger.info(f"TSA pipeline stage '{stage_name}' starting for order {order_id}")
 
@@ -503,18 +892,55 @@ async def _run_pipeline_inner(
         handler = STAGE_HANDLERS[stage_name]
         success = False
         last_error = None
+        stage_start = time.monotonic()
 
         for attempt in range(max_retries):
             try:
                 async with session_factory() as db:
-                    await handler(order_id, org_id, db)
+                    await asyncio.wait_for(
+                        handler(order_id, org_id, db),
+                        timeout=STAGE_TIMEOUT,
+                    )
                     await db.commit()
                 success = True
-                logger.info(f"TSA stage '{stage_name}' completed for order {order_id}")
+                stage_timings[stage_name] = round(time.monotonic() - stage_start, 3)
+                logger.info(
+                    f"TSA stage '{stage_name}' completed for order {order_id} "
+                    f"in {stage_timings[stage_name]}s"
+                )
                 break
             except _PipelinePause:
+                stage_timings[stage_name] = round(time.monotonic() - stage_start, 3)
                 logger.info(f"TSA pipeline paused at '{stage_name}' for order {order_id}")
+                # Mark pipeline run as paused so frontend doesn't show infinite spinner
+                if pipeline_run_id:
+                    async with session_factory() as db:
+                        run = (await db.execute(
+                            select(TAPipelineRun).where(
+                                TAPipelineRun.id == pipeline_run_id,
+                                TAPipelineRun.org_id == org_id,
+                            )
+                        )).scalar_one_or_none()
+                        if run:
+                            run.status = "paused"
+                            meta = run.version_metadata or {}
+                            meta["stage_timings"] = stage_timings
+                            meta["paused_at_stage"] = stage_name
+                            run.version_metadata = meta
+                        await db.commit()
                 return
+            except asyncio.TimeoutError:
+                elapsed = round(time.monotonic() - stage_start, 3)
+                last_error = RuntimeError(
+                    f"Stage '{stage_name}' timed out after {STAGE_TIMEOUT}s "
+                    f"(elapsed {elapsed}s)"
+                )
+                logger.error(
+                    f"TSA stage '{stage_name}' timed out for order {order_id} "
+                    f"(attempt {attempt + 1}/{max_retries}, {elapsed}s)"
+                )
+                # Don't retry on timeout — it will just timeout again
+                break
             except Exception as e:
                 last_error = e
                 logger.warning(
@@ -552,6 +978,7 @@ async def _run_pipeline_inner(
             return
 
     # All stages completed — mark pipeline run as completed
+    total_elapsed = round(time.monotonic() - pipeline_start, 3)
     async with session_factory() as db:
         if pipeline_run_id:
             run = (await db.execute(
@@ -563,6 +990,12 @@ async def _run_pipeline_inner(
             if run:
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc)
+
+                # Save stage timings in version_metadata
+                meta = run.version_metadata or {}
+                meta["stage_timings"] = stage_timings
+                meta["total_elapsed_seconds"] = total_elapsed
+                run.version_metadata = meta
 
                 # Compute confidence summary from parsed documents
                 docs = (await db.execute(
@@ -599,69 +1032,162 @@ async def _run_pipeline_inner(
     logger.info(f"TSA pipeline completed for order {order_id}")
 
 
-def _mock_raw_content(source_type: str) -> str:
-    """Generate mock raw document content for testing."""
-    if source_type == "recorder":
-        return (
-            "WARRANTY DEED\n"
-            "Recording Date: 2020-01-15\n"
-            "Recording Reference: 2020-001234\n"
-            "Grantor: John Smith\n"
-            "Grantee: Jane Doe\n"
-            "Consideration: $250,000.00\n"
-            "Legal Description: Lot 1, Block 2, Sample Subdivision"
+async def _parse_html_document(
+    db: AsyncSession, org_id: uuid.UUID, order_id: uuid.UUID,
+    raw_doc: TARawDocument, order: TAOrder,
+) -> None:
+    """Parse HTML from county portal into multiple TADocuments using AI extractor."""
+    from app.micro_apps.title_search.ai.property_data_extractor import PropertyDataExtractorAgent
+
+    extractor = PropertyDataExtractorAgent(org_id)
+    result = await extractor.extract_all(
+        raw_content=raw_doc.raw_content or "",
+        search_scope=order.search_scope or "full",
+        property_address=order.property_address or "",
+    )
+
+    prop_info = result.get("property_info", {})
+    confidence = result.get("confidence", 0.80)
+
+    # Update order's legal_description from extracted data if blank
+    if not order.legal_description and prop_info.get("legal_description"):
+        order.legal_description = prop_info["legal_description"]
+
+    # Create TADocuments for each deed
+    for deed in result.get("deeds", []):
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            raw_document_id=raw_doc.id,
+            doc_type=deed.get("doc_type", "deed"),
+            recording_date=deed.get("recording_date"),
+            recording_ref=deed.get("instrument_number") or deed.get("recording_ref"),
+            grantor={"names": [deed["grantor"]]} if deed.get("grantor") else None,
+            grantee={"names": [deed["grantee"]]} if deed.get("grantee") else None,
+            consideration=deed.get("consideration"),
+            summary=deed.get("deed_type_detail"),
+            confidence=confidence,
+            needs_review=confidence < 0.70,
+            doc_metadata={
+                "book_page": deed.get("book_page"),
+                "instrument_number": deed.get("instrument_number"),
+                "deed_type_detail": deed.get("deed_type_detail"),
+                "subdivision": prop_info.get("subdivision"),
+            },
         )
-    elif source_type == "clerk":
-        return (
-            "MORTGAGE\n"
-            "Recording Date: 2020-02-01\n"
-            "Recording Reference: 2020-001235\n"
-            "Mortgagor: Jane Doe\n"
-            "Mortgagee: First National Bank\n"
-            "Amount: $200,000.00"
+        db.add(doc)
+
+    # Create TADocuments for each mortgage
+    for mtg in result.get("mortgages", []):
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            raw_document_id=raw_doc.id,
+            doc_type="mortgage",
+            recording_date=mtg.get("recording_date"),
+            recording_ref=mtg.get("instrument_number") or mtg.get("recording_ref"),
+            grantor={"names": [mtg["lender"]]} if mtg.get("lender") else None,
+            grantee={"names": [mtg["borrower"]]} if mtg.get("borrower") else None,
+            consideration=mtg.get("loan_amount"),
+            confidence=confidence,
+            needs_review=confidence < 0.70,
+            doc_metadata={
+                "book_page": mtg.get("book_page"),
+                "instrument_number": mtg.get("instrument_number"),
+                "trustee": mtg.get("trustee"),
+                "maturity_date": mtg.get("maturity_date"),
+                "open_closed_end": mtg.get("open_closed_end"),
+                "min_number": mtg.get("min_number"),
+                "riders": mtg.get("riders"),
+                "associated_docs": mtg.get("associated_docs"),
+                "comments": mtg.get("comments"),
+            },
         )
-    else:
-        return (
-            "PROPERTY TAX RECORD\n"
-            "Parcel: 12-34-567-890\n"
-            "Owner: Jane Doe\n"
-            "Assessed Value: $225,000.00"
+        db.add(doc)
+
+    # Create TADocuments for each lien
+    for lien in result.get("liens", []):
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            raw_document_id=raw_doc.id,
+            doc_type="lien",
+            recording_date=lien.get("recording_date"),
+            recording_ref=lien.get("instrument_number") or lien.get("recording_ref"),
+            grantor={"names": [lien["creditor"]]} if lien.get("creditor") else None,
+            grantee={"names": [lien["debtor"]]} if lien.get("debtor") else None,
+            consideration=lien.get("amount"),
+            summary=lien.get("lien_type"),
+            confidence=confidence,
+            needs_review=confidence < 0.70,
+            doc_metadata={
+                "book_page": lien.get("book_page"),
+                "instrument_number": lien.get("instrument_number"),
+                "lien_status": lien.get("status"),
+            },
         )
+        db.add(doc)
+
+    # Store tax info in doc_metadata on a special "other" document
+    tax_info = result.get("tax_info")
+    if tax_info and any(v for v in tax_info.values() if v is not None):
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            raw_document_id=raw_doc.id,
+            doc_type="other",
+            summary="Tax Assessment Record",
+            confidence=confidence,
+            needs_review=False,
+            doc_metadata={"tax_info": tax_info},
+        )
+        db.add(doc)
+
+    # Create TADocuments for misc documents
+    for misc in result.get("misc_documents", []):
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            raw_document_id=raw_doc.id,
+            doc_type=misc.get("doc_type", "other"),
+            recording_date=misc.get("recording_date"),
+            recording_ref=misc.get("instrument_number") or misc.get("recording_ref"),
+            summary=misc.get("description"),
+            confidence=confidence,
+            needs_review=confidence < 0.70,
+            doc_metadata={
+                "book_page": misc.get("book_page"),
+                "instrument_number": misc.get("instrument_number"),
+            },
+        )
+        db.add(doc)
 
 
-def _mock_parse(raw_content: str, document_ref: str) -> dict:
-    """Simple mock parser for pipeline testing."""
-    content_lower = raw_content.lower()
+async def _parse_text_document(
+    db: AsyncSession, org_id: uuid.UUID, order_id: uuid.UUID,
+    raw_doc: TARawDocument,
+) -> None:
+    """Parse plain text document using existing DocumentParserAgent (backward compat)."""
+    from app.micro_apps.title_search.ai.document_parser_agent import DocumentParserAgent
 
-    if "warranty deed" in content_lower or "deed" in content_lower:
-        return {
-            "doc_type": "deed",
-            "recording_date": "2020-01-15",
-            "recording_ref": document_ref or "2020-001234",
-            "grantor": {"names": ["John Smith"], "entity_type": "individual"},
-            "grantee": {"names": ["Jane Doe"], "entity_type": "individual"},
-            "consideration": 250000.00,
-            "summary": "Warranty deed transferring property",
-            "confidence": 0.92,
-        }
-    elif "mortgage" in content_lower:
-        return {
-            "doc_type": "mortgage",
-            "recording_date": "2020-02-01",
-            "recording_ref": document_ref or "2020-001235",
-            "grantor": {"names": ["Jane Doe"], "entity_type": "individual"},
-            "grantee": {"names": ["First National Bank"], "entity_type": "corporation"},
-            "consideration": 200000.00,
-            "summary": "Mortgage on property",
-            "confidence": 0.88,
-        }
-    else:
-        return {
-            "doc_type": "other",
-            "recording_ref": document_ref,
-            "summary": "Property record",
-            "confidence": 0.75,
-        }
+    parser_agent = DocumentParserAgent(org_id)
+    parsed = await parser_agent.parse(raw_doc.raw_content or "")
+    doc = TADocument(
+        org_id=org_id,
+        order_id=order_id,
+        raw_document_id=raw_doc.id,
+        doc_type=parsed["doc_type"],
+        recording_date=parsed.get("recording_date"),
+        recording_ref=parsed.get("recording_ref"),
+        grantor=parsed.get("grantor"),
+        grantee=parsed.get("grantee"),
+        consideration=parsed.get("consideration"),
+        summary=parsed.get("summary"),
+        confidence=parsed.get("confidence", 0.85),
+        needs_review=parsed.get("confidence", 0.85) < 0.70,
+    )
+    db.add(doc)
+
 
 
 # ---------------------------------------------------------------------------
@@ -682,6 +1208,7 @@ def _serialize_parse_output(documents: list) -> bytes:
             "confidence": d.confidence,
             "needs_review": d.needs_review,
             "raw_document_id": str(d.raw_document_id) if d.raw_document_id else None,
+            "doc_metadata": d.doc_metadata,
         }
         for d in documents
     ]
@@ -710,6 +1237,7 @@ async def _replay_parse_cache(
             summary=d.get("summary"),
             confidence=d.get("confidence", 0.85),
             needs_review=d.get("needs_review", False),
+            doc_metadata=d.get("doc_metadata"),
         ))
 
 

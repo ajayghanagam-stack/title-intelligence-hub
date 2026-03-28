@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, memo, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   CheckCircle,
   XCircle,
@@ -14,15 +15,27 @@ import {
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "./severity-badge";
 import { FlagDetailDialog } from "./flag-detail-dialog";
-import { Pagination, usePagination } from "./pagination";
+import { Pagination } from "./pagination";
 import type { Flag, ReviewDecision } from "@/lib/ti-types";
 
 const CATEGORY_LABELS: Record<string, string> = {
   missing_endorsement: "Missing Endorsement",
   unacceptable_exception: "Unacceptable Exception",
   unresolved_lien: "Unresolved Lien",
+  unreleased_mortgage: "Unreleased Mortgage",
   cross_section_mismatch: "Cross-Section Mismatch",
   requirement_missing_proof: "Requirement Missing Proof",
+  name_discrepancy: "Name Discrepancy",
+  marital_status_issue: "Marital Status Issue",
+  incomplete_document: "Incomplete Document",
+  regulatory_compliance: "Regulatory Compliance",
+  chain_of_title_gap: "Chain of Title Gap",
+  document_defect: "Document Defect",
+  mineral_rights: "Mineral Rights",
+  trust_issue: "Trust Issue",
+  estate_issue: "Estate Issue",
+  vesting_issue: "Vesting Issue",
+  tax_issue: "Tax Issue",
 };
 
 const severityOrder: Record<string, number> = {
@@ -41,6 +54,7 @@ interface FlagRowProps {
   onToggle: (id: string) => void;
   onQuickAction: (flagId: string, decision: ReviewDecision) => void;
   onOpenDetail: (flag: Flag) => void;
+  onNavigateToPage: (pageNumber: number) => void;
 }
 
 function getRequiredAction(flag: Flag): string {
@@ -69,6 +83,7 @@ const FlagRow = memo(function FlagRow({
   onToggle,
   onQuickAction,
   onOpenDetail,
+  onNavigateToPage,
 }: FlagRowProps) {
   const docRef = getDocumentRef(flag);
   const requiredAction = getRequiredAction(flag);
@@ -108,7 +123,16 @@ const FlagRow = memo(function FlagRow({
         </div>
         {/* Doc Ref — desktop only */}
         <div className="shrink-0 w-[120px] pt-3 pb-3 pr-2 hidden lg:block">
-          <span className="text-[12px] text-muted-foreground">{docRef}</span>
+          {flag.evidence_refs.length > 0 ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); onNavigateToPage(flag.evidence_refs[0].page_number); }}
+              className="text-[12px] text-primary hover:text-primary/80 hover:underline font-medium transition-colors"
+            >
+              {docRef}
+            </button>
+          ) : (
+            <span className="text-[12px] text-muted-foreground">{docRef}</span>
+          )}
         </div>
         {/* Required Action — desktop only */}
         <div className="shrink-0 w-[180px] pt-3 pb-3 pr-4 hidden lg:block">
@@ -141,9 +165,12 @@ const FlagRow = memo(function FlagRow({
               <div className="space-y-1">
                 {flag.evidence_refs.map((ref, i) => (
                   <div key={i} className="flex items-start gap-2">
-                    <span className="shrink-0 inline-flex items-center gap-1 text-[11px] text-primary font-medium bg-primary/5 px-2 py-0.5 rounded">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onNavigateToPage(ref.page_number); }}
+                      className="shrink-0 inline-flex items-center gap-1 text-[11px] text-primary font-medium bg-primary/5 hover:bg-primary/10 px-2 py-0.5 rounded cursor-pointer transition-colors"
+                    >
                       <FileText className="h-3 w-3" />Page {ref.page_number}
-                    </span>
+                    </button>
                     {ref.text_snippet && (
                       <p className="text-[11px] text-muted-foreground italic border-l-2 border-amber-300/60 pl-2 line-clamp-2">
                         &ldquo;{ref.text_snippet}&rdquo;
@@ -173,7 +200,7 @@ const FlagRow = memo(function FlagRow({
   );
 });
 
-const PAGE_SIZE = 10;
+export const PAGE_SIZE = 10;
 
 export function FlagsTable({
   flags,
@@ -181,24 +208,30 @@ export function FlagsTable({
   onReview,
   onGetRecommendation,
   submitting,
+  total,
+  currentPage: serverPage,
+  onPageChange: onServerPageChange,
 }: {
   flags: Flag[];
   packId: string;
   onReview: (flagId: string, decision: ReviewDecision, reasonCode: string | null, notes: string) => void;
   onGetRecommendation: (flagId: string) => Promise<{ decision: string; reasoning: string; confidence: number }>;
   submitting?: boolean;
+  total?: number;
+  currentPage?: number;
+  onPageChange?: (page: number) => void;
 }) {
+  const router = useRouter();
   const [selectedFlag, setSelectedFlag] = useState<Flag | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
 
-  const sorted = [...flags].sort(
-    (a, b) => (severityOrder[a.severity] ?? 4) - (severityOrder[b.severity] ?? 4)
-  );
-
-  const { paginate, totalPages } = usePagination(sorted, PAGE_SIZE);
-  const pageItems = paginate(currentPage);
+  // Server-driven pagination: flags are already sorted/paginated by backend
+  const isServerPaginated = total !== undefined && serverPage !== undefined && onServerPageChange !== undefined;
+  const currentPage = isServerPaginated ? serverPage : 1;
+  const pageItems = flags;  // Already paginated by server
+  const effectiveTotal = isServerPaginated ? total : flags.length;
+  const totalPages = Math.max(1, Math.ceil(effectiveTotal / PAGE_SIZE));
 
   const toggleRow = useCallback((id: string) => {
     setExpandedRows((prev) => {
@@ -220,8 +253,17 @@ export function FlagsTable({
 
   const handleOpenDetail = useCallback((flag: Flag) => setSelectedFlag(flag), []);
 
+  const handleNavigateToPage = useCallback(
+    (pageNumber: number) => {
+      router.push(`/apps/title-intelligence/packs/${packId}/documents?page=${pageNumber}`);
+    },
+    [router, packId]
+  );
+
   const handlePageChange = (page: number) => {
-    setCurrentPage(page);
+    if (isServerPaginated) {
+      onServerPageChange(page);
+    }
     setExpandedRows(new Set());
   };
 
@@ -264,6 +306,7 @@ export function FlagsTable({
               onToggle={toggleRow}
               onQuickAction={handleQuickAction}
               onOpenDetail={handleOpenDetail}
+              onNavigateToPage={handleNavigateToPage}
             />
           );
         })}
@@ -274,7 +317,7 @@ export function FlagsTable({
         <Pagination
           currentPage={currentPage}
           totalPages={totalPages}
-          totalItems={sorted.length}
+          totalItems={effectiveTotal}
           pageSize={PAGE_SIZE}
           onPageChange={handlePageChange}
         />

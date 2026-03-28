@@ -97,33 +97,35 @@ def collect_version_info(settings: Settings) -> dict[str, Any]:
     """
     global _cached_version_info, _cached_version_key
 
-    cache_key = f"{settings.AI_PLATFORM}:{settings.PIPELINE_BACKEND}"
+    cache_key = f"gemini:{settings.PIPELINE_BACKEND}"
     if _cached_version_info is not None and _cached_version_key == cache_key:
         return _cached_version_info
 
-    from app.ai.base_service import PLATFORM_MODELS
+    from app.ai.base_service import MODEL
     from app.micro_apps.title_search.ai.document_parser_agent import (
         PARSER_SYSTEM_PROMPT, PARSER_TOOL,
     )
-    from app.micro_apps.title_search.ai.chain_builder_agent import (
-        CHAIN_SYSTEM_PROMPT, CHAIN_TOOL,
-    )
-    from app.micro_apps.title_search.ai.anomaly_detector_agent import (
-        ANOMALY_SYSTEM_PROMPT, ANOMALY_TOOL,
+    from app.micro_apps.title_search.ai.chain_analysis_agent import (
+        CHAIN_ANALYSIS_SYSTEM_PROMPT, CHAIN_ANALYSIS_JSON_SCHEMA,
     )
 
-    platform = settings.AI_PLATFORM
-    model = PLATFORM_MODELS.get(platform, {}).get("default", "unknown")
+    platform = "gemini"
+    model = MODEL
+
+    # chain_prompt_hash and anomaly_prompt_hash both reference the combined
+    # prompt for backward compat with TAPipelineRun columns.
+    combined_prompt_hash = hash_string(CHAIN_ANALYSIS_SYSTEM_PROMPT)
+    combined_schema_hash = hash_string(json.dumps(CHAIN_ANALYSIS_JSON_SCHEMA, sort_keys=True))
 
     _cached_version_info = {
         "ai_platform": platform,
         "ai_model": model,
         "parser_prompt_hash": hash_string(PARSER_SYSTEM_PROMPT),
-        "chain_prompt_hash": hash_string(CHAIN_SYSTEM_PROMPT),
-        "anomaly_prompt_hash": hash_string(ANOMALY_SYSTEM_PROMPT),
+        "chain_prompt_hash": combined_prompt_hash,
+        "anomaly_prompt_hash": combined_prompt_hash,
         "parser_tool_hash": hash_string(json.dumps(PARSER_TOOL, sort_keys=True)),
-        "chain_tool_hash": hash_string(json.dumps(CHAIN_TOOL, sort_keys=True)),
-        "anomaly_tool_hash": hash_string(json.dumps(ANOMALY_TOOL, sort_keys=True)),
+        "chain_tool_hash": combined_schema_hash,
+        "anomaly_tool_hash": combined_schema_hash,
         "rules_version": RULES_VERSION,
         "pipeline_backend": settings.PIPELINE_BACKEND,
         "version_metadata": {

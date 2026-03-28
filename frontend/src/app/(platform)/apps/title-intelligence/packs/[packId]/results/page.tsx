@@ -15,15 +15,16 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/components/ui/toast";
-import type { Flag, Extraction, ReadinessData, ReviewDecision, Pack, Recommendation } from "@/lib/ti-types";
+import { PAGE_SIZE } from "@/components/title-intelligence/flags-table";
+import type { Flag, FlagListResponse, Extraction, ReadinessData, ReviewDecision, Pack, Recommendation } from "@/lib/ti-types";
 
-type FilterKey = "all" | "critical" | "warning" | "review";
+type SeverityFilter = "all" | "critical" | "warning" | "review";
 
 function extractValue(ext: Extraction): string {
   const v = ext.value;
   if (typeof v === "string") return v;
   if (v && typeof v === "object") {
-    for (const key of ["value", "address", "full_address", "name", "amount", "number", "date", "text"]) {
+    for (const key of ["value", "field_value", "address", "full_address", "name", "amount", "number", "date", "text"]) {
       if (typeof (v as Record<string, unknown>)[key] === "string") return (v as Record<string, unknown>)[key] as string;
     }
     for (const val of Object.values(v)) {
@@ -52,8 +53,11 @@ export default function ResultsPage() {
   const packId = params.packId as string;
   const { orgFetch, orgFetchBlob } = useOrg();
 
-  const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
   const [flags, setFlags] = useState<Flag[]>([]);
+  const [flagCounts, setFlagCounts] = useState<Record<string, number>>({});
+  const [flagTotal, setFlagTotal] = useState(0);
+  const [flagPage, setFlagPage] = useState(1);
   const [extractions, setExtractions] = useState<Extraction[]>([]);
   const [readiness, setReadiness] = useState<ReadinessData | null>(null);
   const [pack, setPack] = useState<Pack | null>(null);
@@ -71,13 +75,21 @@ export default function ResultsPage() {
   const { pipeline } = usePipelineStatus(packId, isProcessing);
   const prevStatusRef = useRef(pack?.status);
 
-  const fetchFlags = useCallback(async () => {
+  const fetchFlags = useCallback(async (page = flagPage, severity = severityFilter) => {
     try {
-      const data = await orgFetch<{ flags: Flag[] }>(`/api/v1/apps/title-intelligence/packs/${packId}/flags`);
+      const params = new URLSearchParams();
+      if (severity !== "all") params.set("severity", severity);
+      params.set("sort_by", "severity");
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String((page - 1) * PAGE_SIZE));
+      const qs = params.toString();
+      const data = await orgFetch<FlagListResponse>(`/api/v1/apps/title-intelligence/packs/${packId}/flags?${qs}`);
       setFlags(data.flags);
-    } catch { setFlags([]); showToast("error", "Failed to load flags"); }
+      setFlagCounts(data.counts);
+      setFlagTotal(data.total);
+    } catch { setFlags([]); setFlagCounts({}); setFlagTotal(0); showToast("error", "Failed to load flags"); }
     finally { setFlagsLoading(false); }
-  }, [orgFetch, packId, showToast]);
+  }, [orgFetch, packId, showToast, flagPage, severityFilter]);
 
   const fetchExtractions = useCallback(async () => {
     try {
@@ -164,12 +176,27 @@ export default function ResultsPage() {
   useEffect(() => {
     if (prevStatusRef.current === "processing" && pack?.status === "completed") {
       setFlagsLoading(true);
-      fetchFlags();
+      setSeverityFilter("all");
+      setFlagPage(1);
+      fetchFlags(1, "all");
       fetchExtractions();
       fetchReadiness();
     }
     prevStatusRef.current = pack?.status;
   }, [pack?.status, fetchFlags, fetchExtractions, fetchReadiness]);
+
+  const handleSeverityFilter = (filter: SeverityFilter) => {
+    setSeverityFilter(filter);
+    setFlagPage(1);
+    setFlagsLoading(true);
+    fetchFlags(1, filter);
+  };
+
+  const handleFlagPageChange = (page: number) => {
+    setFlagPage(page);
+    setFlagsLoading(true);
+    fetchFlags(page, severityFilter);
+  };
 
   const handleReview = async (flagId: string, decision: ReviewDecision, reasonCode: string | null, notes: string) => {
     setSubmitting(true);
@@ -178,7 +205,7 @@ export default function ResultsPage() {
         method: "POST",
         body: JSON.stringify({ decision, reason_code: reasonCode, notes }),
       });
-      fetchFlags();
+      fetchFlags(flagPage, severityFilter);
       fetchReadiness();
     } catch (error) {
       showToast("error", error instanceof Error ? error.message : "Failed to submit review");
@@ -191,36 +218,31 @@ export default function ResultsPage() {
     return await orgFetch<Recommendation>(`/api/v1/apps/title-intelligence/packs/${packId}/flags/${flagId}/recommend`, { method: "POST" });
   };
 
-  const propertyAddress = findExtraction(extractions, "property_info", "address", "property address", "full_address");
+  const propertyAddress = findExtraction(extractions, "policy_info", "address", "property address", "full_address")
+    || findExtraction(extractions, "property", "address", "property address", "full_address", "insured property");
   const displayTitle = propertyAddress || packName || "Analysis Results";
-  const orderNumber = findExtraction(extractions, "property_info", "commitment number", "order number", "order no", "commitment_number");
-  const commitmentDate = findExtraction(extractions, "property_info", "effective date", "commitment date", "effective_date");
-  const issuedBy = findExtraction(extractions, "party", "title company", "underwriter", "issuer", "issued by");
+  const orderNumber = findExtraction(extractions, "policy_info", "commitment number", "order number", "order no", "commitment_number")
+    || findExtraction(extractions, "property", "commitment number", "order number", "order no");
+  const commitmentDate = findExtraction(extractions, "policy_info", "effective date", "commitment date", "effective_date")
+    || findExtraction(extractions, "property", "effective date", "commitment date");
+  const issuedBy = findExtraction(extractions, "party", "title company", "underwriter", "issuer", "issued by", "issuing agent");
 
-  const criticalCount = flags.filter((f) => f.severity === "critical").length;
-  const warningCount = flags.filter((f) => f.severity === "high" || f.severity === "medium").length;
-  const underReviewCount = flags.filter((f) => f.status !== "approved").length;
+  // Counts from server (unfiltered, full severity breakdown)
+  const totalFlagCount = Object.values(flagCounts).reduce((a, b) => a + b, 0);
+  const criticalCount = flagCounts["critical"] || 0;
+  const warningCount = (flagCounts["high"] || 0) + (flagCounts["medium"] || 0);
+  const reviewCount = flagCounts["low"] || 0;
   const validationScore = readiness ? Math.round(readiness.score / 10) : 0;
 
   const analyzedAt = pack?.status === "completed" && pack?.updated_at
     ? new Date(pack.updated_at).toLocaleString("en-US", { month: "numeric", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
     : null;
 
-  const filteredFlags = flags.filter((f) => {
-    if (activeFilter === "critical") return f.severity === "critical";
-    if (activeFilter === "warning") return f.severity === "high" || f.severity === "medium";
-    if (activeFilter === "review") return f.status !== "approved";
-    return true;
-  });
-
-  const uniqueDocs = new Set(flags.flatMap((f) => (f.evidence_refs || []).map((r) => r.page_number))).size;
-  const actionableCount = flags.filter((f) => f.status === "open").length;
-
-  const filterTabs: { key: FilterKey; label: string; count: number }[] = [
-    { key: "all", label: "All", count: flags.length },
+  const severityTabs: { key: SeverityFilter; label: string; count: number }[] = [
+    { key: "all", label: "All", count: totalFlagCount },
     { key: "critical", label: "Critical", count: criticalCount },
     { key: "warning", label: "Warning", count: warningCount },
-    { key: "review", label: "Review", count: underReviewCount },
+    { key: "review", label: "Review", count: reviewCount },
   ];
 
   return (
@@ -269,7 +291,7 @@ export default function ResultsPage() {
             <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
             <p className="text-sm font-medium text-amber-800">Re-analyzing package...</p>
           </div>
-          <PipelineProgress stages={pipeline.stages} />
+          <PipelineProgress stages={pipeline.stages} examineProgress={pipeline.examine_progress} />
         </div>
       )}
 
@@ -279,7 +301,7 @@ export default function ResultsPage() {
           {[
             { value: criticalCount, label: "Critical Issues", sub: "Require immediate resolution", color: "border-l-red-500", text: "text-red-600" },
             { value: warningCount, label: "Warnings", sub: "Require attention before closing", color: "border-l-amber-500", text: "text-amber-600" },
-            { value: underReviewCount, label: "Under Review", sub: "Examiner judgment required", color: "border-l-blue-500", text: "text-blue-600" },
+            { value: reviewCount, label: "Under Review", sub: "Examiner judgment required", color: "border-l-blue-500", text: "text-blue-600" },
           ].map((card) => (
             <div key={card.label} className={cn("rounded-lg border bg-card p-4 border-l-4", card.color)}>
               <p className={cn("text-2xl font-bold", card.text)}>{card.value}</p>
@@ -337,32 +359,35 @@ export default function ResultsPage() {
 
         {/* Filter tabs */}
         {!flagsLoading && (
-          <div className="flex items-center gap-0.5 px-5 border-b">
-            {filterTabs.map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveFilter(tab.key)}
-                className={cn(
-                  "relative px-3 py-2 text-[13px] font-medium transition-colors rounded-t-md",
-                  activeFilter === tab.key
-                    ? "text-foreground"
-                    : "text-muted-foreground hover:text-foreground/80"
-                )}
-              >
-                {tab.label} ({tab.count})
-                {activeFilter === tab.key && (
-                  <span className="absolute bottom-0 inset-x-1 h-[2px] bg-brand-amber rounded-t" />
-                )}
-              </button>
-            ))}
+          <div className="px-5 border-b space-y-0">
+            {/* Severity filter row */}
+            <div className="flex items-center gap-0.5">
+              {severityTabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => handleSeverityFilter(tab.key)}
+                  className={cn(
+                    "relative px-3 py-2 text-[13px] font-medium transition-colors rounded-t-md",
+                    severityFilter === tab.key
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground/80"
+                  )}
+                >
+                  {tab.label} ({tab.count})
+                  {severityFilter === tab.key && (
+                    <span className="absolute bottom-0 inset-x-1 h-[2px] bg-brand-amber rounded-t" />
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
         {/* Stats line */}
-        {!flagsLoading && flags.length > 0 && (
+        {!flagsLoading && flagTotal > 0 && (
           <div className="px-5 py-2.5 bg-muted/20 border-b">
             <p className="text-[12px] text-muted-foreground">
-              {flags.length} issue{flags.length !== 1 ? "s" : ""} found across {uniqueDocs} document{uniqueDocs !== 1 ? "s" : ""} &mdash; {actionableCount} require action before closing
+              {totalFlagCount} issue{totalFlagCount !== 1 ? "s" : ""} found &mdash; {criticalCount + warningCount} require action before closing
             </p>
           </div>
         )}
@@ -376,11 +401,14 @@ export default function ResultsPage() {
             </div>
           ) : (
             <FlagsTable
-              flags={filteredFlags}
+              flags={flags}
               packId={packId}
               onReview={handleReview}
               onGetRecommendation={handleGetRecommendation}
               submitting={submitting}
+              total={flagTotal}
+              currentPage={flagPage}
+              onPageChange={handleFlagPageChange}
             />
           )}
         </div>

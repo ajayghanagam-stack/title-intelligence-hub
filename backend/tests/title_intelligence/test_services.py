@@ -17,6 +17,11 @@ from app.micro_apps.title_intelligence.models.flag import Flag
 from app.micro_apps.title_intelligence.models.extraction import Extraction
 from app.micro_apps.title_intelligence.services import pack_service, flag_service
 from app.micro_apps.title_intelligence.services import page_service, pipeline_service
+from app.micro_apps.title_intelligence.services.readiness_service import (
+    FLAG_CATEGORY_MAP,
+    FLAG_TYPE_RESOLUTION_DAYS,
+    _estimate_days,
+)
 
 from tests.conftest import TEST_ORG_ID
 from tests.title_intelligence.conftest import TEST_PACK_ID, TEST_FILE_ID, TEST_FLAG_ID
@@ -161,15 +166,17 @@ class TestReportService:
 class TestFlagService:
     @pytest.mark.asyncio
     async def test_list_flags_with_severity_counts(self, db_session: AsyncSession, sample_pack_with_data):
-        flags, counts = await flag_service.list_flags(db_session, TEST_ORG_ID, TEST_PACK_ID)
+        flags, counts, total = await flag_service.list_flags(db_session, TEST_ORG_ID, TEST_PACK_ID)
         assert len(flags) == 1
         assert counts["high"] == 1
+        assert total == 1
 
     @pytest.mark.asyncio
     async def test_list_flags_wrong_org_empty(self, db_session: AsyncSession, sample_pack_with_data):
-        flags, counts = await flag_service.list_flags(db_session, OTHER_ORG_ID, TEST_PACK_ID)
+        flags, counts, total = await flag_service.list_flags(db_session, OTHER_ORG_ID, TEST_PACK_ID)
         assert len(flags) == 0
         assert len(counts) == 0
+        assert total == 0
 
     @pytest.mark.asyncio
     async def test_get_flag_for_pack_or_raise_success(self, db_session: AsyncSession, sample_pack_with_data):
@@ -289,19 +296,17 @@ class TestPipelineService:
 
     @pytest.mark.asyncio
     async def test_get_pipeline_status_processing(self, db_session: AsyncSession, seed_data):
-        pack = Pack(org_id=TEST_ORG_ID, name="Processing", status="processing", current_stage="ocr")
+        pack = Pack(org_id=TEST_ORG_ID, name="Processing", status="processing", current_stage="render")
         db_session.add(pack)
         await db_session.commit()
 
         result = await pipeline_service.get_pipeline_status(db_session, TEST_ORG_ID, pack.id)
         assert result.status == "processing"
-        assert result.current_stage == "ocr"
+        assert result.current_stage == "render"
 
         stage_statuses = {s.stage: s.status for s in result.stages}
         assert stage_statuses["ingest"] == "completed"
-        assert stage_statuses["render"] == "completed"
-        assert stage_statuses["ocr"] == "running"
-        assert stage_statuses["index"] == "pending"
+        assert stage_statuses["render"] == "running"
 
     @pytest.mark.asyncio
     async def test_get_pipeline_status_or_raise_not_found(self, db_session: AsyncSession, seed_data):
@@ -329,4 +334,85 @@ class TestPipelineService:
         stage_statuses = {s.stage: s.status for s in result.stages}
         assert stage_statuses["ingest"] == "completed"
         assert stage_statuses["render"] == "failed"
-        assert stage_statuses["ocr"] == "pending"
+
+
+# ---------------------------------------------------------------------------
+# readiness_service — _estimate_days and FLAG_CATEGORY_MAP
+# ---------------------------------------------------------------------------
+
+class _MockFlag:
+    """Lightweight mock for flag objects used in _estimate_days tests."""
+    def __init__(self, flag_type: str, severity: str = "high"):
+        self.flag_type = flag_type
+        self.severity = severity
+
+
+class TestReadinessService:
+    def test_estimate_days_trust_issue(self):
+        """trust_issue should resolve in 10 days (max base)."""
+        flags = [_MockFlag("trust_issue", "high")]
+        assert _estimate_days(flags) == 10
+
+    def test_estimate_days_estate_issue(self):
+        """estate_issue should resolve in 10 days."""
+        flags = [_MockFlag("estate_issue", "high")]
+        assert _estimate_days(flags) == 10
+
+    def test_estimate_days_tax_issue(self):
+        """tax_issue should resolve in 7 days."""
+        flags = [_MockFlag("tax_issue", "medium")]
+        assert _estimate_days(flags) == 7
+
+    def test_estimate_days_concurrent_takes_max(self):
+        """Multiple flag types → max base_days (concurrent resolution)."""
+        flags = [
+            _MockFlag("name_discrepancy", "medium"),     # 2 days
+            _MockFlag("trust_issue", "high"),             # 10 days
+            _MockFlag("missing_endorsement", "medium"),   # 2 days
+        ]
+        assert _estimate_days(flags) == 10
+
+    def test_estimate_days_with_critical(self):
+        """Critical flags add 2 days escalation buffer each."""
+        flags = [
+            _MockFlag("trust_issue", "critical"),   # 10 base + 2 escalation
+        ]
+        assert _estimate_days(flags) == 12
+
+    def test_estimate_days_multiple_critical(self):
+        """Multiple critical flags each add 2 days buffer."""
+        flags = [
+            _MockFlag("trust_issue", "critical"),        # 10 base
+            _MockFlag("unreleased_mortgage", "critical"), # 5 base
+        ]
+        # max(10, 5) = 10 base + 2 * 2 = 4 escalation = 14
+        assert _estimate_days(flags) == 14
+
+    def test_estimate_days_empty(self):
+        """No flags → 0 days."""
+        assert _estimate_days([]) == 0
+
+    def test_estimate_days_unknown_type_defaults_to_2(self):
+        """Unknown flag types default to 2 days base."""
+        flags = [_MockFlag("unknown_type", "medium")]
+        assert _estimate_days(flags) == 2
+
+    def test_flag_category_map_new_types(self):
+        """All 17 flag types are mapped to categories."""
+        from app.micro_apps.title_intelligence.services.flag_rules import VALID_FLAG_TYPES
+        for ft in VALID_FLAG_TYPES:
+            assert ft in FLAG_CATEGORY_MAP, f"Flag type '{ft}' missing from FLAG_CATEGORY_MAP"
+
+    def test_flag_category_map_mineral_rights(self):
+        """mineral_rights maps to exceptions category."""
+        assert FLAG_CATEGORY_MAP["mineral_rights"] == "exceptions"
+
+    def test_flag_category_map_trust_issue(self):
+        """trust_issue maps to requirements category."""
+        assert FLAG_CATEGORY_MAP["trust_issue"] == "requirements"
+
+    def test_flag_type_resolution_days_coverage(self):
+        """All VALID_FLAG_TYPES have resolution day estimates."""
+        from app.micro_apps.title_intelligence.services.flag_rules import VALID_FLAG_TYPES
+        for ft in VALID_FLAG_TYPES:
+            assert ft in FLAG_TYPE_RESOLUTION_DAYS, f"Flag type '{ft}' missing from FLAG_TYPE_RESOLUTION_DAYS"

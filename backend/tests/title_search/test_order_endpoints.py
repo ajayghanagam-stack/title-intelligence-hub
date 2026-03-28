@@ -134,7 +134,8 @@ async def test_delete_pending_order(client: AsyncClient, sample_order):
 
 
 @pytest.mark.asyncio
-async def test_delete_non_pending_order_fails(client: AsyncClient, db_session, sample_order):
+async def test_delete_non_pending_order_succeeds(client: AsyncClient, db_session, sample_order):
+    """Orders can be deleted regardless of status."""
     from app.micro_apps.title_search.models.order import TAOrder
     from sqlalchemy import select
 
@@ -149,7 +150,7 @@ async def test_delete_non_pending_order_fails(client: AsyncClient, db_session, s
         f"/api/v1/apps/title-search/orders/{TEST_ORDER_ID}",
         headers={"X-Org-Id": str(TEST_ORG_ID)},
     )
-    assert response.status_code == 409
+    assert response.status_code == 204
 
 
 @pytest.mark.asyncio

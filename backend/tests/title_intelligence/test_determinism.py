@@ -174,7 +174,7 @@ async def test_readiness_snapshot(db_session: AsyncSession, golden_pack):
 
     assert r.score == 50
     assert r.status == "not_ready"
-    assert r.estimated_days == 3  # high=2 + medium=1
+    assert r.estimated_days == 5  # max(unresolved_lien=5, missing_endorsement=2, requirement_missing_proof=5)
 
     # Category breakdown
     cats = {c.category: c for c in r.categories}

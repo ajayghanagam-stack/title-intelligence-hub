@@ -13,7 +13,6 @@ Estimated days: critical=4d, high=2d, medium=1d (concurrent paths)
 """
 
 import uuid
-import math
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,8 +29,29 @@ from app.micro_apps.title_intelligence.schemas.readiness import (
 # Penalty percentage per open flag severity (applied as multiplier reduction)
 SEVERITY_PENALTY = {"critical": 0.08, "high": 0.05, "medium": 0.02, "low": 0.005}
 
-# Estimated resolution days per severity (concurrent, so we take max path)
-SEVERITY_DAYS = {"critical": 4, "high": 2, "medium": 1, "low": 0}
+# Estimated resolution days per flag type (concurrent resolution model)
+FLAG_TYPE_RESOLUTION_DAYS: dict[str, int] = {
+    "trust_issue": 10,
+    "estate_issue": 10,
+    "tax_issue": 7,
+    "chain_of_title_gap": 7,
+    "regulatory_compliance": 5,
+    "requirement_missing_proof": 5,
+    "unreleased_mortgage": 5,
+    "unresolved_lien": 5,
+    "vesting_issue": 5,
+    "mineral_rights": 3,
+    "marital_status_issue": 3,
+    "missing_endorsement": 2,
+    "name_discrepancy": 2,
+    "unacceptable_exception": 2,
+    "document_defect": 2,
+    "incomplete_document": 2,
+    "cross_section_mismatch": 1,
+}
+
+# Escalation buffer per critical flag
+CRITICAL_ESCALATION_DAYS = 2
 
 # Category weights (must sum to 1.0)
 CATEGORY_WEIGHTS = {
@@ -47,8 +67,20 @@ FLAG_CATEGORY_MAP = {
     "requirement_missing_proof": "requirements",
     "missing_endorsement": "endorsements",
     "unresolved_lien": "liens",
+    "unreleased_mortgage": "liens",
     "unacceptable_exception": "exceptions",
     "cross_section_mismatch": "consistency",
+    "name_discrepancy": "consistency",
+    "marital_status_issue": "requirements",
+    "incomplete_document": "requirements",
+    "regulatory_compliance": "requirements",
+    "chain_of_title_gap": "liens",
+    "document_defect": "consistency",
+    "mineral_rights": "exceptions",
+    "trust_issue": "requirements",
+    "estate_issue": "requirements",
+    "vesting_issue": "requirements",
+    "tax_issue": "requirements",
 }
 
 # Extractions with confidence below this threshold are flagged as "needs_review"
@@ -254,8 +286,11 @@ def _build_checklist(extractions: list, flags: list) -> list[ChecklistItem]:
 
     # Extraction-based checklist items
     ext_types = {"party": "Parties identified", "property_info": "Property info extracted",
+                 "property": "Property info extracted",
                  "requirement": "Requirements extracted", "exception": "Exceptions extracted",
-                 "endorsement": "Endorsements identified", "legal_description": "Legal description extracted"}
+                 "endorsement": "Endorsements identified", "legal_description": "Legal description extracted",
+                 "policy_info": "Policy info extracted", "compliance": "Compliance items identified",
+                 "chain_of_title": "Chain of title documented"}
 
     ext_by_type: dict[str, list] = {}
     for e in extractions:
@@ -300,30 +335,28 @@ def _build_checklist(extractions: list, flags: list) -> list[ChecklistItem]:
 
 
 def _estimate_days(open_flags: list) -> int:
-    """Estimate days to closing readiness based on open flag severities.
+    """Estimate days to closing readiness based on open flag types.
 
-    Uses concurrent path model: group flags by severity, take max path.
-    critical=4d, high=2d, medium=1d, low=0d
+    Uses concurrent resolution model: all flags of different types are
+    resolved in parallel, so take the max base_days across all open flag
+    types. Add 2 days per critical flag as escalation buffer.
     """
     if not open_flags:
         return 0
 
-    # Group by severity and take max count for concurrent resolution
-    severity_counts: dict[str, int] = {}
+    # Take max resolution days across all flag types (concurrent resolution)
+    max_base_days = 0
+    critical_count = 0
     for f in open_flags:
-        severity_counts[f.severity] = severity_counts.get(f.severity, 0) + 1
+        base_days = FLAG_TYPE_RESOLUTION_DAYS.get(f.flag_type, 2)
+        max_base_days = max(max_base_days, base_days)
+        if f.severity == "critical":
+            critical_count += 1
 
-    # Each severity level's flags can be worked in parallel within that level,
-    # but different severity levels may be sequential (critical first, then high, etc.)
-    # Simplified: sum the base days for each severity level that has open flags
-    total_days = 0
-    for severity, count in severity_counts.items():
-        base_days = SEVERITY_DAYS.get(severity, 0)
-        if base_days > 0:
-            # Concurrent within severity: ceiling of count / 2 (assume 2 parallel workers)
-            total_days += base_days * math.ceil(count / 2)
+    # Add escalation buffer for critical flags
+    total_days = max_base_days + (critical_count * CRITICAL_ESCALATION_DAYS)
 
-    return max(total_days, 1) if open_flags else 0
+    return max(total_days, 1)
 
 
 async def _get_title_search_category(

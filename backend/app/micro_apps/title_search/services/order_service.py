@@ -14,10 +14,15 @@ async def create_order(
     property_address: str,
     county: str,
     state_code: str,
+    city: str | None = None,
+    zip_code: str | None = None,
+    borrower_name: str | None = None,
     parcel_number: str | None = None,
     legal_description: str | None = None,
     search_scope: str = "full",
     search_years: int = 60,
+    order_reference: str | None = None,
+    effective_date=None,
     linked_pack_id: uuid.UUID | None = None,
 ) -> TAOrder:
     # Validate linked_pack_id if provided
@@ -33,12 +38,17 @@ async def create_order(
         org_id=org_id,
         created_by=created_by,
         property_address=property_address,
+        city=city,
+        zip_code=zip_code,
         county=county,
         state_code=state_code,
+        borrower_name=borrower_name,
         parcel_number=parcel_number,
         legal_description=legal_description,
         search_scope=search_scope,
         search_years=search_years,
+        order_reference=order_reference,
+        effective_date=effective_date,
         linked_pack_id=linked_pack_id,
         status="pending",
     )
@@ -85,8 +95,21 @@ async def delete_order_or_raise(
     db: AsyncSession, org_id: uuid.UUID, order_id: uuid.UUID
 ) -> None:
     order = await get_order_or_raise(db, org_id, order_id)
-    if order.status != "pending":
-        raise ConflictError("Only pending orders can be deleted")
+
+    # Delete child records explicitly (SQLite doesn't enforce ON DELETE CASCADE)
+    from sqlalchemy import delete as sa_delete
+    from app.micro_apps.title_search.models.review import TAReview
+    from app.micro_apps.title_search.models.flag import TAFlag
+    from app.micro_apps.title_search.models.chain_link import TAChainLink
+    from app.micro_apps.title_search.models.package import TAPackage
+    from app.micro_apps.title_search.models.document import TADocument
+    from app.micro_apps.title_search.models.raw_document import TARawDocument
+    from app.micro_apps.title_search.models.source_assignment import TASourceAssignment
+    from app.micro_apps.title_search.models.pipeline_run import TAPipelineRun
+
+    for model in (TAReview, TAFlag, TAChainLink, TAPackage, TADocument, TARawDocument, TASourceAssignment, TAPipelineRun):
+        await db.execute(sa_delete(model).where(model.order_id == order_id))
+
     await db.delete(order)
     await db.commit()
 

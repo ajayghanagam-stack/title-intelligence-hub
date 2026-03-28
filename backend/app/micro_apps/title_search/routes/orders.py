@@ -28,12 +28,17 @@ async def create_order(
     order = await order_service.create_order(
         db, org_id, member.id,
         property_address=body.property_address,
+        city=body.city,
+        zip_code=body.zip_code,
         county=body.county,
         state_code=body.state_code,
+        borrower_name=body.borrower_name,
         parcel_number=body.parcel_number,
         legal_description=body.legal_description,
         search_scope=body.search_scope,
         search_years=body.search_years,
+        order_reference=body.order_reference,
+        effective_date=body.effective_date,
         linked_pack_id=body.linked_pack_id,
     )
     await log_event(

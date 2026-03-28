@@ -1,7 +1,7 @@
 import uuid
 from collections import Counter
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case, asc, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -9,19 +9,71 @@ from app.micro_apps.title_intelligence.models.flag import Flag, Review
 from app.micro_apps.title_intelligence.models.extraction import Extraction
 from app.core.exceptions import NotFoundError
 
+SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
 
 async def list_flags(
-    db: AsyncSession, org_id: uuid.UUID, pack_id: uuid.UUID
-) -> tuple[list[Flag], dict[str, int]]:
-    result = await db.execute(
-        select(Flag)
-        .options(selectinload(Flag.reviews))
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    pack_id: uuid.UUID,
+    severity: str | None = None,
+    status: str | None = None,
+    sort_by: str = "severity",
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[Flag], dict[str, int], int]:
+    """Return (flags, severity_counts, filtered_total).
+
+    ``counts`` is always computed from all flags (unfiltered) so summary cards
+    reflect the full severity breakdown regardless of active filters.
+    """
+    base = select(Flag).where(Flag.pack_id == pack_id, Flag.org_id == org_id)
+
+    # --- unfiltered counts (always full severity breakdown) ---
+    count_result = await db.execute(
+        select(Flag.severity, func.count())
         .where(Flag.pack_id == pack_id, Flag.org_id == org_id)
-        .order_by(Flag.created_at)
+        .group_by(Flag.severity)
+    )
+    counts = {row[0]: row[1] for row in count_result.all()}
+
+    # --- apply filters ---
+    filtered = base
+    if severity == "warning":
+        filtered = filtered.where(Flag.severity.in_(["high", "medium"]))
+    elif severity == "review":
+        filtered = filtered.where(Flag.severity == "low")
+    elif severity:
+        filtered = filtered.where(Flag.severity == severity)
+    if status:
+        filtered = filtered.where(Flag.status == status)
+
+    # --- filtered total ---
+    total_result = await db.execute(
+        select(func.count()).select_from(filtered.subquery())
+    )
+    total = total_result.scalar() or 0
+
+    # --- sorting ---
+    if sort_by == "created_at":
+        order = desc(Flag.created_at)
+    elif sort_by == "flag_type":
+        order = asc(Flag.flag_type)
+    else:  # "severity" (default)
+        order = asc(
+            case(SEVERITY_ORDER, value=Flag.severity, else_=99)
+        )
+
+    # --- paginated query ---
+    result = await db.execute(
+        filtered
+        .options(selectinload(Flag.reviews))
+        .order_by(order, Flag.created_at)
+        .limit(limit)
+        .offset(offset)
     )
     flags = list(result.scalars().all())
-    counts = Counter(f.severity for f in flags)
-    return flags, dict(counts)
+    return flags, counts, total
 
 
 async def get_flag(

@@ -1,13 +1,16 @@
 """Multi-provider AI service using litellm.
 
-Supports Anthropic (direct), Bedrock, OpenAI, and Azure via the litellm unified SDK.
-AI_PLATFORM setting selects the provider; existing agents continue to call the same methods.
+Supports Gemini 2.5 Flash (default) and Claude Sonnet 4 as AI providers.
+Provider selection is controlled by the AI_PROVIDER config setting.
+Gemini-specific code lives in gemini_provider.py, Claude in claude_provider.py.
 """
 
+import os
 import uuid
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 
 import litellm
@@ -19,68 +22,177 @@ logger = logging.getLogger(__name__)
 # Timeout for a single AI API call (120 seconds)
 AI_CALL_TIMEOUT = 120
 
-# Model mapping per platform and role
-PLATFORM_MODELS = {
-    "anthropic": {
-        "default": "claude-haiku-4-5-20251001",
-        "strong": "claude-sonnet-4-20250514",
-    },
-    "bedrock": {
-        "default": "bedrock/us.anthropic.claude-3-5-haiku-20241022-v1:0",
-        "strong": "bedrock/us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-    },
-    "openai": {
-        "default": "gpt-4o-mini",
-        "strong": "gpt-4o",
-    },
-    "azure": {
-        "default": "azure/gpt-4o-mini",
-        "strong": "azure/gpt-4o",
-    },
-}
+# Default model (Gemini) — kept for backward compatibility with imports
+MODEL = "gemini/gemini-2.5-flash"
 
-# Suppress litellm debug output
+# Suppress litellm debug output (including raw PDF bytes in request payloads)
 litellm.set_verbose = False
+litellm.suppress_debug_info = True
+for _ll_name in ("LiteLLM", "litellm", "litellm.llms"):
+    _ll = logging.getLogger(_ll_name)
+    _ll.setLevel(logging.WARNING)
+    _ll.handlers = [h for h in _ll.handlers if h.level > logging.INFO]
 
 
-def _configure_litellm():
-    """Set litellm API keys from settings."""
-    settings = get_settings()
-    if settings.ANTHROPIC_API_KEY:
-        litellm.api_key = settings.ANTHROPIC_API_KEY
-    if settings.OPENAI_API_KEY:
-        import os
-        os.environ["OPENAI_API_KEY"] = settings.OPENAI_API_KEY
-    if settings.AZURE_API_KEY:
-        import os
-        os.environ["AZURE_API_KEY"] = settings.AZURE_API_KEY
-        os.environ["AZURE_API_BASE"] = settings.AZURE_API_BASE
-        os.environ["AZURE_API_VERSION"] = settings.AZURE_API_VERSION
+def _get_model_for_provider(provider: str) -> str:
+    """Return the litellm model string for the given provider."""
+    if provider == "claude":
+        from app.ai.claude_provider import CLAUDE_MODEL
+        return CLAUDE_MODEL
+    return "gemini/gemini-2.5-flash"
+
+
+def _extract_json_text(raw: str | None) -> str:
+    """Extract clean JSON from an AI response that may be wrapped in markdown fences or contain trailing junk."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    # Strip markdown code fences
+    if text.startswith("```"):
+        first_nl = text.index("\n") if "\n" in text else len(text)
+        text = text[first_nl + 1:]
+        if text.endswith("```"):
+            text = text[:-3].rstrip()
+    # Find the outermost JSON object/array boundaries
+    start = -1
+    brace = None
+    for i, ch in enumerate(text):
+        if ch in ('{', '['):
+            start = i
+            brace = '}' if ch == '{' else ']'
+            break
+    if start == -1:
+        return text  # no JSON structure found, return as-is for error reporting
+    # Walk backwards from end to find closing brace
+    end = -1
+    for i in range(len(text) - 1, start, -1):
+        if text[i] == brace:
+            end = i
+            break
+    if end == -1:
+        return text
+    return text[start:end + 1]
+
+
+def _parse_json_robust(text: str) -> dict | list:
+    """Parse JSON with automatic repair for common LLM output issues.
+
+    Tries strict parse first, then uses iterative error-position repair:
+    at each JSONDecodeError position, inserts the likely missing character
+    (comma, closing bracket, etc.) and retries. Handles trailing commas,
+    missing commas, and truncated output.
+    """
+    if not text:
+        return {}
+
+    # Attempt 1: strict parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Attempt 2: regex-based fixes
+    fixed = text
+    # Fix trailing commas  (,} or ,])
+    fixed = re.sub(r',\s*([}\]])', r'\1', fixed)
+    # Fix missing commas between adjacent structures
+    fixed = re.sub(r'}\s*{', '}, {', fixed)
+    fixed = re.sub(r']\s*\[', '], [', fixed)
+    fixed = re.sub(r'}\s*\[', '}, [', fixed)
+    fixed = re.sub(r']\s*{', '], {', fixed)
+    # Missing comma after string value before next key:  "value"  "key"  →  "value", "key"
+    # Also handles:  "value"\n"key"
+    fixed = re.sub(r'"\s*\n\s*"', '", "', fixed)
+    # null/true/false/number followed by "key" without comma
+    fixed = re.sub(r'(null|true|false|\d+)\s*\n\s*"', r'\1, "', fixed)
+
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+
+    # Attempt 3: iterative error-position repair (up to 20 fixes)
+    repaired = fixed
+    for _ in range(20):
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError as e:
+            pos = e.pos or 0
+            msg = e.msg
+            if "Expecting ',' delimiter" in msg:
+                # Insert missing comma at error position
+                repaired = repaired[:pos] + ',' + repaired[pos:]
+            elif "Expecting ':' delimiter" in msg:
+                repaired = repaired[:pos] + ':' + repaired[pos:]
+            elif "Expecting value" in msg and pos < len(repaired):
+                # Likely trailing comma before ] or } — remove char before pos
+                if pos > 0 and repaired[pos - 1] == ',':
+                    repaired = repaired[:pos - 1] + repaired[pos:]
+                else:
+                    break  # can't fix
+            else:
+                break  # unknown error type
+
+    # Attempt 4: close unclosed braces/brackets
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        pass
+    open_braces = repaired.count('{') - repaired.count('}')
+    open_brackets = repaired.count('[') - repaired.count(']')
+    if open_braces > 0 or open_brackets > 0:
+        patched = repaired.rstrip().rstrip(',')
+        patched += ']' * max(0, open_brackets)
+        patched += '}' * max(0, open_braces)
+        try:
+            return json.loads(patched)
+        except json.JSONDecodeError:
+            pass
+
+    # Attempt 5: parse longest valid prefix
+    decoder = json.JSONDecoder()
+    try:
+        obj, _ = decoder.raw_decode(repaired)
+        logger.warning("AI JSON response truncated — parsed partial result")
+        return obj
+    except json.JSONDecodeError:
+        pass
+
+    # All repairs failed — raise with original error for diagnostics
+    return json.loads(text)
 
 
 _configured = False
 
 
 def _ensure_configured():
+    """Configure the active AI provider's API keys."""
     global _configured
     if not _configured:
-        _configure_litellm()
+        settings = get_settings()
+        if settings.AI_PROVIDER == "claude":
+            from app.ai.claude_provider import configure_claude
+            configure_claude(settings)
+        else:
+            from app.ai.gemini_provider import configure_gemini
+            configure_gemini(settings)
         _configured = True
 
 
 class BaseAIService:
     """Base class for AI services. Each micro app subclasses this.
 
-    Uses litellm for multi-provider support. Provider is selected via AI_PLATFORM setting.
+    Dispatches structured output calls to the appropriate provider module
+    based on the AI_PROVIDER config setting. Shared methods (call_haiku,
+    call_with_tools, call_streaming) work with both providers via litellm.
     """
 
     def __init__(self, org_id: uuid.UUID, role: str = "default"):
         _ensure_configured()
         self.org_id = org_id
         settings = get_settings()
-        platform = settings.AI_PLATFORM
-        models = PLATFORM_MODELS.get(platform, PLATFORM_MODELS["anthropic"])
-        self.model = models.get(role, models["default"])
+        self._provider = settings.AI_PROVIDER
+        self.model = _get_model_for_provider(self._provider)
 
     async def call_haiku(
         self,
@@ -124,10 +236,12 @@ class BaseAIService:
         max_tokens: int = 1024,
         retries: int = 3,
         temperature: float = 0.0,
+        timeout: int | None = None,
     ) -> dict[str, Any]:
         """Call LLM with tool_use pattern for structured output."""
         # Convert Anthropic tool format to OpenAI/litellm format if needed
         converted_tools = _convert_tools(tools)
+        effective_timeout = timeout or AI_CALL_TIMEOUT
 
         for attempt in range(retries):
             try:
@@ -139,7 +253,7 @@ class BaseAIService:
                         max_tokens=max_tokens,
                         temperature=temperature,
                     ),
-                    timeout=AI_CALL_TIMEOUT,
+                    timeout=effective_timeout,
                 )
                 # Extract tool call result
                 message = response.choices[0].message
@@ -162,6 +276,123 @@ class BaseAIService:
                     await asyncio.sleep(2 ** attempt)
                     continue
                 raise
+
+    async def call_json_structured(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        json_schema: dict[str, Any],
+        max_tokens: int = 1024,
+        retries: int = 3,
+        temperature: float = 0.0,
+        timeout: int | None = None,
+        return_usage: bool = False,
+    ) -> dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]:
+        """Call LLM with structured JSON output.
+
+        Dispatches to the appropriate provider:
+        - Gemini: native JSON schema response format (or google-genai SDK for PDF blocks)
+        - Claude: forced tool_use with cache_control for prompt caching
+
+        When return_usage=True, returns (result_dict, usage_dict) tuple.
+        """
+        if self._provider == "claude":
+            from app.ai.claude_provider import call_json_structured_claude
+            return await call_json_structured_claude(
+                model=self.model,
+                system_prompt=system_prompt,
+                messages=messages,
+                json_schema=json_schema,
+                max_tokens=max_tokens,
+                retries=retries,
+                temperature=temperature,
+                timeout=timeout,
+                return_usage=return_usage,
+            )
+
+        from app.ai.gemini_provider import call_json_structured_gemini
+        return await call_json_structured_gemini(
+            model=self.model,
+            system_prompt=system_prompt,
+            messages=messages,
+            json_schema=json_schema,
+            max_tokens=max_tokens,
+            retries=retries,
+            temperature=temperature,
+            timeout=timeout,
+            return_usage=return_usage,
+        )
+
+    async def create_context_cache(
+        self,
+        system_prompt: str,
+        json_schema: dict[str, Any],
+        ttl_seconds: int = 600,
+    ) -> str | None:
+        """Create a context cache for the system prompt + schema.
+
+        - Gemini: server-side cache via google-genai SDK
+        - Claude: returns None (prompt caching is implicit via cache_control blocks)
+        """
+        if self._provider == "claude":
+            # Claude uses implicit prompt caching via cache_control blocks
+            # in call_json_structured_claude — no explicit cache creation needed
+            return None
+
+        from app.ai.gemini_provider import create_context_cache_gemini
+        return await create_context_cache_gemini(
+            system_prompt=system_prompt,
+            json_schema=json_schema,
+            ttl_seconds=ttl_seconds,
+        )
+
+    async def call_json_structured_cached(
+        self,
+        cache_name: str,
+        messages: list[dict[str, Any]],
+        json_schema: dict[str, Any],
+        max_tokens: int = 1024,
+        retries: int = 3,
+        temperature: float = 0.0,
+        timeout: int | None = None,
+        return_usage: bool = False,
+    ) -> dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]:
+        """Call LLM with a cached context.
+
+        - Gemini: uses google-genai SDK with cached_content parameter
+        - Claude: falls back to call_json_structured (cache_control is implicit)
+        """
+        if self._provider == "claude":
+            # Claude's prompt caching is handled implicitly in call_json_structured_claude
+            # via cache_control blocks — no separate cached call method needed.
+            # The system_prompt is not available here, but the examiner's fallback
+            # path provides it. We need to route through call_json_structured which
+            # will include cache_control automatically.
+            from app.ai.claude_provider import call_json_structured_claude
+            from app.micro_apps.title_intelligence.ai.title_examiner_agent import SYSTEM_PROMPT
+            return await call_json_structured_claude(
+                model=self.model,
+                system_prompt=SYSTEM_PROMPT,
+                messages=messages,
+                json_schema=json_schema,
+                max_tokens=max_tokens,
+                retries=retries,
+                temperature=temperature,
+                timeout=timeout,
+                return_usage=return_usage,
+            )
+
+        from app.ai.gemini_provider import call_json_structured_cached_gemini
+        return await call_json_structured_cached_gemini(
+            cache_name=cache_name,
+            messages=messages,
+            json_schema=json_schema,
+            max_tokens=max_tokens,
+            retries=retries,
+            temperature=temperature,
+            timeout=timeout,
+            return_usage=return_usage,
+        )
 
     async def call_with_tools(
         self,

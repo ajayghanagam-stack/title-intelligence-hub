@@ -25,6 +25,10 @@ class Page(Base, TenantMixin):
     thumb_uri: Mapped[str] = mapped_column(Text, nullable=False)
     ocr_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
     ocr_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    page_type: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, default="content",
+        doc="Page classification: content, blank, cover, signature, transmittal, boilerplate",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

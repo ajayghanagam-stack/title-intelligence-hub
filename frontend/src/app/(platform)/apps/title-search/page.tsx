@@ -67,7 +67,10 @@ export default function TitleSearchPage() {
           <p className="text-sm text-muted-foreground">Loading orders...</p>
         </div>
       ) : (
-        <OrderList orders={orders} />
+        <OrderList
+          orders={orders}
+          onOrderDeleted={(id) => setOrders((prev) => prev.filter((o) => o.id !== id))}
+        />
       )}
     </div>
   );

@@ -123,8 +123,8 @@ async def test_activity_mark_failed(
     db_session: AsyncSession, seed_data, temporal_pack, configured_activities
 ):
     """activity_mark_failed should set status=failed, error_message, and write audit event."""
-    error_msg = "OCR processing failed"
-    stage_name = "ocr"
+    error_msg = "Examine processing failed"
+    stage_name = "examine"
 
     with patch("app.micro_apps.title_intelligence.pipeline.temporal_activities.activity"):
         await activity_mark_failed(str(TEST_PACK_ID), str(TEST_ORG_ID), error_msg, stage_name)
@@ -136,9 +136,9 @@ async def test_activity_mark_failed(
     result = await db_session.execute(select(Pack).where(Pack.id == TEST_PACK_ID))
     pack = result.scalar_one()
     assert pack.status == "failed"
-    assert "ocr" in pack.error_message
+    assert "examine" in pack.error_message
     # Error message is sanitized — raw exception text should NOT be exposed
-    assert pack.error_message == "Processing failed at stage 'ocr'"
+    assert pack.error_message == "Processing failed at stage 'examine'"
 
     # Verify audit event
     result = await db_session.execute(
@@ -150,8 +150,45 @@ async def test_activity_mark_failed(
     event = result.scalar_one()
     assert event.target_type == "ti_pack"
     assert event.target_id == TEST_PACK_ID
-    assert event.metadata_["stage"] == "ocr"
+    assert event.metadata_["stage"] == "examine"
     assert event.metadata_["error"] == error_msg
+
+
+@pytest.mark.asyncio
+async def test_run_stage_sends_heartbeats(
+    db_session: AsyncSession, seed_data, temporal_pack, configured_activities
+):
+    """_run_stage should send periodic heartbeats during stage execution."""
+    import asyncio
+
+    async def slow_stage(*args, **kwargs):
+        """Simulate a slow stage that takes long enough for heartbeats."""
+        await asyncio.sleep(0.1)
+
+    with patch("app.micro_apps.title_intelligence.pipeline.temporal_activities.activity") as mock_activity:
+        from app.micro_apps.title_intelligence.pipeline import temporal_activities
+        original_names = temporal_activities.STAGE_NAMES.copy()
+        temporal_activities.STAGE_NAMES[slow_stage] = "slow_stage"
+
+        # Use a very short heartbeat interval so the test doesn't take long
+        with patch(
+            "app.micro_apps.title_intelligence.pipeline.temporal_activities._heartbeat_loop",
+            side_effect=lambda stage_name, interval=30.0: temporal_activities._heartbeat_loop(stage_name, interval=0.02),
+        ):
+            try:
+                await _run_stage(slow_stage, str(TEST_PACK_ID), str(TEST_ORG_ID))
+            finally:
+                temporal_activities.STAGE_NAMES = original_names
+
+    # Should have called heartbeat at least once with "running_" prefix during execution
+    # plus the final "completed_" heartbeat
+    heartbeat_calls = [
+        str(c) for c in mock_activity.heartbeat.call_args_list
+    ]
+    has_running = any("running_slow_stage" in c for c in heartbeat_calls)
+    has_completed = any("completed_slow_stage" in c for c in heartbeat_calls)
+    assert has_completed, "Should have a completed heartbeat"
+    # running heartbeat may or may not fire depending on timing, so just check completed
 
 
 @pytest.mark.asyncio

@@ -17,12 +17,17 @@ export function createOrder(
   orgId: string,
   data: {
     property_address: string;
+    city?: string;
+    zip_code?: string;
     county: string;
     state_code: string;
+    borrower_name?: string;
     parcel_number?: string;
     legal_description?: string;
     search_scope?: string;
     search_years?: number;
+    order_reference?: string;
+    effective_date?: string;
     linked_pack_id?: string;
   }
 ) {

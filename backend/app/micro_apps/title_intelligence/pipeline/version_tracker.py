@@ -5,10 +5,8 @@ auditability and reproducibility of pipeline results.
 """
 
 import hashlib
-import functools
 import json
 import logging
-import subprocess
 from typing import Any
 
 from app.config import Settings
@@ -46,66 +44,16 @@ async def compute_input_file_hash(storage, org_id, pack_files) -> str:
     return h.hexdigest()
 
 
-@functools.lru_cache(maxsize=1)
-def _get_tesseract_version(tesseract_path: str | None = None) -> str:
-    """Get Tesseract version string. Cached for process lifetime."""
-    tesseract_cmd = tesseract_path or "tesseract"
-    try:
-        result = subprocess.run(
-            [tesseract_cmd, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        # Tesseract outputs version to stderr
-        output = result.stderr or result.stdout
-        first_line = output.strip().split("\n")[0] if output else "unknown"
-        return first_line
-    except Exception as e:
-        logger.warning(f"Could not determine tesseract version: {e}")
-        return "unknown"
-
-
-def compute_ingestion_cache_key(input_file_hash: str, version_info: dict[str, Any]) -> str:
-    """Composite cache key for ingestion agent output.
-
-    Combines file content hash with model, prompt, and tool schema hashes
-    so any change to inputs or AI config produces a cache miss.
-    """
-    parts = (
-        input_file_hash
-        + version_info["ai_model"]
-        + version_info["ingestion_prompt_hash"]
-        + version_info["extraction_tool_hash"]
-    )
-    return hashlib.sha256(parts.encode("utf-8")).hexdigest()
-
-
 def compute_ingestion_output_hash(sections_dicts: list[dict], extractions_dicts: list[dict]) -> str:
     """Order-independent hash of ingestion output (sections + extractions).
 
-    Used as input to the risk cache key so changed extractions invalidate risk cache.
+    Used as input to the summary cache key so changed extractions invalidate the summary cache.
     """
     # Sort by deterministic keys to ensure order independence
     sorted_sections = sorted(sections_dicts, key=lambda s: json.dumps(s, sort_keys=True))
     sorted_extractions = sorted(extractions_dicts, key=lambda e: json.dumps(e, sort_keys=True))
     combined = json.dumps({"sections": sorted_sections, "extractions": sorted_extractions}, sort_keys=True)
     return hashlib.sha256(combined.encode("utf-8")).hexdigest()
-
-
-def compute_risk_cache_key(ingestion_output_hash: str, version_info: dict[str, Any]) -> str:
-    """Composite cache key for risk agent output.
-
-    Combines ingestion output hash with model, prompt, tool schema, and rules version.
-    """
-    parts = (
-        ingestion_output_hash
-        + version_info["ai_model"]
-        + version_info["risk_prompt_hash"]
-        + version_info["risk_tool_hash"]
-        + version_info["rules_version"]
-    )
-    return hashlib.sha256(parts.encode("utf-8")).hexdigest()
 
 
 def compute_summary_cache_key(
@@ -127,61 +75,106 @@ def compute_summary_cache_key(
     return hashlib.sha256(parts.encode("utf-8")).hexdigest()
 
 
-_cached_version_info: dict[str, Any] | None = None
-_cached_version_key: str | None = None
+def compute_examiner_cache_key(input_file_hash: str, version_info: dict[str, Any]) -> str:
+    """Composite cache key for the examiner agent output.
+
+    Combines file content hash with model, prompt, tool schema, rules version,
+    deterministic engine versions, and triage prompt hash so any change produces
+    a cache miss.
+    """
+    parts = (
+        input_file_hash
+        + version_info["ai_model"]
+        + version_info["ingestion_prompt_hash"]
+        + version_info["extraction_tool_hash"]
+        + version_info["rules_version"]
+        + version_info.get("triage_prompt_hash", "")
+        + version_info.get("extraction_registry_hash", "")
+        + version_info.get("flag_rules_version", "")
+        + version_info.get("chain_builder_version", "")
+        + version_info.get("normalizer_version", "")
+    )
+    return hashlib.sha256(parts.encode("utf-8")).hexdigest()
 
 
 def collect_version_info(settings: Settings) -> dict[str, Any]:
-    """Gather all component version metadata for a pipeline run.
+    """Gather version metadata for a pipeline run.
 
-    Cached for process lifetime (invalidated only if platform/backend change).
-
-    Returns a dict with keys matching PipelineRun columns:
-        ai_platform, ai_model, ingestion_prompt_hash, risk_prompt_hash,
-        ocr_engine, chunker_version, rules_version, pipeline_backend,
-        version_metadata
+    Returns a dict with keys matching PipelineRun columns.
+    Dynamically resolves AI platform and model from the AI_PROVIDER setting.
     """
-    global _cached_version_info, _cached_version_key
-
-    cache_key = f"{settings.AI_PLATFORM}:{settings.PIPELINE_BACKEND}:{settings.TESSERACT_PATH}"
-    if _cached_version_info is not None and _cached_version_key == cache_key:
-        return _cached_version_info
-
-    from app.ai.base_service import PLATFORM_MODELS
-    from app.micro_apps.title_intelligence.ai.ingestion_agent import IngestionAgent
-    from app.micro_apps.title_intelligence.ai.risk_agent import RiskAgent
-    from app.micro_apps.title_intelligence.ai.tools.database import (
-        CREATE_SECTIONS_TOOL,
-        CREATE_EXTRACTIONS_TOOL,
-        CREATE_FLAGS_TOOL,
+    from app.ai.base_service import _get_model_for_provider
+    from app.micro_apps.title_intelligence.ai.title_examiner_agent import (
+        TitleExaminerAgent,
     )
 
-    platform = settings.AI_PLATFORM
-    model = PLATFORM_MODELS.get(platform, {}).get("default", "unknown")
+    provider = getattr(settings, "AI_PROVIDER", "gemini")
+    platform = "anthropic" if provider == "claude" else "gemini"
+    model = _get_model_for_provider(provider)
+    pipeline_mode = getattr(settings, "PIPELINE_MODE", "legacy")
+    triage_enabled = getattr(settings, "TRIAGE_ENABLED", True)
+    grouping_enabled = getattr(settings, "GROUPING_ENABLED", True)
+    specialized_extraction = getattr(settings, "SPECIALIZED_EXTRACTION_ENABLED", True)
 
-    extraction_tool_hash = hash_string(
-        json.dumps(CREATE_SECTIONS_TOOL, sort_keys=True)
-        + json.dumps(CREATE_EXTRACTIONS_TOOL, sort_keys=True)
-    )
-    risk_tool_hash = hash_string(
-        json.dumps(CREATE_FLAGS_TOOL, sort_keys=True)
+    # Determine OCR engine based on provider and pipeline mode
+    if provider == "claude":
+        ocr_engine = "claude_vision"
+    elif pipeline_mode == "native_pdf":
+        ocr_engine = "gemini_native_pdf"
+    else:
+        ocr_engine = "gemini_vision"
+
+    prompt_hash = hash_string(TitleExaminerAgent.SYSTEM_PROMPT)
+    tool_hash = hash_string(
+        json.dumps(TitleExaminerAgent.TOOL_SCHEMA, sort_keys=True)
     )
 
-    _cached_version_info = {
+    # Include triage prompt hash when triage is enabled
+    triage_prompt_hash = ""
+    if triage_enabled and pipeline_mode == "native_pdf":
+        from app.micro_apps.title_intelligence.ai.triage_agent import TriageAgent
+        triage_prompt_hash = hash_string(TriageAgent.SYSTEM_PROMPT)
+
+    # Include extraction registry hash when specialized extraction is enabled
+    extraction_registry_hash = ""
+    if specialized_extraction and pipeline_mode == "native_pdf":
+        from app.micro_apps.title_intelligence.ai.extractors.registry import compute_registry_hash
+        extraction_registry_hash = compute_registry_hash()
+
+    # Deterministic rules engine versions
+    from app.micro_apps.title_intelligence.services.flag_rules import RULES_VERSION
+    from app.micro_apps.title_intelligence.services.chain_builder import CHAIN_BUILDER_VERSION
+    from app.micro_apps.title_intelligence.services.party_normalizer import NORMALIZER_VERSION
+
+    return {
+        # PipelineRun model columns
         "ai_platform": platform,
         "ai_model": model,
-        "ingestion_prompt_hash": hash_string(IngestionAgent.SYSTEM_PROMPT),
-        "risk_prompt_hash": hash_string(RiskAgent.SYSTEM_PROMPT),
-        "extraction_tool_hash": extraction_tool_hash,
-        "risk_tool_hash": risk_tool_hash,
-        "ocr_engine": _get_tesseract_version(settings.TESSERACT_PATH),
+        "ingestion_prompt_hash": prompt_hash,
+        "risk_prompt_hash": prompt_hash,
+        "extraction_tool_hash": tool_hash,
+        "risk_tool_hash": tool_hash,
+        "ocr_engine": ocr_engine,
         "chunker_version": "hierarchical_v1",
         "rules_version": "weighted_5cat_v2",
         "pipeline_backend": settings.PIPELINE_BACKEND,
+        # Extended hashes stored in version_metadata JSONB (no dedicated columns)
+        "triage_prompt_hash": triage_prompt_hash,
+        "extraction_registry_hash": extraction_registry_hash,
+        "flag_rules_version": RULES_VERSION,
+        "chain_builder_version": CHAIN_BUILDER_VERSION,
+        "normalizer_version": NORMALIZER_VERSION,
         "version_metadata": {
             "ai_platform": platform,
             "ai_model": model,
+            "pipeline_mode": pipeline_mode,
+            "triage_enabled": triage_enabled,
+            "grouping_enabled": grouping_enabled,
+            "specialized_extraction": specialized_extraction,
+            "triage_prompt_hash": triage_prompt_hash,
+            "extraction_registry_hash": extraction_registry_hash,
+            "flag_rules_version": RULES_VERSION,
+            "chain_builder_version": CHAIN_BUILDER_VERSION,
+            "normalizer_version": NORMALIZER_VERSION,
         },
     }
-    _cached_version_key = cache_key
-    return _cached_version_info

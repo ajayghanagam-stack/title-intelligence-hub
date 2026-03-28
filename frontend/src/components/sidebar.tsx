@@ -50,12 +50,13 @@ const platformAdminItems = [
 ];
 
 const tiNavItems = [
-  { href: "/apps/title-intelligence", label: "Dashboard", icon: FileSearch },
   {
     href: "/apps/title-intelligence/packs/new",
-    label: "Upload",
-    icon: Upload,
+    label: "New Package",
+    icon: Plus,
+    isButton: true,
   },
+  { href: "/apps/title-intelligence", label: "Current Analysis", icon: FileSearch },
 ];
 
 const tsaNavItems = [
@@ -113,6 +114,14 @@ export function Sidebar() {
   useEffect(() => {
     fetchRecentPacks();
   }, [fetchRecentPacks]);
+
+  // Poll while any pack is still processing so status updates in real time
+  const hasProcessing = recentPacks.some((p) => p.status === "processing");
+  useEffect(() => {
+    if (!hasProcessing) return;
+    const interval = setInterval(fetchRecentPacks, 5000);
+    return () => clearInterval(interval);
+  }, [hasProcessing, fetchRecentPacks]);
 
   useEffect(() => {
     const handler = () => fetchRecentPacks();
