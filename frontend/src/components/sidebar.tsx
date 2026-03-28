@@ -166,20 +166,39 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-full w-64 flex-col sidebar-gradient border-r border-sidebar-border">
-      {/* Logo + Brand */}
+      {/* Org Logo + App Label */}
       <div className="flex flex-col items-center gap-3 px-4 py-5">
-        <Link
-          href={isPlatformAdmin ? "/admin/accounts" : "/dashboard"}
-          className="flex items-center"
-        >
-          <Image
-            src="/Logo_rev_no-tagline.svg"
-            alt="Logikality"
-            width={140}
-            height={36}
-            priority
-          />
-        </Link>
+        {!isPlatformAdmin ? (
+          <Link
+            href="/dashboard"
+            className="flex items-center"
+          >
+            <Image
+              src="/society-title-logo.svg"
+              alt="Society Title"
+              width={160}
+              height={40}
+              priority
+              onError={(e) => {
+                // Fallback if logo doesn't exist
+                e.currentTarget.style.display = 'none';
+              }}
+            />
+          </Link>
+        ) : (
+          <Link
+            href="/admin/accounts"
+            className="flex items-center"
+          >
+            <Image
+              src="/Logo_rev_no-tagline.svg"
+              alt="Logikality"
+              width={140}
+              height={36}
+              priority
+            />
+          </Link>
+        )}
         {appLabel && (
           <span className="text-[11px] font-bold uppercase tracking-[0.15em] text-amber-700/80">
             {appLabel}
@@ -330,10 +349,16 @@ export function Sidebar() {
         )}
       </nav>
 
-      {/* Footer */}
-      <div className="p-3 border-t border-sidebar-border">
-        <p className="px-3 text-[11px] text-sidebar-foreground/40">
-          Powered by Logikality AI
+      {/* Footer with Logikality Logo */}
+      <div className="p-4 border-t border-sidebar-border flex flex-col items-center gap-2">
+        <Image
+          src="/Logo_rev_no-tagline.svg"
+          alt="Logikality"
+          width={100}
+          height={26}
+        />
+        <p className="text-[10px] text-sidebar-foreground/40">
+          Powered by Logikality
         </p>
       </div>
     </aside>

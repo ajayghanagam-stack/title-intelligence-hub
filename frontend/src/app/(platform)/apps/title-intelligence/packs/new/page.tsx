@@ -59,7 +59,7 @@ export default function NewPackPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Upload Documents</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Upload your title search package files for AI-powered analysis.
+          Upload your title search package files for analysis.
         </p>
       </div>
 

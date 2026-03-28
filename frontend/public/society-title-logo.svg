@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 50" fill="none">
+  <rect width="200" height="50" fill="transparent"/>
+  <text x="10" y="32" font-family="Georgia, serif" font-size="22" font-weight="bold" fill="#1e3a5f">
+    Society Title
+  </text>
+  <text x="10" y="45" font-family="Arial, sans-serif" font-size="10" fill="#6b7280">
+    A Logikality Company
+  </text>
+</svg>

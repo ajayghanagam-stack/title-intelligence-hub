@@ -31,12 +31,16 @@ export function OrgSwitcher({ variant = "default" }: OrgSwitcherProps) {
 
   const isSidebar = variant === "sidebar";
 
+  // Hide completely for single org in sidebar (logo is shown at top)
   if (orgs.length <= 1) {
+    if (isSidebar) {
+      return null;
+    }
     return (
       <p
         className={cn(
           "text-sm mt-1",
-          isSidebar ? "text-sidebar-foreground/60" : "text-muted-foreground"
+          "text-muted-foreground"
         )}
       >
         {orgs[0]?.name || "No organization"}
