@@ -36,10 +36,14 @@ function AuthImage({
   style?: React.CSSProperties;
 }) {
   const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState<boolean>(false);
   const srcRef = useRef<string | null>(null);
 
   useEffect(() => {
     let revoked = false;
+    setError(false);
+    setSrc(null);
+    
     apiFetchBlob(path, { orgId })
       .then((blob) => {
         if (!revoked) {
@@ -48,12 +52,25 @@ function AuthImage({
           setSrc(url);
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error(`Failed to load image ${path}:`, err);
+        if (!revoked) {
+          setError(true);
+        }
+      });
     return () => {
       revoked = true;
       if (srcRef.current) URL.revokeObjectURL(srcRef.current);
     };
   }, [path, orgId]);
+
+  if (error) {
+    return (
+      <div className={cn("bg-red-50 flex items-center justify-center text-red-400", className)} style={style}>
+        <FileSearch className="h-6 w-6" />
+      </div>
+    );
+  }
 
   if (!src) {
     return <div className={cn("bg-muted/40 animate-pulse rounded", className)} style={style} />;
