@@ -48,3 +48,7 @@ htmlcov/
 
 # Local dev storage (uploaded PDFs, OCR output, AI cache, thumbnails)
 backend/storage/
+-e 
+# Environment files
+*.env
+*.env.*
