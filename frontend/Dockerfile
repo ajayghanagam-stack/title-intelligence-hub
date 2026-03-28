@@ -4,10 +4,13 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Copy package files
-COPY package.json yarn.lock ./
+COPY package.json ./
+COPY yarn.lock* package-lock.json* ./
 
 # Install dependencies
-RUN yarn install --frozen-lockfile
+RUN if [ -f yarn.lock ]; then yarn install --frozen-lockfile; \
+    elif [ -f package-lock.json ]; then npm ci; \
+    else npm install; fi
 
 # Copy source code
 COPY . .
@@ -18,7 +21,7 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NODE_ENV=production
 
 # Build the application
-RUN yarn build
+RUN npm run build
 
 # Production stage
 FROM node:20-alpine AS runner
