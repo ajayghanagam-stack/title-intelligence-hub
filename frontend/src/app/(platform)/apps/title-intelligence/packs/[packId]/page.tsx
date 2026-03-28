@@ -42,8 +42,11 @@ export default function PackOverviewPage() {
   // Auto-redirect to results when pipeline completes and refresh sidebar
   useEffect(() => {
     if (prevStatusRef.current === "processing" && pack?.status === "completed") {
-      // Dispatch event to refresh sidebar with new title company name
-      window.dispatchEvent(new CustomEvent("pack-completed"));
+      // Dispatch event to refresh sidebar with new property address
+      // Add a small delay to ensure extractions are ready
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("pack-completed"));
+      }, 500);
       router.push(`/apps/title-intelligence/packs/${packId}/results`);
     }
     prevStatusRef.current = pack?.status;

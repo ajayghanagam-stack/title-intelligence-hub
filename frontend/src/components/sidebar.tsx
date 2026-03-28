@@ -118,11 +118,14 @@ export function Sidebar() {
 
   // Poll while any pack is still processing so status updates in real time
   const hasProcessing = recentPacks.some((p) => p.status === "processing");
+  // Also poll if any pack has no address yet (might be recently completed)
+  const hasNoAddress = recentPacks.some((p) => p.status === "completed" && !p.buyer_name);
+  
   useEffect(() => {
-    if (!hasProcessing) return;
-    const interval = setInterval(fetchRecentPacks, 5000);
+    if (!hasProcessing && !hasNoAddress) return;
+    const interval = setInterval(fetchRecentPacks, hasProcessing ? 5000 : 3000);
     return () => clearInterval(interval);
-  }, [hasProcessing, fetchRecentPacks]);
+  }, [hasProcessing, hasNoAddress, fetchRecentPacks]);
 
   useEffect(() => {
     const handler = () => fetchRecentPacks();
