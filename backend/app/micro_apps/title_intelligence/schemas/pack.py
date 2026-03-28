@@ -31,6 +31,8 @@ class PackResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     files: list[PackFileResponse] = []
+    title_company: str | None = None  # Title company/underwriter name
+    property_address: str | None = None  # Property address
 
     model_config = {"from_attributes": True}
 

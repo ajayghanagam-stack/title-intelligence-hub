@@ -12,6 +12,8 @@ import {
   FileText,
   Sparkles,
   ArrowRight,
+  Building2,
+  MapPin,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PackStatusBadge } from "@/components/title-intelligence/pack-status-badge";
@@ -87,6 +89,26 @@ export default function PackOverviewPage() {
 
   return (
     <div className="space-y-8">
+      {/* Title Company Header */}
+      {(pack.title_company || pack.property_address) && (
+        <div className="rounded-xl bg-gradient-to-r from-slate-50 to-slate-100/50 border border-slate-200/60 p-5">
+          <div className="flex flex-col gap-2">
+            {pack.title_company && (
+              <div className="flex items-center gap-2.5">
+                <Building2 className="h-5 w-5 text-slate-500" />
+                <span className="text-lg font-semibold text-slate-800">{pack.title_company}</span>
+              </div>
+            )}
+            {pack.property_address && (
+              <div className="flex items-center gap-2.5">
+                <MapPin className="h-4 w-4 text-slate-400" />
+                <span className="text-sm text-slate-600">{pack.property_address}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">{pack.name}</h1>

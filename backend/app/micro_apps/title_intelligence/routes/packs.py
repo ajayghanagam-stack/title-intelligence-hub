@@ -61,7 +61,11 @@ async def get_pack(
     member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
 ):
-    return await pack_service.get_pack_or_raise(db, org_id, pack_id)
+    result = await pack_service.get_pack_with_extractions(db, org_id, pack_id)
+    if not result:
+        from app.core.exceptions import NotFoundError
+        raise NotFoundError("Pack", pack_id)
+    return result
 
 
 @router.delete("/packs/{pack_id}", status_code=status.HTTP_204_NO_CONTENT)

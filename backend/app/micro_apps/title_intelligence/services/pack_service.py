@@ -34,6 +34,61 @@ async def get_pack(db: AsyncSession, org_id: uuid.UUID, pack_id: uuid.UUID) -> P
     return result.scalar_one_or_none()
 
 
+async def get_pack_with_extractions(db: AsyncSession, org_id: uuid.UUID, pack_id: uuid.UUID) -> dict | None:
+    """Get pack with title company and property address from extractions."""
+    pack = await get_pack(db, org_id, pack_id)
+    if not pack:
+        return None
+    
+    # Fetch title company (Underwriter) and property address (Insured Property)
+    extraction_result = await db.execute(
+        select(Extraction.label, Extraction.value)
+        .where(
+            Extraction.pack_id == pack_id,
+            Extraction.label.in_(["Underwriter", "Insured Property", "Subject Property"])
+        )
+    )
+    
+    title_company = None
+    property_address = None
+    
+    for label, value in extraction_result.fetchall():
+        try:
+            if isinstance(value, str):
+                data = json.loads(value)
+            else:
+                data = value
+            
+            if label == "Underwriter" and isinstance(data, dict):
+                name = data.get("field_value") or data.get("name")
+                if name:
+                    title_company = name.split(",")[0].strip()
+            
+            elif label in ("Insured Property", "Subject Property") and isinstance(data, dict):
+                addr = data.get("address")
+                if addr and addr != "Not specified":
+                    property_address = addr
+        except (json.JSONDecodeError, TypeError):
+            pass
+    
+    # Build response dict
+    return {
+        "id": pack.id,
+        "org_id": pack.org_id,
+        "name": pack.name,
+        "status": pack.status,
+        "current_stage": pack.current_stage,
+        "readiness_score": pack.readiness_score,
+        "readiness_summary": pack.readiness_summary,
+        "error_message": pack.error_message,
+        "created_at": pack.created_at,
+        "updated_at": pack.updated_at,
+        "files": pack.files,
+        "title_company": title_company,
+        "property_address": property_address,
+    }
+
+
 async def get_pack_or_raise(db: AsyncSession, org_id: uuid.UUID, pack_id: uuid.UUID) -> Pack:
     pack = await get_pack(db, org_id, pack_id)
     if not pack:

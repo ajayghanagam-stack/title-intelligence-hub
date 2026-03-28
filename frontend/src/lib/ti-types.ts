@@ -111,6 +111,8 @@ export interface Pack {
   updated_at: string;
   files?: PackFile[];
   page_count?: number | null;
+  title_company?: string | null;
+  property_address?: string | null;
 }
 
 export interface StageStatus {
