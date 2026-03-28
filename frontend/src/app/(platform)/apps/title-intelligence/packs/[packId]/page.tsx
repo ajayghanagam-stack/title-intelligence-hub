@@ -116,7 +116,9 @@ export default function PackOverviewPage() {
 
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">{pack.name}</h1>
+        <h1 className="text-2xl font-bold tracking-tight">
+          {pack.property_address || pack.name}
+        </h1>
         <div className="flex items-center gap-3 mt-2">
           <PackStatusBadge status={pack.status} stage={pack.current_stage} />
           <span className="text-sm text-muted-foreground">

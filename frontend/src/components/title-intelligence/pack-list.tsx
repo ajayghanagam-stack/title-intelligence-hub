@@ -92,7 +92,7 @@ export function PackList({ packs, onDelete }: { packs: Pack[]; onDelete?: (id: s
           {/* Content */}
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-foreground group-hover:text-primary transition-colors truncate">
-              {pack.name}
+              {pack.buyer_name || pack.property_address || pack.name}
             </p>
             <div className="flex items-center gap-3 mt-1">
               <PackStatusBadge status={pack.status} stage={pack.current_stage} />
