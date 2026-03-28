@@ -129,10 +129,12 @@ export function Sidebar() {
     window.addEventListener("pack-deleted", handler);
     window.addEventListener("pack-created", handler);
     window.addEventListener("pack-uploaded", handler);
+    window.addEventListener("pack-completed", handler);
     return () => {
       window.removeEventListener("pack-deleted", handler);
       window.removeEventListener("pack-created", handler);
       window.removeEventListener("pack-uploaded", handler);
+      window.removeEventListener("pack-completed", handler);
     };
   }, [fetchRecentPacks]);
 

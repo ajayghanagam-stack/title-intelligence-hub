@@ -39,9 +39,11 @@ export default function PackOverviewPage() {
     return () => clearInterval(interval);
   }, [isProcessing, refetch]);
 
-  // Auto-redirect to results when pipeline completes
+  // Auto-redirect to results when pipeline completes and refresh sidebar
   useEffect(() => {
     if (prevStatusRef.current === "processing" && pack?.status === "completed") {
+      // Dispatch event to refresh sidebar with new title company name
+      window.dispatchEvent(new CustomEvent("pack-completed"));
       router.push(`/apps/title-intelligence/packs/${packId}/results`);
     }
     prevStatusRef.current = pack?.status;
