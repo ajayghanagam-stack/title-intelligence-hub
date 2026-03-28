@@ -161,9 +161,12 @@ class S3Storage(StorageProvider):
     def _client_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "service_name": "s3",
-            "aws_access_key_id": self.access_key,
-            "aws_secret_access_key": self.secret_key,
         }
+        # Only pass explicit credentials if provided; otherwise let
+        # aiobotocore discover them from IAM role / instance metadata.
+        if self.access_key and self.secret_key:
+            kwargs["aws_access_key_id"] = self.access_key
+            kwargs["aws_secret_access_key"] = self.secret_key
         if self.endpoint:
             kwargs["endpoint_url"] = self.endpoint
         if self.region:
