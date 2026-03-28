@@ -45,7 +45,10 @@ async def download_report(
             select(Extraction.value)
             .where(
                 Extraction.pack_id == pack_id,
-                Extraction.label.in_(["Insured Property", "Subject Property"])
+                Extraction.label.in_([
+                    "Insured Property", "Subject Property", "Property 1",
+                    "Property Location", "Property Address"
+                ])
             )
             .limit(1)
         )
@@ -54,7 +57,7 @@ async def download_report(
             data = json.loads(row) if isinstance(row, str) else row
             if isinstance(data, dict):
                 address = data.get("address")
-                if address and address != "Not specified":
+                if address and address != "Not specified" and address.strip():
                     filename = f"{sanitize_filename(address)}_Report.pdf"
     except Exception:
         pass  # Fall back to default filename

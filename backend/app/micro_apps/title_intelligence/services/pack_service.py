@@ -40,12 +40,15 @@ async def get_pack_with_extractions(db: AsyncSession, org_id: uuid.UUID, pack_id
     if not pack:
         return None
     
-    # Fetch title company (Underwriter) and property address (Insured Property)
+    # Fetch title company (Underwriter) and property address
     extraction_result = await db.execute(
         select(Extraction.label, Extraction.value)
         .where(
             Extraction.pack_id == pack_id,
-            Extraction.label.in_(["Underwriter", "Insured Property", "Subject Property"])
+            Extraction.label.in_([
+                "Underwriter", "Insured Property", "Subject Property",
+                "Property 1", "Property Location", "Property Address"
+            ])
         )
     )
     
@@ -64,10 +67,11 @@ async def get_pack_with_extractions(db: AsyncSession, org_id: uuid.UUID, pack_id
                 if name:
                     title_company = name.split(",")[0].strip()
             
-            elif label in ("Insured Property", "Subject Property") and isinstance(data, dict):
-                addr = data.get("address")
-                if addr and addr != "Not specified":
-                    property_address = addr
+            elif label in ("Insured Property", "Subject Property", "Property 1", "Property Location", "Property Address") and isinstance(data, dict):
+                if not property_address:  # Only set if not already found
+                    addr = data.get("address")
+                    if addr and addr != "Not specified" and addr.strip():
+                        property_address = addr
         except (json.JSONDecodeError, TypeError):
             pass
     
@@ -113,14 +117,18 @@ async def list_packs(
     property_addresses = {}
     
     if pack_ids:
+        # Look for various property-related extraction labels
         extraction_result = await db.execute(
-            select(Extraction.pack_id, Extraction.value)
+            select(Extraction.pack_id, Extraction.label, Extraction.value)
             .where(
                 Extraction.pack_id.in_(pack_ids),
-                Extraction.label.in_(["Insured Property", "Subject Property"])
+                Extraction.label.in_([
+                    "Insured Property", "Subject Property", "Property 1", 
+                    "Property Location", "Property Address"
+                ])
             )
         )
-        for pack_id, value in extraction_result.fetchall():
+        for pack_id, label, value in extraction_result.fetchall():
             if pack_id in property_addresses:
                 continue  # Already have address for this pack
             try:
@@ -130,7 +138,7 @@ async def list_packs(
                     data = value
                 if isinstance(data, dict):
                     addr = data.get("address")
-                    if addr and addr != "Not specified":
+                    if addr and addr != "Not specified" and addr.strip():
                         property_addresses[pack_id] = addr
             except (json.JSONDecodeError, TypeError):
                 pass
