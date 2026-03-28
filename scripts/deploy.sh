@@ -128,8 +128,8 @@ deploy_backend() {
     
     cd backend
     
-    print_info "Building backend image..."
-    docker build -t ${ECR_URL}/${APP_NAME}/backend:latest .
+    print_info "Building backend image (linux/amd64)..."
+    docker build --platform linux/amd64 -t ${ECR_URL}/${APP_NAME}/backend:latest .
     
     print_info "Pushing backend image to ECR..."
     docker push ${ECR_URL}/${APP_NAME}/backend:latest
@@ -145,8 +145,8 @@ deploy_frontend() {
     
     cd frontend
     
-    print_info "Building frontend image..."
-    docker build \
+    print_info "Building frontend image (linux/amd64)..."
+    docker build --platform linux/amd64 \
         --build-arg NEXT_PUBLIC_API_URL=http://${ALB_DNS} \
         -t ${ECR_URL}/${APP_NAME}/frontend:latest .
     
