@@ -63,6 +63,7 @@ export default function ResultsPage() {
   const [pack, setPack] = useState<Pack | null>(null);
   const [packName, setPackName] = useState<string>("");
   const [flagsLoading, setFlagsLoading] = useState(true);
+  const [flagsRefetching, setFlagsRefetching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [chatInitialQuestion, setChatInitialQuestion] = useState<string>("");
@@ -75,7 +76,10 @@ export default function ResultsPage() {
   const { pipeline } = usePipelineStatus(packId, isProcessing);
   const prevStatusRef = useRef(pack?.status);
 
-  const fetchFlags = useCallback(async (page = flagPage, severity = severityFilter) => {
+  const fetchFlags = useCallback(async (page = flagPage, severity = severityFilter, isRefetch = false) => {
+    if (isRefetch) {
+      setFlagsRefetching(true);
+    }
     try {
       const params = new URLSearchParams();
       if (severity !== "all") params.set("severity", severity);
@@ -88,7 +92,10 @@ export default function ResultsPage() {
       setFlagCounts(data.counts);
       setFlagTotal(data.total);
     } catch { setFlags([]); setFlagCounts({}); setFlagTotal(0); showToast("error", "Failed to load flags"); }
-    finally { setFlagsLoading(false); }
+    finally { 
+      setFlagsLoading(false);
+      setFlagsRefetching(false);
+    }
   }, [orgFetch, packId, showToast, flagPage, severityFilter]);
 
   const fetchExtractions = useCallback(async () => {
@@ -188,14 +195,12 @@ export default function ResultsPage() {
   const handleSeverityFilter = (filter: SeverityFilter) => {
     setSeverityFilter(filter);
     setFlagPage(1);
-    setFlagsLoading(true);
-    fetchFlags(1, filter);
+    fetchFlags(1, filter, true);
   };
 
   const handleFlagPageChange = (page: number) => {
     setFlagPage(page);
-    setFlagsLoading(true);
-    fetchFlags(page, severityFilter);
+    fetchFlags(page, severityFilter, true);
   };
 
   const handleReview = async (flagId: string, decision: ReviewDecision, reasonCode: string | null, notes: string) => {
@@ -400,16 +405,18 @@ export default function ResultsPage() {
               <p className="text-sm text-muted-foreground">Loading...</p>
             </div>
           ) : (
-            <FlagsTable
-              flags={flags}
-              packId={packId}
-              onReview={handleReview}
-              onGetRecommendation={handleGetRecommendation}
-              submitting={submitting}
-              total={flagTotal}
-              currentPage={flagPage}
-              onPageChange={handleFlagPageChange}
-            />
+            <div className={cn(flagsRefetching && "opacity-50 pointer-events-none transition-opacity")}>
+              <FlagsTable
+                flags={flags}
+                packId={packId}
+                onReview={handleReview}
+                onGetRecommendation={handleGetRecommendation}
+                submitting={submitting}
+                total={flagTotal}
+                currentPage={flagPage}
+                onPageChange={handleFlagPageChange}
+              />
+            </div>
           )}
         </div>
       </div>
