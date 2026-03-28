@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: process.env.NODE_ENV === 'production' ? 'standalone' : undefined,
   experimental: {},
   async headers() {
     return [
@@ -19,7 +20,9 @@ const nextConfig = {
           },
           {
             key: "Content-Security-Policy",
-            value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self' http://localhost:8000 https://*.logikality.com https://*.preview.emergentagent.com; frame-ancestors 'none';",
+            value: process.env.NODE_ENV === 'production' 
+              ? "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; font-src 'self'; connect-src 'self' https://*; frame-ancestors 'none';"
+              : "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self' http://localhost:8000 https://*.logikality.com https://*.preview.emergentagent.com; frame-ancestors 'none';",
           },
         ],
       },
