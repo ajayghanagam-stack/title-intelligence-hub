@@ -42,6 +42,7 @@ class PackListResponse(BaseModel):
     current_stage: str | None = None
     readiness_score: int | None = None
     created_at: datetime
+    buyer_name: str | None = None  # Customer/buyer name extracted from document
 
     model_config = {"from_attributes": True}
 

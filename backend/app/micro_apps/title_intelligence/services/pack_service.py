@@ -1,10 +1,12 @@
 import uuid
+import json
 
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.micro_apps.title_intelligence.models.pack import Pack, PackFile
+from app.micro_apps.title_intelligence.models.extraction import Extraction
 from app.micro_apps.title_intelligence.services.storage import StorageProvider
 from app.core.exceptions import NotFoundError, ConflictError, ValidationError
 
@@ -41,7 +43,7 @@ async def get_pack_or_raise(db: AsyncSession, org_id: uuid.UUID, pack_id: uuid.U
 
 async def list_packs(
     db: AsyncSession, org_id: uuid.UUID, limit: int = 50, offset: int = 0
-) -> list[Pack]:
+) -> list[dict]:
     result = await db.execute(
         select(Pack)
         .where(Pack.org_id == org_id)
@@ -49,7 +51,44 @@ async def list_packs(
         .limit(limit)
         .offset(offset)
     )
-    return list(result.scalars().all())
+    packs = list(result.scalars().all())
+    
+    # Fetch buyer names for all packs
+    pack_ids = [p.id for p in packs]
+    buyer_names = {}
+    
+    if pack_ids:
+        extraction_result = await db.execute(
+            select(Extraction.pack_id, Extraction.value)
+            .where(
+                Extraction.pack_id.in_(pack_ids),
+                Extraction.label == "Buyer"
+            )
+        )
+        for pack_id, value in extraction_result.fetchall():
+            try:
+                if isinstance(value, str):
+                    data = json.loads(value)
+                else:
+                    data = value
+                if isinstance(data, dict) and "name" in data:
+                    buyer_names[pack_id] = data["name"]
+            except (json.JSONDecodeError, TypeError):
+                pass
+    
+    # Convert to list of dicts with buyer_name
+    return [
+        {
+            "id": p.id,
+            "name": p.name,
+            "status": p.status,
+            "current_stage": p.current_stage,
+            "readiness_score": p.readiness_score,
+            "created_at": p.created_at,
+            "buyer_name": buyer_names.get(p.id),
+        }
+        for p in packs
+    ]
 
 
 async def delete_pack(

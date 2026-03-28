@@ -33,6 +33,7 @@ interface RecentPack {
   status: string;
   created_at: string;
   readiness_score: number | null;
+  buyer_name: string | null;
 }
 
 const customerNavItems = [
@@ -126,7 +127,13 @@ export function Sidebar() {
   useEffect(() => {
     const handler = () => fetchRecentPacks();
     window.addEventListener("pack-deleted", handler);
-    return () => window.removeEventListener("pack-deleted", handler);
+    window.addEventListener("pack-created", handler);
+    window.addEventListener("pack-uploaded", handler);
+    return () => {
+      window.removeEventListener("pack-deleted", handler);
+      window.removeEventListener("pack-created", handler);
+      window.removeEventListener("pack-uploaded", handler);
+    };
   }, [fetchRecentPacks]);
 
   const handleDismissRecentPack = useCallback((packId: string) => {
@@ -263,7 +270,7 @@ export function Sidebar() {
                           "font-medium truncate leading-tight",
                           isActive ? "text-amber-800" : "text-sidebar-foreground/80 group-hover:text-sidebar-foreground"
                         )}>
-                          {pack.name}
+                          {pack.buyer_name || pack.name}
                         </p>
                         <p className={cn(
                           "text-[10px] mt-0.5",

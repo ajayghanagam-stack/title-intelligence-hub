@@ -42,6 +42,9 @@ export default function NewPackPage() {
         { method: "POST" }
       );
 
+      // Dispatch event to refresh sidebar
+      window.dispatchEvent(new CustomEvent("pack-uploaded"));
+
       router.push(`/apps/title-intelligence/packs/${pack.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create pack");
