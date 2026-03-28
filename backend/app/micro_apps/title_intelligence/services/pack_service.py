@@ -108,35 +108,34 @@ async def list_packs(
     )
     packs = list(result.scalars().all())
     
-    # Fetch company names (Underwriter) for all packs
+    # Fetch property addresses for all packs
     pack_ids = [p.id for p in packs]
-    company_names = {}
+    property_addresses = {}
     
     if pack_ids:
         extraction_result = await db.execute(
             select(Extraction.pack_id, Extraction.value)
             .where(
                 Extraction.pack_id.in_(pack_ids),
-                Extraction.label == "Underwriter"
+                Extraction.label.in_(["Insured Property", "Subject Property"])
             )
         )
         for pack_id, value in extraction_result.fetchall():
+            if pack_id in property_addresses:
+                continue  # Already have address for this pack
             try:
                 if isinstance(value, str):
                     data = json.loads(value)
                 else:
                     data = value
                 if isinstance(data, dict):
-                    # Try field_value first (structured format), then name
-                    name = data.get("field_value") or data.get("name")
-                    if name:
-                        # Clean up the name (remove ", a Nebraska Corporation" etc.)
-                        name = name.split(",")[0].strip()
-                        company_names[pack_id] = name
+                    addr = data.get("address")
+                    if addr and addr != "Not specified":
+                        property_addresses[pack_id] = addr
             except (json.JSONDecodeError, TypeError):
                 pass
     
-    # Convert to list of dicts with company_name
+    # Convert to list of dicts with property address as buyer_name
     return [
         {
             "id": p.id,
@@ -145,7 +144,7 @@ async def list_packs(
             "current_stage": p.current_stage,
             "readiness_score": p.readiness_score,
             "created_at": p.created_at,
-            "buyer_name": company_names.get(p.id),  # Using buyer_name field for company name
+            "buyer_name": property_addresses.get(p.id),  # Using buyer_name field for property address
         }
         for p in packs
     ]

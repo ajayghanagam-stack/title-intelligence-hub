@@ -38,14 +38,14 @@ async def download_report(
     """Generate or retrieve cached PDF report and return as download."""
     pdf_bytes = await generate_report_pdf(db, org_id, pack_id, storage)
     
-    # Get title company name for filename
+    # Get property address for filename
     filename = "title_intelligence_report.pdf"
     try:
         result = await db.execute(
             select(Extraction.value)
             .where(
                 Extraction.pack_id == pack_id,
-                Extraction.label == "Underwriter"
+                Extraction.label.in_(["Insured Property", "Subject Property"])
             )
             .limit(1)
         )
@@ -53,11 +53,9 @@ async def download_report(
         if row:
             data = json.loads(row) if isinstance(row, str) else row
             if isinstance(data, dict):
-                company_name = data.get("field_value") or data.get("name")
-                if company_name:
-                    # Clean up the name
-                    company_name = company_name.split(",")[0].strip()
-                    filename = f"{sanitize_filename(company_name)}_Report.pdf"
+                address = data.get("address")
+                if address and address != "Not specified":
+                    filename = f"{sanitize_filename(address)}_Report.pdf"
     except Exception:
         pass  # Fall back to default filename
     
