@@ -1,18 +1,30 @@
 """Report generation and download routes."""
 
 import uuid
+import json
+import re
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, get_current_member, get_org_id
 from app.models.user import User
+from app.micro_apps.title_intelligence.models.extraction import Extraction
 from app.micro_apps.title_intelligence.services.report_service import generate_report_pdf, get_report_by_uri_or_raise
 from app.micro_apps.title_intelligence.services.storage import StorageProvider, get_storage
 from app.services.audit_service import log_event
 
 router = APIRouter()
+
+
+def sanitize_filename(name: str) -> str:
+    """Remove invalid characters from filename."""
+    # Replace invalid characters with underscore
+    sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
+    # Limit length
+    return sanitized[:100]
 
 
 @router.post("/packs/{pack_id}/reports/download")
@@ -25,6 +37,30 @@ async def download_report(
 ):
     """Generate or retrieve cached PDF report and return as download."""
     pdf_bytes = await generate_report_pdf(db, org_id, pack_id, storage)
+    
+    # Get title company name for filename
+    filename = "title_intelligence_report.pdf"
+    try:
+        result = await db.execute(
+            select(Extraction.value)
+            .where(
+                Extraction.pack_id == pack_id,
+                Extraction.label == "Underwriter"
+            )
+            .limit(1)
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            data = json.loads(row) if isinstance(row, str) else row
+            if isinstance(data, dict):
+                company_name = data.get("field_value") or data.get("name")
+                if company_name:
+                    # Clean up the name
+                    company_name = company_name.split(",")[0].strip()
+                    filename = f"{sanitize_filename(company_name)}_Report.pdf"
+    except Exception:
+        pass  # Fall back to default filename
+    
     await log_event(
         db, org_id,
         action="report_downloaded",
@@ -38,7 +74,7 @@ async def download_report(
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": 'attachment; filename="title_intelligence_report.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
