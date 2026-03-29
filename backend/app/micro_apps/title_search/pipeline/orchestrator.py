@@ -1268,7 +1268,29 @@ async def _parse_json_property_data(
 
     # Create documents from recorded_documents (clerk of court)
     for rec in prop_data.get("recorded_documents", []):
-        doc_type = _map_doc_type(rec.get("doc_type", ""))
+        doc_type = rec.get("doc_type", "other")
+        # Normalize doc_type if it's a raw code
+        if doc_type not in ("deed", "mortgage", "lien", "satisfaction", "assignment",
+                            "easement", "plat", "judgment", "court_order", "other"):
+            doc_type = _map_doc_type(doc_type)
+
+        # Handle both old format (grantors/grantees lists) and new format (grantor/grantee strings)
+        grantor_data = None
+        grantee_data = None
+        if rec.get("grantor"):
+            grantor_data = {"names": [rec["grantor"]]} if isinstance(rec["grantor"], str) else rec["grantor"]
+        elif rec.get("grantors"):
+            grantor_data = {"names": rec["grantors"]}
+        if rec.get("grantee"):
+            grantee_data = {"names": [rec["grantee"]]} if isinstance(rec["grantee"], str) else rec["grantee"]
+        elif rec.get("grantees"):
+            grantee_data = {"names": rec["grantees"]}
+
+        # Use clerk's legal description if it's more detailed than what we have
+        clerk_legal = rec.get("legal_description", "")
+        if clerk_legal and len(clerk_legal) > len(order.legal_description or ""):
+            order.legal_description = clerk_legal
+
         doc = TADocument(
             org_id=org_id,
             order_id=order_id,
@@ -1276,14 +1298,15 @@ async def _parse_json_property_data(
             doc_type=doc_type,
             recording_date=rec.get("record_date"),
             recording_ref=rec.get("instrument_number") or rec.get("book_page"),
-            grantor={"names": rec["grantors"]} if rec.get("grantors") else None,
-            grantee={"names": rec["grantees"]} if rec.get("grantees") else None,
+            grantor=grantor_data,
+            grantee=grantee_data,
             consideration=rec.get("consideration"),
             confidence=confidence,
             needs_review=confidence < 0.70,
             doc_metadata={
                 "book_page": rec.get("book_page"),
                 "instrument_number": rec.get("instrument_number"),
+                "doc_type_raw": rec.get("doc_type_raw", ""),
                 "source": "clerk_of_court",
             },
         )

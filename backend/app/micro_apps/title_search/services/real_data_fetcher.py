@@ -353,102 +353,242 @@ class ClerkOfCourtScraper:
         date_from: str = "01/01/1970",
         date_to: str = "",
     ) -> list[dict]:
-        """Search clerk portal by name and return recorded documents."""
+        """Search clerk portal by name and return recorded documents.
+
+        Handles the Acclaim Kendo UI workflow:
+        1. Accept disclaimer
+        2. Enter name, click Search
+        3. Select matching names from popup checkbox tree
+        4. Click Done to load results
+        5. Parse tab-separated results table
+        """
         page = await browser.new_page()
-        documents = []
+        documents: list[dict] = []
 
         try:
             search_url = f"{portal_url.rstrip('/')}/search/SearchTypeName"
-            await page.goto(search_url, wait_until="networkidle", timeout=30000)
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(2)
 
-            # Accept disclaimer if present
-            accept = page.locator('#btnButton')
+            # 1. Accept disclaimer if present
+            accept = page.locator("#btnButton")
             if await accept.count() > 0:
                 await accept.click()
-                await page.wait_for_load_state("networkidle")
+                await page.wait_for_load_state("domcontentloaded")
                 await asyncio.sleep(2)
 
-            # Fill name search
-            name_input = page.locator('#SearchOnName')
+            # 2. Fill name (format: "LAST, FIRST")
+            search_name = name.strip()
+            # The Acclaim search expects "LAST, FIRST" format
+            # But the owner name from property appraiser is already "LAST FIRST M" format
+            # Just use it as-is — the search is flexible enough
+            if "," not in search_name and " " in search_name:
+                parts = search_name.split()
+                if len(parts) >= 2:
+                    search_name = f"{parts[0]}, {' '.join(parts[1:])}"
+
+            name_input = page.locator("#SearchOnName")
             if await name_input.count() == 0:
                 logger.error("Name input not found on clerk portal")
                 return documents
 
-            await name_input.fill(name)
+            await name_input.fill(search_name)
 
-            # Set date range
-            from_input = page.locator('#StartDate')
+            # Set date range if available
+            from_input = page.locator("#StartDate")
             if await from_input.count() > 0:
-                await from_input.fill(date_from)
-            if date_to:
-                to_input = page.locator('#EndDate')
-                if await to_input.count() > 0:
-                    await to_input.fill(date_to)
+                try:
+                    await from_input.fill(date_from)
+                except Exception:
+                    pass
 
-            await page.click('input[value="Search"]')
-            await page.wait_for_load_state("networkidle")
-            await asyncio.sleep(3)
+            # Click Search
+            await page.click("#btnSearch")
+            await page.wait_for_load_state("domcontentloaded")
+            await asyncio.sleep(5)
 
-            # Parse the name list that appears
+            # 3. Check if names popup appeared
             body_text = await page.inner_text("body")
 
-            # Check if we got name matches
             if "Select Names" in body_text:
-                # Select all names and search
-                select_all = page.locator('a:has-text("All")')
-                if await select_all.count() > 0:
-                    await select_all.first.click()
-                    await asyncio.sleep(1)
+                # Check CAPTCHA indicators
+                if _detect_captcha(body_text):
+                    raise CaptchaBlockedError("CAPTCHA detected on clerk portal")
 
-                # Submit the selected names
-                search_btn = page.locator('#btnSearch, input[value="Search"]')
-                if await search_btn.count() > 0:
-                    await search_btn.first.click()
-                    await page.wait_for_load_state("networkidle")
-                    await asyncio.sleep(3)
+                # Find the best matching name in the Kendo treeview and check it
+                # Use JavaScript to check the checkbox for the exact name
+                checked = await page.evaluate("""(targetName) => {
+                    const items = document.querySelectorAll('#NameListTreeView li');
+                    let bestMatch = null;
+                    let bestCount = 0;
 
-                # Now parse the results table
+                    for (const li of items) {
+                        const textEl = li.querySelector('.k-treeview-leaf-text');
+                        if (!textEl) continue;
+                        const text = textEl.textContent.trim();
+                        // Extract count from "NAME (N)"
+                        const m = text.match(/^(.+?)\\s*\\((\\d+)\\)$/);
+                        if (!m) continue;
+                        const itemName = m[1].trim();
+                        const count = parseInt(m[2]);
+
+                        // Exact match on the target name
+                        if (itemName === targetName) {
+                            const cb = li.querySelector('input[type="checkbox"]');
+                            if (cb) { cb.click(); return text; }
+                        }
+                        // Track best match (highest document count for partial match)
+                        if (targetName.includes(itemName) || itemName.includes(targetName)) {
+                            if (count > bestCount) {
+                                bestCount = count;
+                                bestMatch = li;
+                            }
+                        }
+                    }
+
+                    // Fall back to best match
+                    if (bestMatch) {
+                        const cb = bestMatch.querySelector('input[type="checkbox"]');
+                        if (cb) {
+                            cb.click();
+                            const textEl = bestMatch.querySelector('.k-treeview-leaf-text');
+                            return textEl ? textEl.textContent.trim() : 'checked';
+                        }
+                    }
+
+                    // Last resort: check ALL
+                    const allItems = document.querySelectorAll('#NameListTreeView li input[type="checkbox"]');
+                    allItems.forEach(cb => cb.click());
+                    return 'all_checked';
+                }""", name.upper())
+
+                logger.info(f"Clerk name selection: {checked}")
+                await asyncio.sleep(1)
+
+                # Click Done to load results
+                done_btn = page.locator('#NamesWin .t-button').filter(has_text="Done").first
+                await done_btn.click(force=True)
+                await asyncio.sleep(5)
+
                 body_text = await page.inner_text("body")
 
-            documents = _parse_clerk_results(body_text)
+            # 4. Check for CAPTCHA on results page
+            if _detect_captcha(body_text):
+                raise CaptchaBlockedError("CAPTCHA detected on clerk results page")
 
+            # 5. Parse results
+            documents = _parse_acclaim_results(body_text)
+            logger.info(f"Clerk search returned {len(documents)} documents")
+
+        except CaptchaBlockedError:
+            raise
         except Exception as e:
             logger.error(f"Clerk search failed for '{name}': {e}")
+            # Check if it was a CAPTCHA
+            try:
+                content = await page.content()
+                if _detect_captcha(content):
+                    raise CaptchaBlockedError(f"CAPTCHA blocked clerk access: {e}")
+            except CaptchaBlockedError:
+                raise
+            except Exception:
+                pass
         finally:
             await page.close()
 
         return documents
 
 
-def _parse_clerk_results(text: str) -> list[dict]:
-    """Parse Acclaim/OnCore clerk search results."""
-    documents = []
+def _parse_acclaim_results(text: str) -> list[dict]:
+    """Parse Acclaim/OnCore clerk search results.
+
+    Results appear as tab-separated rows like:
+    1\tTo\tPITTS DERRICK R\tD R HORTON INC\t2017043190\t02/23/2017\tDEED\tOR\t17887/1785\t\t$258,990.00\tL40 BLUE LAKE
+    """
+    documents: list[dict] = []
     lines = text.split("\n")
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip()
-        # Look for document type patterns (e.g. "WD", "QCD", "MTG", "SAT", "ASSIGN")
-        if re.match(r"^\d{4}\d+$", line):
-            doc = {"instrument_number": line}
-            # Next lines typically: book/page, record date, doc type, parties
-            for j in range(1, min(6, len(lines) - i)):
-                next_line = lines[i + j].strip() if i + j < len(lines) else ""
-                if re.match(r"^\d{2}/\d{2}/\d{4}$", next_line):
-                    doc["record_date"] = next_line
-                elif "/" in next_line and re.match(r"^\d+/\d+$", next_line):
-                    doc["book_page"] = next_line
-                elif next_line in ("WD", "QCD", "MTG", "SAT", "ASSIGN", "DEED",
-                                   "NTC", "LIS", "JUDG", "RELEASE", "EASEMENT",
-                                   "AFFIDAVIT", "AFF", "AMENDMENT", "AMEND",
-                                   "AGREEMENT", "ASSIGN MTG", "COURT ORDER",
-                                   "FINAL JUDG", "SUBORDINATION", "POWER OF ATTY",
-                                   "DECLARATION", "PLAT", "SURVEY", "NOTICE",
-                                   "SATISFACTION", "MODIFICATION"):
-                    doc["doc_type"] = next_line
-            if doc.get("record_date") or doc.get("doc_type"):
-                documents.append(doc)
-        i += 1
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Split by tab
+        parts = stripped.split("\t")
+        if len(parts) < 7:
+            continue
+
+        # First field should be a row number
+        try:
+            int(parts[0])
+        except ValueError:
+            continue
+
+        # Parse: #, PartyType, Name, CrossPartyName, InstrumentNo, RecordDate, DocType, BookType, Book/Page, DocLink, Consideration, Legal
+        party_type = parts[1].strip() if len(parts) > 1 else ""  # "To" or "From"
+        party_name = parts[2].strip() if len(parts) > 2 else ""
+        cross_party = parts[3].strip() if len(parts) > 3 else ""
+        instrument = parts[4].strip() if len(parts) > 4 else ""
+        record_date = parts[5].strip() if len(parts) > 5 else ""
+        doc_type_raw = parts[6].strip() if len(parts) > 6 else ""
+        book_type = parts[7].strip() if len(parts) > 7 else ""
+        book_page = parts[8].strip() if len(parts) > 8 else ""
+        doc_link = parts[9].strip() if len(parts) > 9 else ""
+        consideration_str = parts[10].strip() if len(parts) > 10 else ""
+        legal = parts[11].strip() if len(parts) > 11 else ""
+
+        # Parse consideration
+        consideration = 0.0
+        m = re.search(r"\$([\d,]+(?:\.\d+)?)", consideration_str)
+        if m:
+            try:
+                consideration = float(m.group(1).replace(",", ""))
+            except ValueError:
+                pass
+
+        # Determine grantor/grantee based on party_type
+        # "To" means the searched name is the grantee (buyer)
+        # "From" means the searched name is the grantor (seller)
+        if party_type.lower() == "to":
+            grantor = cross_party
+            grantee = party_name
+        else:
+            grantor = party_name
+            grantee = cross_party
+
+        # Normalize doc_type
+        doc_type_map = {
+            "DEED": "deed", "WD": "deed", "QCD": "deed",
+            "MORTGAGE": "mortgage", "MTG": "mortgage",
+            "SATISFACTION": "satisfaction", "SAT": "satisfaction",
+            "ASSIGNMENT": "assignment", "ASSIGN": "assignment",
+            "LIEN": "lien", "LIS": "lien", "JUDG": "judgment",
+            "RELEASE": "satisfaction", "SUBORDINATION": "other",
+            "EASEMENT": "easement", "PLAT": "plat",
+            "AFFIDAVIT": "other", "AFF": "other",
+            "POWER OF ATTORNEY": "other", "POWER OF ATTY": "other",
+            "NOTICE": "other", "NTC": "other",
+            "MODIFICATION": "other", "AMEND": "other",
+            "AGREEMENT": "other", "DECLARATION": "other",
+            "COURT ORDER": "court_order", "FINAL JUDG": "judgment",
+        }
+        doc_type = doc_type_map.get(doc_type_raw.upper(), "other")
+
+        documents.append({
+            "instrument_number": instrument,
+            "record_date": record_date,
+            "doc_type": doc_type,
+            "doc_type_raw": doc_type_raw,
+            "book_page": book_page,
+            "book_type": book_type,
+            "doc_link": doc_link,
+            "grantor": grantor,
+            "grantee": grantee,
+            "consideration": consideration,
+            "legal_description": legal,
+            "party_type": party_type,
+        })
+
     return documents
 
 

@@ -127,6 +127,7 @@ def _deed_type_label(doc) -> str:
 
 
 def _section_header(pdf, title: str, w: float) -> None:
+    _ensure_space(pdf, _ROW_H + 5)
     pdf.set_fill_color(*_HEADER_BG)
     pdf.set_text_color(*_HEADER_FG)
     pdf.set_font(_FONT, "B", 10)
@@ -136,6 +137,13 @@ def _section_header(pdf, title: str, w: float) -> None:
     )
     pdf.set_text_color(0, 0, 0)  # Reset to black
     pdf.set_font(_FONT, "", 8)
+
+
+def _ensure_space(pdf, needed: float) -> None:
+    """Add a new page if there's not enough vertical space remaining."""
+    remaining = pdf.h - pdf.get_y() - pdf.b_margin
+    if remaining < needed:
+        pdf.add_page()
 
 
 def _label_value_row(pdf, label: str, value: str, w: float) -> None:
@@ -148,6 +156,8 @@ def _label_value_row(pdf, label: str, value: str, w: float) -> None:
     val_lines = pdf.multi_cell(vw, _ROW_H, val_clean, dry_run=True, output="LINES")
     num_lines = len(val_lines) if val_lines else 1
     row_h = max(_ROW_H, _ROW_H * num_lines)
+
+    _ensure_space(pdf, row_h + 2)
 
     x, y = pdf.get_x(), pdf.get_y()
     pdf.set_font(_FONT, "B", 8)
@@ -162,6 +172,7 @@ def _label_value_row(pdf, label: str, value: str, w: float) -> None:
 
 
 def _split_row(pdf, l1, v1, l2, v2, w) -> None:
+    _ensure_space(pdf, _ROW_H + 2)
     col = w / 4
     pdf.set_font(_FONT, "B", 8)
     pdf.cell(col, _ROW_H, _clean(l1), border=1, new_x="END", new_y="TOP")
@@ -475,8 +486,16 @@ async def generate_package_pdf(
     _section_header(pdf, "DEED OF TRUST/MORTGAGE INFORMATION", w)
     if mortgage_docs:
         for mdoc in mortgage_docs:
-            _label_value_row(pdf, "Borrower's Name:", _party_names(mdoc.grantee), w)
-            _label_value_row(pdf, "Lender Name:", _party_names(mdoc.grantor), w)
+            # In mortgages: grantor = borrower, grantee = lender
+            borrower = _party_names(mdoc.grantee) if mdoc.grantee else "N/A"
+            lender = _party_names(mdoc.grantor) if mdoc.grantor else "N/A"
+            # Swap if the source is clerk (clerk: "From" = borrower, "To" = lender)
+            source = _doc_meta(mdoc, "source")
+            if source == "clerk_of_court":
+                borrower = _party_names(mdoc.grantor) if mdoc.grantor else "N/A"
+                lender = _party_names(mdoc.grantee) if mdoc.grantee else "N/A"
+            _label_value_row(pdf, "Borrower's Name:", borrower, w)
+            _label_value_row(pdf, "Lender Name:", lender, w)
             _label_value_row(pdf, "Trustee Name:", _doc_meta(mdoc, "trustee"), w)
             rec_date = mdoc.recording_date or "N/A"
             _split_row(pdf, "Dated Date:", rec_date, "Recorded Date:", rec_date, w)

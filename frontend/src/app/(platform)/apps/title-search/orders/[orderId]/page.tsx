@@ -227,7 +227,7 @@ export default function OrderDetailPage() {
           <div>
             <p className="font-semibold text-sm">Report Ready</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Download the generated abstract report as a PDF
+              Download the Generated Report as PDF
             </p>
           </div>
           <button
