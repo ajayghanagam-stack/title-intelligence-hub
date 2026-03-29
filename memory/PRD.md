@@ -17,57 +17,60 @@ Build a title search and abstracting platform (Logikality / Society Title) that:
 
 ## What's Been Implemented
 
-### AWS Production Deployment (DONE - Shut Down)
-- ECS/EC2 deployment with Docker, RDS PostgreSQL, S3 storage
-- Shutdown/startup scripts for cost management
-
 ### Title Search Pipeline (DONE)
 - Real county data fetching via Playwright + ArcGIS APIs
 - **Hendry County, FL**: Phenix.net tax collector portal
-- **Duval County, FL**: COJ Property Appraiser (paopropertysearch.coj.net)
+- **Duval County, FL**: COJ Property Appraiser + Acclaim Clerk of Court
 - AI document parsing, chain-of-title construction, flag detection
+
+### Acclaim Clerk Scraper (DONE — Enhanced)
+- Handles full Kendo UI workflow: disclaimer → name search → checkbox tree → Done → results
+- Extracts: grantor/grantee names, instrument numbers, book/page, consideration, doc types, legal descriptions
+- CAPTCHA detection with retry logic and fallback flagging
+- Supports 8 Florida counties: Duval, Hillsborough, Volusia, Bay, Nassau, St. Johns, Clay, Putnam
 
 ### Full Search vs Current Owner Search (DONE)
 - **Current Owner**: Tax/property data only, skips clerk (~9s)
-- **Full Search**: Tax + clerk records, builds full chain (~22s)
+- **Full Search**: Tax + full clerk records, builds chain (~30s)
 
-### PDF Report (DONE — Logikality Branded)
-- **Orange headers** (RGB 230,126,34) with white text
-- **Logo**: SVG-sourced high-res PNG (Logo_withTagline.svg)
-- 12 sections matching sample: Property Info, Vesting Deed, Reference of Legal Description, Chain of Title, Mortgage, Judgment & Liens, Tax Info (installment table), Exceptions/Easements, Miscellaneous, Legal Description, Names Search, Additional Comments
-- Tax Year / Assessment Year populated (e.g. 2025)
-- Tax Status populated (e.g. "Paid")
-- Total/Just Market Value shown
-- Chain entries have Book/Page numbers
-- Plat references in Miscellaneous section
-- Names Search includes all parties + subdivision
-
-### Portal Registry (DONE)
-- 30+ Phenix.net tax portals (FL counties)
-- 8 Acclaim clerk portals (Duval, Hillsborough, Volusia, Bay, Nassau, St. Johns, Clay, Putnam)
-- 1 Property Appraiser portal (Duval COJ)
-
-### CAPTCHA Handling (DONE)
-- Detection for Cloudflare, reCAPTCHA, hCaptcha, Turnstile
-- Retry logic with exponential backoff
-- Auto-flag generation for blocked portals
+### PDF Report (DONE — All Gaps Closed)
+- Logikality orange branding (RGB 230,126,34) with white text headers
+- SVG-sourced logo (Logo_withTagline.svg)
+- 12 sections matching sample exactly
+- ALL data populated from real sources:
+  - Vesting deed with grantor (D R HORTON INC) and grantee names
+  - Full Book/Page and Instrument numbers
+  - Tax Year 2025, Assessment Year 2025, Status "Paid"
+  - Full legal description from clerk records
+  - Mortgage details: Borrower, Lender, Loan Amount, Book/Page
+  - Names Search with all parties from chain
+  - Plat reference in Miscellaneous Documents
+- Proper page break handling (no field-per-page overflow)
 
 ### Frontend (DONE)
 - Order list with status filters
 - New order form with product type selection
 - Order detail: tabbed navigation, live pipeline progress, PDF download
-- Documents tab: meaningful names (e.g. "Special Warranty Deed — to PITTS DERRICK R — ($259,000)")
+- Documents tab with meaningful names (deed type + party + consideration)
+- "Download the Generated Report as PDF" text
 - data-testid attributes throughout
 
-## Known PDF Gaps (Data Source Limitations)
-These require clerk deed text which property appraisers don't provide:
-- Grantor names on vesting/chain deeds (property appraiser only has grantee/current owner)
-- Full legal description in deed language (only raw parcel format available)
-- Mortgage details (borrower, lender, loan amount — recorded at clerk only)
+## Portal Registry
+- 30+ Phenix.net tax portals (FL counties)
+- 8 Acclaim clerk portals (Duval, Hillsborough, Volusia, Bay, Nassau, St. Johns, Clay, Putnam)
+- 1 Property Appraiser portal (Duval COJ)
+
+## Tested Counties
+- **Hendry County, FL** (870 Friendship Cir, Labelle FL 33935)
+- **Duval County, FL** (4471 Sherman Hills Pkwy, Jacksonville FL 32210) — Full + COS
+
+## Authentication
+- Email/password login (admin@societytitle.com / admin123)
 
 ## Prioritized Backlog
 ### P2 - Future
-- Batch order processing (CSV upload)
+- Batch order processing (CSV upload for bulk orders)
 - Human-in-the-loop CAPTCHA fallback UI (manual document upload)
-- Expand scraper coverage to more FL county portal systems
+- Expand scraper coverage to more FL county portal systems (Miami-Dade, Broward, Palm Beach, Orange)
 - Non-Florida county support
+- AWS production re-deployment
