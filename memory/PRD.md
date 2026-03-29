@@ -18,68 +18,56 @@ Build a title search and abstracting platform (Logikality / Society Title) that:
 ## What's Been Implemented
 
 ### AWS Production Deployment (DONE - Shut Down)
-- ECS/EC2 deployment with Docker
-- RDS PostgreSQL with migrations
-- S3 storage integration
+- ECS/EC2 deployment with Docker, RDS PostgreSQL, S3 storage
 - Shutdown/startup scripts for cost management
 
 ### Title Search Pipeline (DONE)
 - Real county data fetching via Playwright + ArcGIS APIs
-- **Hendry County, FL**: Phenix.net tax collector portal scraper
-- **Duval County, FL**: COJ Property Appraiser scraper (paopropertysearch.coj.net)
-- AI document parsing (source resolvers, chain builders)
-- Chain-of-title construction with gap detection
-- Flag generation (critical/medium severity)
+- **Hendry County, FL**: Phenix.net tax collector portal
+- **Duval County, FL**: COJ Property Appraiser (paopropertysearch.coj.net)
+- AI document parsing, chain-of-title construction, flag detection
 
-### Full Search vs Current Owner Search Differentiation (DONE)
-- **Current Owner Search**: Fetches tax/property appraiser data only, skips deep clerk search (~9s)
-- **Full Search**: Fetches tax data + full clerk record search (~22s)
-- PDF reports: Full Search includes Chain of Title section, Current Owner doesn't
+### Full Search vs Current Owner Search (DONE)
+- **Current Owner**: Tax/property data only, skips clerk (~9s)
+- **Full Search**: Tax + clerk records, builds full chain (~22s)
 
-### PDF Report Generation (DONE)
-- Logikality orange branding (RGB 230,126,34) with white text headers
-- Logo from SVG source (Logo_withTagline.svg converted to high-res PNG)
-- 12 sections: Property Info, Vesting Deed, Reference of Legal Description, Chain of Title, Mortgage, Judgment & Liens, Tax Info (with installment table), Exceptions/Easements, Miscellaneous, Legal Description, Names Search, Additional Comments
+### PDF Report (DONE — Logikality Branded)
+- **Orange headers** (RGB 230,126,34) with white text
+- **Logo**: SVG-sourced high-res PNG (Logo_withTagline.svg)
+- 12 sections matching sample: Property Info, Vesting Deed, Reference of Legal Description, Chain of Title, Mortgage, Judgment & Liens, Tax Info (installment table), Exceptions/Easements, Miscellaneous, Legal Description, Names Search, Additional Comments
+- Tax Year / Assessment Year populated (e.g. 2025)
+- Tax Status populated (e.g. "Paid")
+- Total/Just Market Value shown
+- Chain entries have Book/Page numbers
+- Plat references in Miscellaneous section
+- Names Search includes all parties + subdivision
 
 ### Portal Registry (DONE)
-- **30+ Phenix.net tax portals**: Hendry, Lee, Collier, Charlotte, Sarasota, Manatee, etc.
-- **8 Acclaim clerk portals**: Duval, Hillsborough, Volusia, Bay, Nassau, St. Johns, Clay, Putnam
-- **1 Property Appraiser portal**: Duval (COJ paopropertysearch.coj.net)
+- 30+ Phenix.net tax portals (FL counties)
+- 8 Acclaim clerk portals (Duval, Hillsborough, Volusia, Bay, Nassau, St. Johns, Clay, Putnam)
+- 1 Property Appraiser portal (Duval COJ)
 
 ### CAPTCHA Handling (DONE)
-- CAPTCHA detection for Cloudflare, reCAPTCHA, hCaptcha, Turnstile
-- Retry logic with exponential backoff (2 retries)
-- Automatic flag generation when CAPTCHA blocks clerk access
-- Sources marked with `captcha_blocked: true` and `manual_retrieval: true`
+- Detection for Cloudflare, reCAPTCHA, hCaptcha, Turnstile
+- Retry logic with exponential backoff
+- Auto-flag generation for blocked portals
 
-### Frontend UI (DONE)
-- Order list with readable status filters (All, Pending, Processing, Review Required, Completed, Failed)
-- New order form with Product Type dropdown (Full Search / Current Owner Search)
-- Order detail with tabbed navigation (Overview, Documents, Chain, Flags, Package)
-- Live pipeline progress tracker with auto-refresh
-- Download PDF button for completed orders
+### Frontend (DONE)
+- Order list with status filters
+- New order form with product type selection
+- Order detail: tabbed navigation, live pipeline progress, PDF download
+- Documents tab: meaningful names (e.g. "Special Warranty Deed — to PITTS DERRICK R — ($259,000)")
 - data-testid attributes throughout
 
-## Tested Counties
-- **Hendry County, FL** (870 Friendship Cir, Labelle FL 33935) - Full Search ✅
-- **Duval County, FL** (4471 Sherman Hills Pkwy, Jacksonville FL 32210) - Full + COS ✅
-
-## Authentication
-- Email/password login (admin@societytitle.com / admin123)
-- JWT token-based auth with org context
-
-## Key API Endpoints
-- POST /api/v1/apps/title-search/orders (Create order)
-- POST /api/v1/apps/title-search/orders/{id}/process (Start pipeline)
-- GET /api/v1/apps/title-search/orders/{id}/pipeline (Pipeline status)
-- GET /api/v1/apps/title-search/orders/{id}/package/pdf (Download PDF)
-- GET /api/v1/apps/title-search/orders/{id}/documents (Documents list)
-- GET /api/v1/apps/title-search/orders/{id}/chain (Chain of title)
-- GET /api/v1/apps/title-search/orders/{id}/flags (Flags list)
+## Known PDF Gaps (Data Source Limitations)
+These require clerk deed text which property appraisers don't provide:
+- Grantor names on vesting/chain deeds (property appraiser only has grantee/current owner)
+- Full legal description in deed language (only raw parcel format available)
+- Mortgage details (borrower, lender, loan amount — recorded at clerk only)
 
 ## Prioritized Backlog
 ### P2 - Future
-- Batch order processing
-- Admin portal configuration UI for adding new county portals
-- Expand to non-Florida counties
-- Human-in-the-loop UI for CAPTCHA-blocked portals (manual upload)
+- Batch order processing (CSV upload)
+- Human-in-the-loop CAPTCHA fallback UI (manual document upload)
+- Expand scraper coverage to more FL county portal systems
+- Non-Florida county support
