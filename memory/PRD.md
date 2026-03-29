@@ -1,81 +1,64 @@
 # Title Intelligence Platform - PRD
 
 ## Original Problem Statement
-Build a title search and abstracting platform (Logikality / Society Title) that:
-1. Integrates with real county portals to fetch property, tax, and clerk records
-2. Uses AI to parse documents, build chain of title, and detect flags
-3. Generates professional PDF abstract reports matching Logikality-branded sample formats
-4. Provides a clean UI for order management, pipeline tracking, and report download
+Build and refine the "Title Search and Abstracting" micro-app to process real US addresses via county portals. Generate PDF abstract reports matching Logikality branding. Support Full Search vs Current Owner Search workflows. Nationwide portal coverage with auto-discovery.
 
 ## Core Architecture
-- **Frontend**: Next.js (React) with Tailwind CSS, Shadcn UI
-- **Backend**: FastAPI (Python) with SQLAlchemy ORM
-- **Database**: SQLite (preview) / PostgreSQL RDS (production)
-- **Scraping**: Playwright (headless browser) for county portals
-- **AI**: Emergent LLM Key for document parsing and chain analysis
-- **Storage**: Local (preview) / AWS S3 (production)
+- **Frontend**: Next.js (port 3000)
+- **Backend**: FastAPI (port 8001)
+- **Database**: PostgreSQL (SQLAlchemy async)
+- **AI**: Emergent LLM Key (Gemini/OpenAI/Claude)
+- **Scraping**: Playwright (Headless)
+- **PDF**: fpdf2
 
 ## What's Been Implemented
 
-### Title Search Pipeline (DONE)
-- Real county data fetching via Playwright + ArcGIS APIs
-- **Hendry County, FL**: Phenix.net tax collector portal
-- **Duval County, FL**: COJ Property Appraiser + Acclaim Clerk of Court
-- AI document parsing, chain-of-title construction, flag detection
+### Phase 1 - Core Pipeline (Done)
+- ArcGIS geocoding for address → county resolution
+- Phenix tax collector portal scraper (30+ FL counties)
+- Duval County Property Appraiser scraper
+- Acclaim Clerk of Court scraper (8 FL counties with Kendo UI)
+- AI document classification and chain-of-title building
+- Logikality-branded PDF generation (Full Search + Current Owner)
 
-### Acclaim Clerk Scraper (DONE — Enhanced)
-- Handles full Kendo UI workflow: disclaimer → name search → checkbox tree → Done → results
-- Extracts: grantor/grantee names, instrument numbers, book/page, consideration, doc types, legal descriptions
-- CAPTCHA detection with retry logic and fallback flagging
-- Supports 8 Florida counties: Duval, Hillsborough, Volusia, Bay, Nassau, St. Johns, Clay, Putnam
+### Phase 2 - Data Quality (Done)
+- Closed 7 major data gaps comparing to manual abstractor samples
+- Full Search vs Current Owner scoping logic
+- Document naming with doc_metadata
+- UI redesign with status filters and data-testids
 
-### Full Search vs Current Owner Search (DONE)
-- **Current Owner**: Tax/property data only, skips clerk (~9s)
-- **Full Search**: Tax + full clerk records, builds chain (~30s)
+### Phase 3 - Cosmetic Polish (Done 03/29/2026)
+- Orders list pagination (10/page, latest first, prev/next)
+- PDF vertical borders removed (clean horizontal-only layout)
+- PDF logo swapped to Logo_rev_no-tagline.svg
 
-### PDF Report (DONE — All Gaps Closed)
-- Logikality orange branding (RGB 230,126,34) with white text headers
-- SVG-sourced logo (Logo_withTagline.svg)
-- 12 sections matching sample exactly
-- ALL data populated from real sources:
-  - Vesting deed with grantor (D R HORTON INC) and grantee names
-  - Full Book/Page and Instrument numbers
-  - Tax Year 2025, Assessment Year 2025, Status "Paid"
-  - Full legal description from clerk records
-  - Mortgage details: Borrower, Lender, Loan Amount, Book/Page
-  - Names Search with all parties from chain
-  - Plat reference in Miscellaneous Documents
-- Proper page break handling (no field-per-page overflow)
+### Phase 4 - Nationwide Coverage (Done 03/29/2026)
+- AI portal discovery via PortalDiscoveryAgent (finds property appraiser + clerk portals)
+- TACountySource DB caching for discovered portals (no repeat discovery)
+- GenericPortalScraper: Playwright-based scraper for any discovered portal URL
+- AI data extraction from generic portal HTML (PropertyDataExtractorAgent)
+- CAPTCHA-blocked portals flagged for review instead of failing pipeline
+- Tested with FL, CA, TX, NY, DC addresses — all complete successfully
+- Pre-configured FL portals unchanged (zero performance impact)
 
-### Frontend (DONE)
-- Order list with status filters
-- New order form with product type selection
-- Order detail: tabbed navigation, live pipeline progress, PDF download
-- Documents tab with meaningful names (deed type + party + consideration)
-- "Download the Generated Report as PDF" text
-- data-testid attributes throughout
+## Key Models
+- `ta_orders`: id, org_id, status, property_address, county, state_code, search_scope
+- `ta_documents`: id, order_id, doc_type, raw_content, doc_metadata
+- `ta_chain_links`: id, order_id, grantor, grantee
+- `ta_flags`: id, order_id, title, severity, flag_type
+- `ta_county_sources`: county, state_code, source_type, portal_url, is_active (discovery cache)
 
-## Portal Registry
-- 30+ Phenix.net tax portals (FL counties)
-- 8 Acclaim clerk portals (Duval, Hillsborough, Volusia, Bay, Nassau, St. Johns, Clay, Putnam)
-- 1 Property Appraiser portal (Duval COJ)
-
-## Tested Counties
-- **Hendry County, FL** (870 Friendship Cir, Labelle FL 33935)
-- **Duval County, FL** (4471 Sherman Hills Pkwy, Jacksonville FL 32210) — Full + COS
-
-## Authentication
-- Email/password login (admin@societytitle.com / admin123)
+## Key API Endpoints
+- POST /api/v1/apps/title-search/orders
+- POST /api/v1/apps/title-search/orders/{id}/process
+- GET /api/v1/apps/title-search/orders/{id}/package/pdf
 
 ## Prioritized Backlog
-### P0 - Completed
-- Orders list pagination (10/page, latest first, prev/next) — Done 03/29/2026
-- PDF vertical borders removed (clean layout) — Done 03/29/2026
-- PDF logo swapped to Logo_rev_no-tagline.svg (PNG) — Done 03/29/2026
+### P1 - Next
+- Batch order processing (CSV upload for bulk orders)
+- Human-in-the-loop CAPTCHA fallback UI (manual document upload to resume pipeline)
 
 ### P2 - Future
-- Batch order processing (CSV upload for bulk orders)
-- Human-in-the-loop CAPTCHA fallback UI (manual document upload)
-- Expand scraper coverage to more FL county portal systems (Miami-Dade, Broward, Palm Beach, Orange)
-- Non-Florida county support
+- Improve generic scraper accuracy (multi-step navigation, address-specific result clicking)
+- Expand pre-configured portals for high-volume counties (Miami-Dade, Broward, Palm Beach, Orange)
 - AWS production re-deployment
