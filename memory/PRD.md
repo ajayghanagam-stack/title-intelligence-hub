@@ -68,6 +68,11 @@ Build a title search and abstracting platform (Logikality / Society Title) that:
 - Email/password login (admin@societytitle.com / admin123)
 
 ## Prioritized Backlog
+### P0 - Completed
+- Orders list pagination (10/page, latest first, prev/next) — Done 03/29/2026
+- PDF vertical borders removed (clean layout) — Done 03/29/2026
+- PDF logo swapped to Logo_rev_no-tagline.svg (PNG) — Done 03/29/2026
+
 ### P2 - Future
 - Batch order processing (CSV upload for bulk orders)
 - Human-in-the-loop CAPTCHA fallback UI (manual document upload)
