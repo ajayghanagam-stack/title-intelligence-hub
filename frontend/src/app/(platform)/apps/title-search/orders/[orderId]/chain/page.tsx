@@ -108,11 +108,11 @@ export default function ChainPage() {
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">
-                        {link.from_party?.names?.join(", ") || "Unknown"}
+                        {link.from_party?.names?.join(", ") || "See Official Records"}
                       </span>
                       <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
                       <span className="font-medium">
-                        {link.to_party?.names?.join(", ") || "Unknown"}
+                        {link.to_party?.names?.join(", ") || "See Official Records"}
                       </span>
                     </div>
                     <div className="flex gap-3 mt-1 text-xs text-muted-foreground">

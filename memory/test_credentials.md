@@ -1,30 +1,17 @@
 # Test Credentials
 
-## Platform Admin (Logikality - manages customer accounts)
-- **Email**: admin@logikality.com
-- **Password**: admin123
-- **Role**: Platform Admin (can create customer accounts and manage micro apps)
-
-## Customer Account (Society Title Co - has Title Intelligence subscription)
+## Admin User
 - **Email**: admin@societytitle.com
 - **Password**: admin123
-- **Role**: Owner (has active Title Intelligence subscription)
+- **Org ID**: 576b9a0f-0af5-4520-8093-e4af1155cc44
 
-## Production Application URL (AWS)
-- **ALB URL**: http://title-intelligence-alb-1451612729.us-east-1.elb.amazonaws.com
-- **Login Page**: http://title-intelligence-alb-1451612729.us-east-1.elb.amazonaws.com/login
-- **Health Check**: http://title-intelligence-alb-1451612729.us-east-1.elb.amazonaws.com/api/v1/health
+## Test Orders
+- **Duval County Order**: 5daff57e-5ab8-46c8-94f8-a5dbb3aae69a (4471 Sherman Hills Pkwy, Jacksonville FL)
+- **Hendry County Order**: dbd6a815-c66e-43e2-8c17-ceb5799d1bac (870 Friendship Cir, Labelle FL)
 
-## Preview/Local Application URL (Emergent)
-- **Live URL**: https://dc353579-ba3e-4338-b011-8fae44983f1e.preview.emergentagent.com
-- **Login Page**: https://dc353579-ba3e-4338-b011-8fae44983f1e.preview.emergentagent.com/login
-
-## API Endpoints
-- **Health Check**: GET /api/v1/health
-- **Login**: POST /api/v1/auth/login
-- **Admin Accounts**: /api/v1/admin/accounts
-
-## Notes
-- Use **admin@societytitle.com** to access the Title Intelligence document processing features
-- Use **admin@logikality.com** for platform admin tasks (creating new customer accounts)
-- Production uses PostgreSQL (RDS) + S3 storage; Preview uses SQLite + local storage
+## Environment
+- Preview URL: https://dc353579-ba3e-4338-b011-8fae44983f1e.preview.emergentagent.com
+- Backend: port 8001 (internal), /api prefix via ingress
+- Frontend: port 3000
+- Database: SQLite (preview)
+- AWS Production: Deliberately shut down to save costs

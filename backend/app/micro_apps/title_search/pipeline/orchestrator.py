@@ -1200,7 +1200,19 @@ async def _parse_json_property_data(
         db.add(tax_doc)
 
     # Create documents from sales history (deed transfers)
-    for sale in prop_data.get("sales_history", []):
+    owner_name = prop_data.get("owner_name", "")
+    sales = prop_data.get("sales_history", [])
+    for i, sale in enumerate(sales):
+        # For the most recent sale, the grantee is the current owner
+        grantor = {"names": [sale["grantor"]]} if sale.get("grantor") else None
+        grantee = {"names": [sale["grantee"]]} if sale.get("grantee") else None
+        if i == 0 and owner_name and not grantee:
+            grantee = {"names": [owner_name]}
+        # For earlier sales, the grantor of sale N is the grantee of sale N+1
+        if i > 0 and not grantee:
+            prev_grantor = sales[i - 1].get("grantor")
+            if prev_grantor:
+                grantee = {"names": [prev_grantor]}
         doc = TADocument(
             org_id=org_id,
             order_id=order_id,
@@ -1208,8 +1220,8 @@ async def _parse_json_property_data(
             doc_type=sale.get("doc_type", "deed"),
             recording_date=sale.get("recording_date") or sale.get("sale_date"),
             recording_ref=sale.get("instrument_number") or sale.get("book_page"),
-            grantor={"names": [sale["grantor"]]} if sale.get("grantor") else None,
-            grantee={"names": [sale["grantee"]]} if sale.get("grantee") else None,
+            grantor=grantor,
+            grantee=grantee,
             consideration=sale.get("consideration") or sale.get("sale_price"),
             confidence=confidence,
             needs_review=confidence < 0.70,

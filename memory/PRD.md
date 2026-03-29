@@ -1,65 +1,82 @@
-# Title Intelligence Hub - PRD
+# Title Intelligence Platform - PRD
 
 ## Original Problem Statement
-Build a multi-tenant SaaS platform with two micro apps:
-1. **Title Intelligence** — AI-powered title commitment analysis from uploaded PDFs
-2. **Title Search & Abstracting** — Automated property record retrieval from county portals, AI parsing, chain-of-title construction, and report generation
+Build a title search and abstracting platform (Logikality / Society Title) that:
+1. Integrates with real county portals to fetch property, tax, and clerk records
+2. Uses AI to parse documents, build chain of title, and detect flags
+3. Generates professional PDF abstract reports matching Logikality-branded sample formats
+4. Provides a clean UI for order management, pipeline tracking, and report download
 
-## Tech Stack
-- **Backend**: FastAPI + SQLAlchemy (async) + SQLite (dev) / PostgreSQL (prod)
-- **Frontend**: Next.js 14 + TypeScript + Tailwind CSS + shadcn/ui
-- **AI**: Gemini via litellm
-- **Cloud**: AWS (ECS, ALB, RDS, S3, ECR)
-- **Scraping**: Playwright (county portal automation)
+## Core Architecture
+- **Frontend**: Next.js (React) with Tailwind CSS, Shadcn UI
+- **Backend**: FastAPI (Python) with SQLAlchemy ORM
+- **Database**: SQLite (preview) / PostgreSQL RDS (production)
+- **Scraping**: Playwright (headless browser) for county portals
+- **AI**: Emergent LLM Key for document parsing and chain analysis
+- **Storage**: Local (preview) / AWS S3 (production)
 
 ## What's Been Implemented
 
-### Title Intelligence (COMPLETE)
-- PDF upload and AI processing pipeline
-- Document viewer with on-demand thumbnails
-- Risk flag detection and review
-- Readiness dashboard
-- Report generation
+### AWS Production Deployment (DONE - Shut Down)
+- ECS/EC2 deployment with Docker
+- RDS PostgreSQL with migrations
+- S3 storage integration
+- Shutdown/startup scripts for cost management
 
-### Title Search & Abstracting (IN PROGRESS)
-- [2026-03-29] Real county portal integration built:
-  - US Census Geocoder API (address → county + FIPS code)
-  - Hendry County FL tax collector (Phenix.net) — real Playwright scraping
-  - Florida clerk portal detection (CAPTCHA-blocked portals flagged for manual retrieval)
-  - Acclaim/OnCore clerk scrapers (Duval County etc.)
-- [2026-03-29] Pipeline working end-to-end with real data:
-  - order → geocode → retrieve (real portal data) → parse → chain (AI) → package → complete
-  - Tested with 870 Friendship Cir, Labelle, FL 33935
-  - Returns: owner (WJHFL LLC), parcel (2084329-01000000440), legal description, tax data, chain analysis
-- [2026-03-29] Fixed UUID handling in chain stage, made county/state optional (geocoded automatically)
+### Title Search Pipeline (DONE)
+- Real county data fetching via Playwright + ArcGIS APIs
+- **Hendry County, FL**: Phenix.net tax collector portal scraper
+- **Duval County, FL**: COJ Property Appraiser scraper (paopropertysearch.coj.net)
+- AI document parsing (source resolvers, chain builders)
+- Chain-of-title construction with gap detection
+- Flag generation (critical/medium severity)
+- PDF abstract report generation (Logikality-branded format)
 
-### AWS Deployment (COMPLETE - currently shut down to save costs)
-- ALB: title-intelligence-alb-1451612729.us-east-1.elb.amazonaws.com
-- Shutdown/Startup scripts at /app/scripts/
+### PDF Report Sections (DONE)
+- Property Information
+- Vesting Deed Information
+- Reference of Legal Description
+- Chain of Title (Full Search only)
+- Deed of Trust/Mortgage Information
+- Judgment & Lien's Information
+- Tax Information (with installment table)
+- Exceptions/Easements Documents
+- Miscellaneous Documents
+- Legal Description
+- Names Search
+- Additional Comments
+
+### Frontend UI (DONE)
+- Order list with status filters (All, Pending, Processing, Review Required, Completed, Failed)
+- New order creation form
+- Order detail with tabbed navigation (Overview, Documents, Chain, Flags, Package)
+- Live pipeline progress tracker (6 stages with real-time polling)
+- Download PDF button on completed orders
+- Breadcrumbs navigation
+- data-testid attributes throughout
+
+## Tested Counties
+- **Hendry County, FL** (870 Friendship Cir, Labelle FL 33935) ✅
+- **Duval County, FL** (4471 Sherman Hills Pkwy, Jacksonville FL 32210) ✅
 
 ## Prioritized Backlog
 
-### P0 - Critical (Title Search)
-- PDF report generation matching sample format (Logikality branding)
-- UI redesign for Title Search pages (order creation, pipeline progress, report preview)
-- Support more tax collector portals (currently Hendry FL only)
+### P1 - Upcoming
+- Full Search vs Current Owner Search differentiation in data fetching logic
+- Expand portal registry to more Florida counties
 
-### P1 - High Priority
-- Add more county portal adapters (expand portal registry)
-- Support Current Owner Search scope (vs Full Search)
-- Manual retrieval workflow for CAPTCHA-blocked portals
-- SSL/HTTPS + custom domain for AWS
-
-### P2 - Medium
-- Admin UI for managing county portal configurations
+### P2 - Future
+- CAPTCHA handling / human-in-the-loop fallback for blocked clerk portals
 - Batch order processing
-- Export functionality
-- CloudWatch monitoring
+- Admin portal configuration UI
+- Expand to non-Florida counties
 
-## Architecture Notes
-- County portal integration uses API-first approach (REST APIs when available)
-- Falls back to Playwright scraping for portals without APIs
-- CAPTCHA-blocked portals flagged as "manual_retrieval_needed" with TAFlag
-- County registry expandable: add portal URL + platform type per county
-- Phenix.net adapter covers many Florida tax collectors
-- Acclaim/OnCore adapter covers many US clerk portals
+## Authentication
+- Email/password login (admin@societytitle.com / admin123)
+- JWT token-based auth with org context
+
+## Key API Endpoints
+- POST /api/v1/apps/title-search/orders (Create order)
+- POST /api/v1/apps/title-search/orders/{id}/process (Start pipeline)
+- GET /api/v1/apps/title-search/orders/{id}/pipeline (Pipeline status)
+- GET /api/v1/apps/title-search/orders/{id}/package/pdf (Download PDF)
