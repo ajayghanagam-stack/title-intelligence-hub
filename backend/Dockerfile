@@ -1,17 +1,26 @@
 FROM --platform=linux/amd64 python:3.12-slim
 
-# Install system dependencies
+# Install system dependencies (including Playwright browser deps and Cairo for SVG)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     libpq-dev \
     curl \
+    libcairo2 \
+    libgdk-pixbuf2.0-0 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    shared-mime-info \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt gunicorn
+RUN pip install --no-cache-dir -r requirements.txt gunicorn \
+    --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
+
+# Install Playwright browsers
+RUN playwright install chromium && playwright install-deps chromium
 
 # Copy application code
 COPY . .
