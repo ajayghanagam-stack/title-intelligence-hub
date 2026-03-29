@@ -154,10 +154,15 @@ async def stage_retrieve(order_id, org_id, db):
 
     Uses API-first approach (Census geocoder, ArcGIS) with
     Playwright scraping fallback for tax collectors and clerk portals.
+    For counties without pre-configured portals, uses AI discovery to find
+    and cache portal URLs for nationwide coverage.
     CAPTCHA-blocked portals are flagged for manual retrieval.
     """
     from app.micro_apps.title_search.services.geocoding import geocode_address
-    from app.micro_apps.title_search.services.real_data_fetcher import fetch_property_data
+    from app.micro_apps.title_search.services.real_data_fetcher import (
+        fetch_property_data,
+        PHENIX_TAX_PORTALS, PROPERTY_APPRAISER_PORTALS, ACCLAIM_PORTALS,
+    )
 
     order = (await db.execute(
         select(TAOrder).where(TAOrder.id == order_id, TAOrder.org_id == org_id)
@@ -186,6 +191,94 @@ async def stage_retrieve(order_id, org_id, db):
         if geo.get("matched_address"):
             logger.info(f"Geocoded '{full_address}' → {geo['county']} County, {geo['state_code']}")
 
+    # --- Portal Discovery for unconfigured counties ---
+    # Check if pre-configured portals exist
+    has_tax_portal = (
+        (order.county, order.state_code) in PHENIX_TAX_PORTALS
+        or (order.county, order.state_code) in PROPERTY_APPRAISER_PORTALS
+    )
+    has_clerk_portal = order.county in ACCLAIM_PORTALS
+
+    discovered_tax_url = None
+    discovered_clerk_url = None
+
+    if not has_tax_portal or not has_clerk_portal:
+        # Check DB cache for previously discovered portals
+        cached_sources = (await db.execute(
+            select(TACountySource).where(
+                TACountySource.county == order.county,
+                TACountySource.state_code == order.state_code,
+                TACountySource.is_active.is_(True),
+            )
+        )).scalars().all()
+
+        for cs in cached_sources:
+            if not has_tax_portal and cs.source_type in ("property_appraiser", "tax_collector"):
+                discovered_tax_url = cs.portal_url
+                logger.info(f"Using cached tax portal for {order.county}, {order.state_code}: {cs.portal_url}")
+            if not has_clerk_portal and cs.source_type == "clerk_of_court":
+                discovered_clerk_url = cs.portal_url
+                logger.info(f"Using cached clerk portal for {order.county}, {order.state_code}: {cs.portal_url}")
+
+        # If still missing, run AI portal discovery
+        needs_discovery = (
+            (not has_tax_portal and not discovered_tax_url)
+            or (not has_clerk_portal and not discovered_clerk_url)
+        )
+        if needs_discovery:
+            logger.info(f"Running AI portal discovery for {order.county}, {order.state_code}")
+            try:
+                from app.micro_apps.title_search.ai.portal_discovery_agent import PortalDiscoveryAgent
+                agent = PortalDiscoveryAgent(org_id)
+                discovery = await asyncio.wait_for(
+                    agent.discover(order.county, order.state_code),
+                    timeout=DISCOVERY_TIMEOUT,
+                )
+                portals = discovery.get("portals", [])
+                logger.info(f"AI discovery found {len(portals)} portals for {order.county}, {order.state_code}")
+
+                for portal in portals:
+                    url = portal.get("url", "")
+                    source_type = portal.get("source_type", "property_appraiser")
+                    if not url:
+                        continue
+
+                    # Assign to tax or clerk based on source_type
+                    if source_type in ("property_appraiser", "tax_collector") and not has_tax_portal and not discovered_tax_url:
+                        discovered_tax_url = url
+                        logger.info(f"Discovered tax portal: {url}")
+                    elif source_type == "clerk_of_court" and not has_clerk_portal and not discovered_clerk_url:
+                        discovered_clerk_url = url
+                        logger.info(f"Discovered clerk portal: {url}")
+
+                    # Cache in TACountySource for future use
+                    # Check if already exists (to avoid unique constraint violation)
+                    existing = (await db.execute(
+                        select(TACountySource).where(
+                            TACountySource.county == order.county,
+                            TACountySource.state_code == order.state_code,
+                            TACountySource.source_type == source_type,
+                        )
+                    )).scalar_one_or_none()
+
+                    if not existing:
+                        new_source = TACountySource(
+                            county=order.county,
+                            state_code=order.state_code,
+                            source_type=source_type,
+                            portal_url=url,
+                            portal_type=portal.get("portal_type", "generic_web"),
+                            search_config=portal.get("search_config"),
+                            is_active=True,
+                        )
+                        db.add(new_source)
+                        logger.info(f"Cached new portal: {order.county} {source_type} → {url}")
+
+            except asyncio.TimeoutError:
+                logger.warning(f"Portal discovery timed out for {order.county}, {order.state_code}")
+            except Exception as e:
+                logger.warning(f"Portal discovery failed for {order.county}, {order.state_code}: {e}")
+
     # Fetch real property data from available portals
     search_address = order.property_address
     # Use just the street portion for tax collector search
@@ -198,6 +291,8 @@ async def stage_retrieve(order_id, org_id, db):
         state_code=order.state_code,
         owner_name=order.borrower_name or "",
         search_scope=order.search_scope or "full",
+        discovered_tax_portal=discovered_tax_url,
+        discovered_clerk_portal=discovered_clerk_url,
     )
 
     # Update order with fetched data
@@ -262,13 +357,53 @@ async def stage_retrieve(order_id, org_id, db):
             )
             db.add(captcha_flag)
 
-    # If no data was retrieved at all, fail
+    # If no data was retrieved at all, flag it but continue the pipeline
+    # (generates a minimal report with N/A values instead of hard-failing)
     if not prop_data.sources_used:
-        errors = "; ".join(s.get("error", "Unknown") for s in prop_data.sources_failed)
-        raise RuntimeError(
-            f"Unable to retrieve any property data for {order.county} County, "
-            f"{order.state_code}. Errors: {errors}"
+        has_captcha = any(
+            s.get("captcha_blocked") for s in prop_data.sources_failed
         )
+        if has_captcha:
+            # CAPTCHA-blocked portals: flag for human review but don't fail
+            logger.warning(
+                f"All portals CAPTCHA-blocked for {order.county} County, "
+                f"{order.state_code}. Proceeding with minimal report."
+            )
+            flag = TAFlag(
+                org_id=org_id,
+                order_id=order_id,
+                flag_type="captcha_blocked",
+                severity="critical",
+                title=f"All Portals CAPTCHA-Blocked ({order.county} County)",
+                description=(
+                    f"Automated access to all discovered portals for "
+                    f"{order.county} County, {order.state_code} was blocked by CAPTCHA. "
+                    "The report contains only geocoded data. Manual retrieval of "
+                    "property and clerk records is required for a complete report."
+                ),
+                status="open",
+            )
+            db.add(flag)
+        else:
+            errors = "; ".join(s.get("error", "Unknown") for s in prop_data.sources_failed)
+            logger.warning(
+                f"No data retrieved for {order.county} County, {order.state_code}. "
+                f"Proceeding with minimal report. Errors: {errors}"
+            )
+            flag = TAFlag(
+                org_id=org_id,
+                order_id=order_id,
+                flag_type="missing_source",
+                severity="critical",
+                title=f"No Data Retrieved ({order.county} County)",
+                description=(
+                    f"Unable to retrieve property data for "
+                    f"{order.county} County, {order.state_code}. "
+                    f"The report contains only geocoded data. Errors: {errors}"
+                ),
+                status="open",
+            )
+            db.add(flag)
 
 
 @_register_stage("parse")
@@ -384,8 +519,14 @@ async def stage_chain(order_id, org_id, db):
     await db.execute(
         delete(TAChainLink).where(TAChainLink.order_id == order_id, TAChainLink.org_id == org_id)
     )
+    # Only delete chain-analysis flags, preserve retrieve-stage flags
+    # (captcha_blocked, missing_source) which were set during data retrieval
     await db.execute(
-        delete(TAFlag).where(TAFlag.order_id == order_id, TAFlag.org_id == org_id)
+        delete(TAFlag).where(
+            TAFlag.order_id == order_id,
+            TAFlag.org_id == org_id,
+            TAFlag.flag_type.notin_(["captcha_blocked", "missing_source"]),
+        )
     )
 
     # Build chain of title + detect anomalies in a single LLM call
@@ -1177,8 +1318,20 @@ async def _parse_json_property_data(
     The JSON contains tax, assessment, legal description, and sales history
     from real county portal scraping. We also use Gemini to enrich with
     deed/mortgage detail extraction if clerk data is available.
+
+    For discovered portals (generic_html), uses AI PropertyDataExtractorAgent
+    to extract structured data from the raw HTML.
     """
     prop_data = json.loads(raw_doc.raw_content or "{}")
+
+    # --- Handle generic HTML from discovered portals ---
+    # If sources_used contain generic_html, run AI extraction first
+    # and merge extracted data back into prop_data
+    for source in prop_data.get("sources_used", []):
+        if source.get("discovered") and source.get("generic_html"):
+            await _extract_generic_portal_data(
+                db, org_id, order_id, raw_doc, order, prop_data, source
+            )
 
     # Update order fields from fetched data
     if prop_data.get("legal_description") and not order.legal_description:
@@ -1332,6 +1485,181 @@ async def _parse_json_property_data(
             db.add(flag)
 
 
+
+async def _extract_generic_portal_data(
+    db: AsyncSession, org_id: uuid.UUID, order_id: uuid.UUID,
+    raw_doc: TARawDocument, order: TAOrder, prop_data: dict, source: dict,
+) -> None:
+    """Extract structured property data from generic portal HTML using AI.
+
+    Called when a discovered (non-pre-configured) portal returns raw HTML.
+    Uses PropertyDataExtractorAgent to parse the HTML into structured records,
+    then creates TADocuments from the extracted data.
+    """
+    from app.micro_apps.title_search.ai.property_data_extractor import PropertyDataExtractorAgent
+
+    html = source.get("generic_html", "")
+    source_type = source.get("type", "unknown")
+    source_url = source.get("url", "")
+    search_scope = order.search_scope or "full"
+
+    logger.info(
+        f"AI-extracting data from discovered {source_type} portal: {source_url} "
+        f"(HTML size: {len(html)} chars)"
+    )
+
+    try:
+        extractor = PropertyDataExtractorAgent(org_id)
+        extracted = await extractor.extract_all(
+            raw_content=html,
+            search_scope=search_scope,
+            property_address=order.property_address or "",
+        )
+    except Exception as e:
+        logger.warning(f"AI extraction from generic portal failed: {e}")
+        return
+
+    confidence = extracted.get("confidence", 0.70)
+
+    # --- Merge property info into order ---
+    pinfo = extracted.get("property_info", {})
+    if pinfo.get("owner_name") and not order.borrower_name:
+        order.borrower_name = pinfo["owner_name"]
+        prop_data["owner_name"] = pinfo["owner_name"]
+    if pinfo.get("parcel_number") and not order.parcel_number:
+        order.parcel_number = pinfo["parcel_number"]
+        prop_data["parcel_number"] = pinfo["parcel_number"]
+    if pinfo.get("legal_description") and not order.legal_description:
+        order.legal_description = pinfo["legal_description"]
+        prop_data["legal_description"] = pinfo["legal_description"]
+    if pinfo.get("subdivision"):
+        prop_data["subdivision"] = pinfo["subdivision"]
+
+    # --- Tax info → merge into prop_data so the regular tax_doc creation picks it up ---
+    ti = extracted.get("tax_info")
+    if ti and (ti.get("tax_amount") or ti.get("total_value") or ti.get("land_value")):
+        prop_data["assessed_value"] = prop_data.get("assessed_value") or ti.get("total_value", 0)
+        prop_data["land_value"] = prop_data.get("land_value") or ti.get("land_value", 0)
+        prop_data["improvement_value"] = prop_data.get("improvement_value") or ti.get("improvement_value", 0)
+        prop_data["total_value"] = prop_data.get("total_value") or ti.get("total_value", 0)
+        prop_data["tax_amount"] = prop_data.get("tax_amount") or ti.get("tax_amount", 0)
+        prop_data["tax_status"] = prop_data.get("tax_status") or ti.get("tax_status", "")
+        prop_data["homestead_exemption"] = prop_data.get("homestead_exemption") or ti.get("homestead_exemption", False)
+
+    # --- Create deed documents ---
+    for deed in extracted.get("deeds", []):
+        grantor = {"names": [deed["grantor"]]} if deed.get("grantor") else None
+        grantee = {"names": [deed["grantee"]]} if deed.get("grantee") else None
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            raw_document_id=raw_doc.id,
+            doc_type="deed",
+            recording_date=deed.get("recording_date"),
+            recording_ref=deed.get("instrument_number") or deed.get("book_page"),
+            grantor=grantor,
+            grantee=grantee,
+            consideration=deed.get("consideration"),
+            confidence=confidence,
+            needs_review=confidence < 0.70,
+            doc_metadata={
+                "book_page": deed.get("book_page"),
+                "instrument_number": deed.get("instrument_number"),
+                "deed_type_detail": deed.get("deed_type_detail"),
+                "source": f"discovered_{source_type}",
+            },
+        )
+        db.add(doc)
+
+    # --- Create mortgage documents ---
+    for mtg in extracted.get("mortgages", []):
+        grantor = {"names": [mtg["borrower"]]} if mtg.get("borrower") else None
+        grantee = {"names": [mtg["lender"]]} if mtg.get("lender") else None
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            raw_document_id=raw_doc.id,
+            doc_type="mortgage",
+            recording_date=mtg.get("recording_date"),
+            recording_ref=mtg.get("instrument_number") or mtg.get("book_page"),
+            grantor=grantor,
+            grantee=grantee,
+            consideration=mtg.get("loan_amount"),
+            confidence=confidence,
+            needs_review=confidence < 0.70,
+            doc_metadata={
+                "book_page": mtg.get("book_page"),
+                "instrument_number": mtg.get("instrument_number"),
+                "trustee": mtg.get("trustee"),
+                "maturity_date": mtg.get("maturity_date"),
+                "open_closed_end": mtg.get("open_closed_end"),
+                "min_number": mtg.get("min_number"),
+                "riders": mtg.get("riders"),
+                "associated_docs": mtg.get("associated_docs"),
+                "comments": mtg.get("comments"),
+                "source": f"discovered_{source_type}",
+            },
+        )
+        db.add(doc)
+
+    # --- Create lien documents ---
+    for lien in extracted.get("liens", []):
+        grantor = {"names": [lien["creditor"]]} if lien.get("creditor") else None
+        grantee = {"names": [lien["debtor"]]} if lien.get("debtor") else None
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            raw_document_id=raw_doc.id,
+            doc_type="lien",
+            recording_date=lien.get("recording_date"),
+            recording_ref=lien.get("instrument_number") or lien.get("book_page"),
+            grantor=grantor,
+            grantee=grantee,
+            consideration=lien.get("amount"),
+            confidence=confidence,
+            needs_review=confidence < 0.70,
+            doc_metadata={
+                "book_page": lien.get("book_page"),
+                "instrument_number": lien.get("instrument_number"),
+                "lien_type": lien.get("lien_type"),
+                "status": lien.get("status"),
+                "source": f"discovered_{source_type}",
+            },
+        )
+        db.add(doc)
+
+    # --- Create misc documents ---
+    for misc in extracted.get("misc_documents", []):
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            raw_document_id=raw_doc.id,
+            doc_type=misc.get("doc_type", "other"),
+            recording_date=misc.get("recording_date"),
+            recording_ref=misc.get("instrument_number") or misc.get("book_page"),
+            summary=misc.get("description"),
+            confidence=confidence,
+            needs_review=True,
+            doc_metadata={
+                "book_page": misc.get("book_page"),
+                "instrument_number": misc.get("instrument_number"),
+                "source": f"discovered_{source_type}",
+            },
+        )
+        db.add(doc)
+
+    n_docs = (
+        len(extracted.get("deeds", []))
+        + len(extracted.get("mortgages", []))
+        + len(extracted.get("liens", []))
+        + len(extracted.get("misc_documents", []))
+    )
+    logger.info(
+        f"AI extracted {n_docs} documents from discovered {source_type} portal "
+        f"(confidence: {confidence:.2f})"
+    )
+
+
 def _map_doc_type(raw_type: str) -> str:
     """Map clerk document type codes to TADocument doc_type values."""
     mapping = {
@@ -1469,8 +1797,13 @@ async def _replay_chain_cache(
     await db.execute(
         delete(TAChainLink).where(TAChainLink.order_id == order_id, TAChainLink.org_id == org_id)
     )
+    # Only delete chain-analysis flags, preserve retrieve-stage flags
     await db.execute(
-        delete(TAFlag).where(TAFlag.order_id == order_id, TAFlag.org_id == org_id)
+        delete(TAFlag).where(
+            TAFlag.order_id == order_id,
+            TAFlag.org_id == org_id,
+            TAFlag.flag_type.notin_(["captcha_blocked", "missing_source"]),
+        )
     )
     for cl in cached_data["chain_links"]:
         doc_id = cl.get("document_id")

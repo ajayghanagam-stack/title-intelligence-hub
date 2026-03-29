@@ -990,14 +990,19 @@ async def fetch_property_data(
     latitude: float | None = None,
     longitude: float | None = None,
     search_scope: str = "full",
+    discovered_tax_portal: str | None = None,
+    discovered_clerk_portal: str | None = None,
 ) -> PropertyData:
     """Fetch property data from all available sources for a county.
 
     Uses API-first approach: tries REST APIs before Playwright scraping.
+    Falls back to generic scraping on AI-discovered portals for nationwide coverage.
 
     Args:
         search_scope: "full" fetches tax + clerk records,
                       "current_owner" fetches tax only (skips deep clerk search).
+        discovered_tax_portal: AI-discovered property/tax portal URL (fallback).
+        discovered_clerk_portal: AI-discovered clerk/recorder portal URL (fallback).
     """
     prop = PropertyData(
         address=address,
@@ -1094,12 +1099,51 @@ async def fetch_property_data(
                         "error": str(e),
                     })
             else:
-                prop.sources_failed.append({
-                    "type": "tax_collector",
-                    "url": "",
-                    "error": f"No tax portal configured for {county}, {state_code}",
-                    "manual_retrieval": True,
-                })
+                # No pre-configured portal — try generic scraping on discovered portal
+                if discovered_tax_portal:
+                    logger.info(f"Using discovered tax portal: {discovered_tax_portal}")
+                    try:
+                        from app.micro_apps.title_search.services.generic_portal_scraper import GenericPortalScraper
+                        result = await GenericPortalScraper.scrape_property_portal(
+                            browser, discovered_tax_portal, address
+                        )
+                        if result.get("success") and result.get("html"):
+                            # Store raw HTML for AI parsing in the pipeline's parse stage
+                            prop.sources_used.append({
+                                "type": "property_appraiser",
+                                "url": discovered_tax_portal,
+                                "status": "success",
+                                "generic_html": result["html"],
+                                "discovered": True,
+                            })
+                        elif result.get("captcha_blocked"):
+                            prop.sources_failed.append({
+                                "type": "property_appraiser",
+                                "url": discovered_tax_portal,
+                                "error": result.get("error", "CAPTCHA blocked"),
+                                "captcha_blocked": True,
+                                "manual_retrieval": True,
+                            })
+                        else:
+                            prop.sources_failed.append({
+                                "type": "property_appraiser",
+                                "url": discovered_tax_portal,
+                                "error": result.get("error", "Failed to scrape portal"),
+                            })
+                    except Exception as e:
+                        logger.error(f"Generic tax portal scrape failed: {e}")
+                        prop.sources_failed.append({
+                            "type": "property_appraiser",
+                            "url": discovered_tax_portal,
+                            "error": str(e),
+                        })
+                else:
+                    prop.sources_failed.append({
+                        "type": "tax_collector",
+                        "url": "",
+                        "error": f"No tax portal configured for {county}, {state_code}",
+                        "manual_retrieval": True,
+                    })
 
             # Source 2: Clerk of Court
             # For current_owner scope, only search if we need to identify the owner
@@ -1169,12 +1213,50 @@ async def fetch_property_data(
                                 "error": str(e),
                             })
                 else:
-                    prop.sources_failed.append({
-                        "type": "clerk_of_court",
-                        "url": "",
-                        "error": f"No clerk portal configured for {county}, {state_code}",
-                        "manual_retrieval": True,
-                    })
+                    # No pre-configured clerk portal — try generic scraping
+                    if discovered_clerk_portal:
+                        logger.info(f"Using discovered clerk portal: {discovered_clerk_portal}")
+                        try:
+                            from app.micro_apps.title_search.services.generic_portal_scraper import GenericPortalScraper
+                            result = await GenericPortalScraper.scrape_clerk_portal(
+                                browser, discovered_clerk_portal, search_name
+                            )
+                            if result.get("success") and result.get("html"):
+                                prop.sources_used.append({
+                                    "type": "clerk_of_court",
+                                    "url": discovered_clerk_portal,
+                                    "status": "success",
+                                    "generic_html": result["html"],
+                                    "discovered": True,
+                                })
+                            elif result.get("captcha_blocked"):
+                                prop.sources_failed.append({
+                                    "type": "clerk_of_court",
+                                    "url": discovered_clerk_portal,
+                                    "error": result.get("error", "CAPTCHA blocked"),
+                                    "captcha_blocked": True,
+                                    "manual_retrieval": True,
+                                })
+                            else:
+                                prop.sources_failed.append({
+                                    "type": "clerk_of_court",
+                                    "url": discovered_clerk_portal,
+                                    "error": result.get("error", "Failed to scrape clerk portal"),
+                                })
+                        except Exception as e:
+                            logger.error(f"Generic clerk portal scrape failed: {e}")
+                            prop.sources_failed.append({
+                                "type": "clerk_of_court",
+                                "url": discovered_clerk_portal,
+                                "error": str(e),
+                            })
+                    else:
+                        prop.sources_failed.append({
+                            "type": "clerk_of_court",
+                            "url": "",
+                            "error": f"No clerk portal configured for {county}, {state_code}",
+                            "manual_retrieval": True,
+                        })
             elif skip_clerk:
                 logger.info(
                     "Skipping deep clerk search for current_owner scope "

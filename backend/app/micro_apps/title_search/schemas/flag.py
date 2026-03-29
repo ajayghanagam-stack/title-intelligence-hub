@@ -4,10 +4,11 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-# Closed-set types matching flag_rules.py
+# Closed-set types matching flag_rules.py + pipeline flags
 FlagType = Literal[
     "chain_gap", "name_mismatch", "unreleased_mortgage", "unsatisfied_lien",
     "judgment_match", "easement_conflict", "missing_source", "low_confidence",
+    "captcha_blocked",  # Added for CAPTCHA-blocked portals in nationwide pipeline
 ]
 FlagSeverity = Literal["critical", "high", "medium", "low"]
 FlagStatus = Literal["open", "resolved", "dismissed"]
