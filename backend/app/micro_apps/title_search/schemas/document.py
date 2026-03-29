@@ -7,7 +7,7 @@ from pydantic import BaseModel
 # Closed-set types for document classification
 DocType = Literal[
     "deed", "mortgage", "lien", "judgment", "easement",
-    "hoa", "satisfaction", "release", "assignment", "other",
+    "hoa", "satisfaction", "release", "assignment", "plat", "other",
 ]
 ContentFormat = Literal["text", "pdf", "image", "html"]
 
@@ -21,6 +21,7 @@ DOC_TYPE_LABELS: dict[str, str] = {
     "satisfaction": "Satisfaction",
     "release": "Release",
     "assignment": "Assignment",
+    "plat": "Plat Book",
     "other": "Other",
 }
 

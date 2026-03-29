@@ -38,6 +38,7 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
   satisfaction: "Satisfaction",
   release: "Release",
   assignment: "Assignment",
+  plat: "Plat Book",
   other: "Other",
 };
 

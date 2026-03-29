@@ -436,14 +436,31 @@ async def generate_package_pdf(
                     doc_type = _deed_type_label(doc)
                 consideration = _fmt_money(doc.consideration) if doc else "N/A"
                 _split_row(pdf, "Deed Type:", doc_type, "Consideration Amount:", consideration, w)
-                _label_value_row(pdf, "Grantor Name:", _party_names(link.from_party) if isinstance(link.from_party, dict) else (link.from_party or "N/A"), w)
-                _label_value_row(pdf, "Grantee Name:", _party_names(link.to_party) if isinstance(link.to_party, dict) else (link.to_party or "N/A"), w)
+
+                # Grantor: chain link from_party → fall back to document grantor
+                from_names = _party_names(link.from_party) if isinstance(link.from_party, dict) else (link.from_party or "")
+                if (not from_names or from_names == "N/A") and doc and doc.grantor:
+                    from_names = _party_names(doc.grantor)
+                _label_value_row(pdf, "Grantor Name:", from_names or "N/A", w)
+
+                # Grantee: chain link to_party → fall back to document grantee
+                to_names = _party_names(link.to_party) if isinstance(link.to_party, dict) else (link.to_party or "")
+                if (not to_names or to_names == "N/A") and doc and doc.grantee:
+                    to_names = _party_names(doc.grantee)
+                _label_value_row(pdf, "Grantee Name:", to_names or "N/A", w)
+
                 _label_value_row(pdf, "Fee Simple/leasehold:", "Fee Simple", w)
                 rec_date = link.effective_date or (doc.recording_date if doc else None) or "N/A"
                 _split_row(pdf, "Dated Date:", rec_date, "Recorded Date:", rec_date, w)
-                chain_book_page = _doc_meta(doc, "book_page") if doc else "N/A"
-                chain_instrument = _doc_meta(doc, "instrument_number", (doc.recording_ref if doc else None) or "N/A") if doc else "N/A"
+
+                # Book/Page and Instrument: doc_metadata → recording_ref
+                chain_book_page = "N/A"
+                chain_instrument = "N/A"
+                if doc:
+                    chain_book_page = _doc_meta(doc, "book_page", doc.recording_ref or "N/A")
+                    chain_instrument = _doc_meta(doc, "instrument_number", doc.recording_ref or "N/A")
                 _split_row(pdf, " Book/Page No:", chain_book_page, "Instrument No:", chain_instrument, w)
+
                 comments = ""
                 if link.is_gap:
                     comments = f"GAP: {link.gap_description or 'Gap detected in chain'}"
@@ -479,7 +496,18 @@ async def generate_package_pdf(
             _label_value_row(pdf, "Comments:", comments, w)
             pdf.ln(2)
     else:
-        _text_block_row(pdf, "N/A", w)
+        has_captcha = any(
+            sf.get("captcha_blocked") for sf in (pkg.property_summary or {}).get("sources_failed", [])
+            if isinstance(sf, dict)
+        )
+        if has_captcha:
+            _text_block_row(
+                pdf,
+                "Mortgage records not available - clerk portal access was blocked. "
+                "Manual retrieval required.", w,
+            )
+        else:
+            _text_block_row(pdf, "N/A", w)
     pdf.ln(3)
 
     # ---- 6. JUDGMENT & LIEN'S INFORMATION ----
@@ -550,9 +578,28 @@ async def generate_package_pdf(
 
     # ---- 9. MISCELLANEOUS DOCUMENTS ----
     _section_header(pdf, "MISCELLANEOUS DOCUMENTS", w)
-    if misc_docs:
-        for i, mdoc in enumerate(misc_docs, 1):
-            desc = mdoc.summary or f"{_fmt_doc_type(mdoc.doc_type)}: {mdoc.recording_ref or 'N/A'}"
+    # Include plat docs in misc section as "Plat Map recorded in B/P X/Y"
+    plat_docs = [d for d in documents if d.doc_type == "plat" or (
+        d.doc_metadata and isinstance(d.doc_metadata, dict)
+        and d.doc_metadata.get("deed_type_detail", "").startswith("PB")
+    )]
+    all_misc = list(misc_docs)
+    # Add plat docs that aren't already in misc
+    misc_ids = {str(d.id) for d in all_misc}
+    for pd in plat_docs:
+        if str(pd.id) not in misc_ids:
+            all_misc.append(pd)
+
+    if all_misc:
+        for i, mdoc in enumerate(all_misc, 1):
+            if mdoc.doc_type == "plat" or (
+                mdoc.doc_metadata and isinstance(mdoc.doc_metadata, dict)
+                and mdoc.doc_metadata.get("deed_type_detail", "").startswith("PB")
+            ):
+                bp = _doc_meta(mdoc, "book_page", mdoc.recording_ref or "N/A")
+                desc = f"Plat Map is Recorded in B/P {bp}"
+            else:
+                desc = mdoc.summary or f"{_fmt_doc_type(mdoc.doc_type)}: {mdoc.recording_ref or 'N/A'}"
             _text_block_row(pdf, f"{i}. {desc}", w)
     else:
         _text_block_row(pdf, "N/A", w)
@@ -566,13 +613,29 @@ async def generate_package_pdf(
     # ---- 11. NAMES SEARCH ----
     _section_header(pdf, "NAMES SEARCH", w)
     all_names: set[str] = set()
+    # Collect from documents
     for doc in documents:
         if doc.grantor:
             for name in doc.grantor.get("names", []):
-                all_names.add(name)
+                if name:
+                    all_names.add(name)
         if doc.grantee:
             for name in doc.grantee.get("names", []):
-                all_names.add(name)
+                if name:
+                    all_names.add(name)
+    # Collect from chain links
+    for link in chain_links:
+        if isinstance(link.from_party, dict):
+            for name in link.from_party.get("names", []):
+                if name:
+                    all_names.add(name)
+        if isinstance(link.to_party, dict):
+            for name in link.to_party.get("names", []):
+                if name:
+                    all_names.add(name)
+    # Add subdivision name if meaningful
+    if subdivision and subdivision != "N/A":
+        all_names.add(subdivision)
     if all_names:
         names_text = "\n".join(sorted(all_names))
         _text_block_row(pdf, names_text, w)

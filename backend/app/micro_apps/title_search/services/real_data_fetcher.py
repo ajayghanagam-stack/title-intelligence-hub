@@ -88,8 +88,10 @@ class PropertyData:
     assessed_value: float = 0.0
     land_value: float = 0.0
     improvement_value: float = 0.0
+    total_value: float = 0.0
     tax_amount: float = 0.0
     tax_year: str = ""
+    assessment_year: str = ""
     tax_status: str = ""
     homestead_exemption: bool = False
     payment_history: list = field(default_factory=list)
@@ -624,6 +626,24 @@ def _parse_coj_detail(text: str) -> dict:
         except ValueError:
             pass
 
+    # Tax year — from "2025 Notice of Proposed Property Taxes" or "2025 Certified"
+    year_match = re.search(r"(\d{4})\s+(?:Notice of Proposed|Certified|TRIM)", text)
+    if year_match:
+        data["tax_year"] = year_match.group(1)
+        data["assessment_year"] = year_match.group(1)
+
+    # Total (Just/Market) Value
+    just_match = re.search(r"Just \(Market\) Value\s+\$([\d,]+(?:\.\d+)?)", text)
+    if just_match:
+        try:
+            data["total_value"] = float(just_match.group(1).replace(",", ""))
+        except ValueError:
+            pass
+
+    # Tax status — check TRIM totals row for "Last Year" paid info
+    if re.search(r"Last Year\s+\$[\d,]+", text):
+        data["tax_status"] = "Paid"
+
     # Homestead
     data["homestead_exemption"] = "Homestead (HX)" in text
 
@@ -911,6 +931,10 @@ async def fetch_property_data(
                         prop.legal_description = pa_data.get("legal_description", "")
                         prop.subdivision = pa_data.get("subdivision", "")
                         prop.sales_history = pa_data.get("sales_history", [])
+                        prop.tax_year = pa_data.get("tax_year", "")
+                        prop.tax_status = pa_data.get("tax_status", "")
+                        prop.total_value = pa_data.get("total_value", 0.0)
+                        prop.assessment_year = pa_data.get("assessment_year", "")
                         prop.sources_used.append({
                             "type": "property_appraiser",
                             "url": "https://paopropertysearch.coj.net",

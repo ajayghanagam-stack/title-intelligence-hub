@@ -1206,8 +1206,10 @@ async def _parse_json_property_data(
                     "land_value": prop_data.get("land_value"),
                     "improvement_value": prop_data.get("improvement_value"),
                     "assessed_value": prop_data.get("assessed_value"),
+                    "total_value": prop_data.get("total_value"),
                     "tax_amount": prop_data.get("tax_amount"),
                     "tax_year": prop_data.get("tax_year"),
+                    "assessment_year": prop_data.get("assessment_year"),
                     "tax_status": prop_data.get("tax_status"),
                     "homestead_exemption": prop_data.get("homestead_exemption"),
                     "payment_history": prop_data.get("payment_history", []),
@@ -1226,16 +1228,28 @@ async def _parse_json_property_data(
         grantee = {"names": [sale["grantee"]]} if sale.get("grantee") else None
         if i == 0 and owner_name and not grantee:
             grantee = {"names": [owner_name]}
-        # For earlier sales, the grantor of sale N is the grantee of sale N+1
+        # For earlier sales, the grantee of sale N is the grantor of sale N-1 (chain logic)
         if i > 0 and not grantee:
             prev_grantor = sales[i - 1].get("grantor")
             if prev_grantor:
                 grantee = {"names": [prev_grantor]}
+
+        # Determine doc_type from deed_type code
+        raw_deed_type = sale.get("deed_type", "")
+        if raw_deed_type.startswith("PB"):
+            sale_doc_type = "plat"
+        elif raw_deed_type.startswith("QC"):
+            sale_doc_type = "deed"
+        elif raw_deed_type.startswith("MTG") or raw_deed_type.startswith("M "):
+            sale_doc_type = "mortgage"
+        else:
+            sale_doc_type = "deed"
+
         doc = TADocument(
             org_id=org_id,
             order_id=order_id,
             raw_document_id=raw_doc.id,
-            doc_type=sale.get("doc_type", "deed"),
+            doc_type=sale_doc_type,
             recording_date=sale.get("recording_date") or sale.get("sale_date"),
             recording_ref=sale.get("instrument_number") or sale.get("book_page"),
             grantor=grantor,
