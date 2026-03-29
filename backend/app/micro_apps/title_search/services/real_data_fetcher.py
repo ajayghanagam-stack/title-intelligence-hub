@@ -399,6 +399,230 @@ def _parse_clerk_results(text: str) -> list[dict]:
     return documents
 
 
+# ─── Property Appraiser Scraper (COJ / paopropertysearch.coj.net) ──────
+
+# Street suffixes used by COJ search form
+_STREET_SUFFIXES = {
+    "pkwy": "Parkway", "dr": "Drive", "st": "Street", "ave": "Avenue",
+    "blvd": "Boulevard", "ln": "Lane", "rd": "Road", "ct": "Court",
+    "cir": "Circle", "pl": "Place", "way": "Way", "ter": "Terrace",
+    "trl": "Trail", "loop": "Loop", "run": "Run", "cv": "Cove",
+    "pt": "Point", "hwy": "Highway", "crk": "Creek", "xing": "Crossing",
+    "pass": "Pass", "walk": "Walk",
+}
+
+
+def _parse_street_parts(address: str) -> tuple[str, str, str]:
+    """Split '4471 Sherman Hills Pkwy' into (number, name, suffix_label)."""
+    parts = address.strip().split()
+    if not parts:
+        return "", "", ""
+
+    # First token is the street number (if numeric)
+    number = ""
+    rest = parts
+    if parts[0].isdigit():
+        number = parts[0]
+        rest = parts[1:]
+
+    if not rest:
+        return number, "", ""
+
+    # Last token might be a street suffix
+    last = rest[-1].lower().rstrip(".")
+    suffix_label = _STREET_SUFFIXES.get(last, "")
+    if suffix_label:
+        name = " ".join(rest[:-1])
+    else:
+        name = " ".join(rest)
+        suffix_label = ""
+
+    return number, name, suffix_label
+
+
+class PropertyAppraiserScraper:
+    """Scrapes the Jacksonville/Duval Property Appraiser (paopropertysearch.coj.net)."""
+
+    @staticmethod
+    async def search_and_extract(browser: Browser, address: str) -> dict:
+        """Search property appraiser and extract full property detail."""
+        page = await browser.new_page()
+        result = {
+            "success": False,
+            "parcel_number": "",
+            "owner": "",
+            "legal_description": "",
+            "subdivision": "",
+            "assessed_value": 0.0,
+            "land_value": 0.0,
+            "improvement_value": 0.0,
+            "tax_amount": 0.0,
+            "homestead_exemption": False,
+            "sales_history": [],
+        }
+
+        try:
+            street_num, street_name, suffix_label = _parse_street_parts(address)
+
+            await page.goto(
+                "https://paopropertysearch.coj.net/Basic/Search.aspx",
+                wait_until="domcontentloaded", timeout=30000,
+            )
+            await asyncio.sleep(2)
+
+            # Fill search form
+            if street_num:
+                await page.fill("#ctl00_cphBody_tbStreetNumber", street_num)
+            if street_name:
+                await page.fill("#ctl00_cphBody_tbStreetName", street_name)
+            if suffix_label:
+                try:
+                    await page.select_option(
+                        "#ctl00_cphBody_ddStreetSuffix", label=suffix_label,
+                    )
+                except Exception:
+                    pass  # suffix not in dropdown — search anyway
+
+            await page.click("#ctl00_cphBody_bSearch")
+            await page.wait_for_load_state("domcontentloaded")
+            await asyncio.sleep(3)
+
+            # Find detail links
+            links = await page.evaluate("""() => {
+                return Array.from(document.querySelectorAll('a'))
+                    .filter(a => a.href.includes('Detail'))
+                    .map(a => ({text: a.textContent.trim(), href: a.href}))
+            }""")
+
+            if not links:
+                result["error"] = "No property found"
+                return result
+
+            # Navigate to detail page
+            await page.goto(links[0]["href"], wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(3)
+
+            body = await page.inner_text("body")
+            result.update(_parse_coj_detail(body))
+            result["success"] = True
+
+        except Exception as e:
+            logger.error(f"Property appraiser scraping failed: {e}")
+            result["error"] = str(e)
+        finally:
+            await page.close()
+
+        return result
+
+
+def _parse_coj_detail(text: str) -> dict:
+    """Parse the paopropertysearch.coj.net detail page text."""
+    data: dict = {}
+
+    # Owner — first line after header is typically "OWNER NAME\nADDRESS"
+    lines = text.split("\n")
+
+    # RE #
+    for line in lines:
+        m = re.match(r"RE\s*#\s+([\d-]+)", line.strip())
+        if m:
+            data["parcel_number"] = m.group(1)
+            break
+
+    # Owner — appears near the top, before the address
+    for i, line in enumerate(lines):
+        if "Primary Site Address" in line and i > 0:
+            # Owner is typically 1-2 lines above this
+            for j in range(max(0, i - 5), i):
+                candidate = lines[j].strip()
+                if candidate and not any(
+                    kw in candidate for kw in
+                    ("Basic Search", "Tip:", "Tangible", "Advanced", "Collapse",
+                     "New Search", "Refine")
+                ):
+                    data["owner"] = candidate
+                    break
+            break
+
+    # Subdivision
+    for line in lines:
+        m = re.match(r"Subdivision\s+\d+\s+(.*)", line.strip())
+        if m:
+            data["subdivision"] = m.group(1).strip()
+            break
+
+    # Values from Value Summary
+    value_patterns = {
+        "improvement_value": r"Total Building Value\s+\$([\d,]+(?:\.\d+)?)",
+        "land_value": r"Land Value \(Market\)\s+\$([\d,]+(?:\.\d+)?)",
+        "assessed_value": r"Assessed Value\s+\$([\d,]+(?:\.\d+)?)",
+    }
+    for key, pattern in value_patterns.items():
+        m = re.search(pattern, text)
+        if m:
+            try:
+                data[key] = float(m.group(1).replace(",", ""))
+            except ValueError:
+                pass
+
+    # Tax amount — from TRIM totals
+    tax_match = re.search(r"Totals\s+\$([\d,]+\.\d+)", text)
+    if tax_match:
+        try:
+            data["tax_amount"] = float(tax_match.group(1).replace(",", ""))
+        except ValueError:
+            pass
+
+    # Homestead
+    data["homestead_exemption"] = "Homestead (HX)" in text
+
+    # Legal description
+    legal_lines = []
+    in_legal = False
+    for line in lines:
+        stripped = line.strip()
+        if "LN" in stripped and "Legal Description" in stripped:
+            in_legal = True
+            continue
+        if in_legal:
+            m = re.match(r"^\d+\s+(.+)", stripped)
+            if m:
+                legal_lines.append(m.group(1).strip())
+            elif stripped and not stripped[0].isdigit() and legal_lines:
+                break
+    if legal_lines:
+        data["legal_description"] = " ".join(legal_lines)
+
+    # Sales history
+    sales = []
+    in_sales = False
+    for line in lines:
+        stripped = line.strip()
+        if "Sales History" in stripped:
+            in_sales = True
+            continue
+        if in_sales:
+            # Skip header row
+            if stripped.startswith("Book/Page"):
+                continue
+            # Pattern: "17887-01785	2/10/2017	$259,000.00	SW - Special Warranty	Qualified	Improved"
+            parts = stripped.split("\t")
+            if len(parts) >= 4:
+                m_price = re.search(r"\$([\d,]+(?:\.\d+)?)", parts[2] if len(parts) > 2 else "")
+                sale = {
+                    "book_page": parts[0].strip(),
+                    "sale_date": parts[1].strip() if len(parts) > 1 else "",
+                    "sale_price": float(m_price.group(1).replace(",", "")) if m_price else 0,
+                    "deed_type": parts[3].strip() if len(parts) > 3 else "",
+                }
+                sales.append(sale)
+            elif stripped.startswith("Extra Features") or stripped.startswith("Land & Legal"):
+                break
+    data["sales_history"] = sales
+
+    return data
+
+
 # ─── Hendry County Clerk Scraper (myfloridacounty.com) ─────────────────
 
 class FloridaClerkScraper:
@@ -513,7 +737,6 @@ PHENIX_TAX_PORTALS = {
     ("Pasco", "FL"): "https://pasco.floridatax.us",
     ("Manatee", "FL"): "https://manatee.floridatax.us",
     ("Sarasota", "FL"): "https://sarasota.floridatax.us",
-    ("Duval", "FL"): "https://duval.floridatax.us",
     ("Alachua", "FL"): "https://alachua.floridatax.us",
     ("Bay", "FL"): "https://bay.floridatax.us",
     ("Broward", "FL"): "https://broward.floridatax.us",
@@ -532,6 +755,12 @@ PHENIX_TAX_PORTALS = {
     ("St. Johns", "FL"): "https://stjohns.floridatax.us",
     ("Sumter", "FL"): "https://sumter.floridatax.us",
     ("Walton", "FL"): "https://walton.floridatax.us",
+}
+
+
+# Known Property Appraiser portals (non-Phenix, custom scrapers)
+PROPERTY_APPRAISER_PORTALS = {
+    ("Duval", "FL"): "coj",  # paopropertysearch.coj.net
 }
 
 
@@ -557,8 +786,11 @@ async def fetch_property_data(
         browser = await playwright.chromium.launch(headless=True)
 
         try:
-            # Source 1: Tax Collector (Phenix.net) - highest success rate
+            # Source 1: Tax/Property data
+            # Try Phenix.net tax collector first, then property appraiser portals
             tax_url = PHENIX_TAX_PORTALS.get((county, state_code))
+            appraiser_type = PROPERTY_APPRAISER_PORTALS.get((county, state_code))
+
             if tax_url:
                 logger.info(f"Fetching tax data from {tax_url}")
                 try:
@@ -597,6 +829,41 @@ async def fetch_property_data(
                     prop.sources_failed.append({
                         "type": "tax_collector",
                         "url": tax_url,
+                        "error": str(e),
+                    })
+            elif appraiser_type == "coj":
+                logger.info("Fetching property data from Duval County Property Appraiser")
+                try:
+                    pa_data = await PropertyAppraiserScraper.search_and_extract(
+                        browser, address
+                    )
+                    if pa_data.get("success"):
+                        prop.parcel_number = pa_data.get("parcel_number", "")
+                        prop.owner_name = pa_data.get("owner", "") or prop.owner_name
+                        prop.assessed_value = pa_data.get("assessed_value", 0.0)
+                        prop.land_value = pa_data.get("land_value", 0.0)
+                        prop.improvement_value = pa_data.get("improvement_value", 0.0)
+                        prop.tax_amount = pa_data.get("tax_amount", 0.0)
+                        prop.homestead_exemption = pa_data.get("homestead_exemption", False)
+                        prop.legal_description = pa_data.get("legal_description", "")
+                        prop.subdivision = pa_data.get("subdivision", "")
+                        prop.sales_history = pa_data.get("sales_history", [])
+                        prop.sources_used.append({
+                            "type": "property_appraiser",
+                            "url": "https://paopropertysearch.coj.net",
+                            "status": "success",
+                        })
+                    else:
+                        prop.sources_failed.append({
+                            "type": "property_appraiser",
+                            "url": "https://paopropertysearch.coj.net",
+                            "error": pa_data.get("error", "Unknown"),
+                        })
+                except Exception as e:
+                    logger.error(f"Property appraiser fetch failed: {e}")
+                    prop.sources_failed.append({
+                        "type": "property_appraiser",
+                        "url": "https://paopropertysearch.coj.net",
                         "error": str(e),
                     })
             else:

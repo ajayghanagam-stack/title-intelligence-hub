@@ -69,7 +69,7 @@ export function OrderList({
         const error = errorMsg[order.id];
 
         return (
-          <div key={order.id}>
+          <div key={order.id} data-testid={`order-row-${order.id}`}>
             <div
               onClick={() => {
                 if (isConfirming || isDeleting) return;

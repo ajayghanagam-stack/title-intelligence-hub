@@ -59,7 +59,7 @@ export default function NewOrderPage() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl space-y-8">
+    <div className="mx-auto max-w-2xl space-y-8" data-testid="new-order-page">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Create New Search Order</h1>
         <p className="text-sm text-muted-foreground mt-1">
@@ -221,6 +221,7 @@ export default function NewOrderPage() {
           onClick={handleCreate}
           disabled={!form.property_address || !form.county || !form.state_code || creating}
           className="w-full btn-cta gap-2 py-3"
+          data-testid="create-order-button"
         >
           {creating ? "Creating order..." : (
             <>

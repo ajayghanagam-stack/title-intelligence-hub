@@ -35,6 +35,7 @@ export function PipelineProgress({
       role="status"
       aria-live="polite"
       aria-label={statusLabel}
+      data-testid="pipeline-progress"
     >
       {/* Header + progress bar */}
       <div className="space-y-3">

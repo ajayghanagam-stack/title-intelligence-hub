@@ -24,7 +24,7 @@ export default function TitleSearchPage() {
   }, [currentOrgId, statusFilter]);
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8" data-testid="title-search-page">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500/20 to-cyan-500/20 ring-1 ring-blue-500/10">
@@ -39,24 +39,32 @@ export default function TitleSearchPage() {
             </p>
           </div>
         </div>
-        <Link href="/apps/title-search/orders/new" className="btn-cta gap-2">
+        <Link href="/apps/title-search/orders/new" className="btn-cta gap-2" data-testid="new-order-button">
           <Plus className="h-4 w-4" />
           New Order
         </Link>
       </div>
 
-      <div className="flex gap-2">
-        {["", "pending", "processing", "completed", "failed"].map((s) => (
+      <div className="flex gap-2" data-testid="status-filters">
+        {[
+          { value: "", label: "All" },
+          { value: "pending", label: "Pending" },
+          { value: "processing", label: "Processing" },
+          { value: "review_required", label: "Review Required" },
+          { value: "completed", label: "Completed" },
+          { value: "failed", label: "Failed" },
+        ].map((s) => (
           <button
-            key={s}
-            onClick={() => setStatusFilter(s)}
+            key={s.value}
+            onClick={() => setStatusFilter(s.value)}
             className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-              statusFilter === s
+              statusFilter === s.value
                 ? "bg-primary text-primary-foreground"
                 : "bg-muted text-muted-foreground hover:bg-muted/80"
             }`}
+            data-testid={`filter-${s.value || "all"}`}
           >
-            {s || "All"}
+            {s.label}
           </button>
         ))}
       </div>

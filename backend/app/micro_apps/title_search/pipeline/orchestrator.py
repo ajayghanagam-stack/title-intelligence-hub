@@ -1169,8 +1169,6 @@ async def _parse_json_property_data(
         order.borrower_name = prop_data["owner_name"]
     if prop_data.get("parcel_number") and not order.parcel_number:
         order.parcel_number = prop_data["parcel_number"]
-    if prop_data.get("subdivision") and not order.subdivision:
-        order.subdivision = prop_data["subdivision"]
 
     confidence = 0.85  # Real portal data is high confidence
 
@@ -1195,6 +1193,7 @@ async def _parse_json_property_data(
                     "tax_status": prop_data.get("tax_status"),
                     "homestead_exemption": prop_data.get("homestead_exemption"),
                     "payment_history": prop_data.get("payment_history", []),
+                    "subdivision": prop_data.get("subdivision"),
                 }
             },
         )
