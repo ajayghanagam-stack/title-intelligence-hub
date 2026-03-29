@@ -1,81 +1,65 @@
 # Title Intelligence Hub - PRD
 
 ## Original Problem Statement
-Deploy the existing Title Intelligence Hub application to AWS for production use, add new features, fix bugs, improve UI/UX, and integrate AI/LLM capabilities.
-
-## Application Overview
-Title Intelligence Hub is a multi-tenant SaaS platform for AI-powered title document analysis with two main micro apps:
-1. **Title Intelligence** - Processes title commitment PDFs through AI pipeline
-2. **Title Search & Abstracting** - Automated county record searches and chain-of-title construction
+Build a multi-tenant SaaS platform with two micro apps:
+1. **Title Intelligence** — AI-powered title commitment analysis from uploaded PDFs
+2. **Title Search & Abstracting** — Automated property record retrieval from county portals, AI parsing, chain-of-title construction, and report generation
 
 ## Tech Stack
 - **Backend**: FastAPI + SQLAlchemy (async) + SQLite (dev) / PostgreSQL (prod)
 - **Frontend**: Next.js 14 + TypeScript + Tailwind CSS + shadcn/ui
-- **AI**: Gemini via litellm (configurable)
-- **Auth**: JWT-based local authentication
-- **Cloud**: AWS (ECS EC2, ALB, RDS PostgreSQL, S3, Secrets Manager, ECR)
-
-## User Personas
-1. **Platform Admin** - Creates customer accounts, manages micro apps
-2. **Processor** - Uploads title commitments, monitors processing
-3. **Underwriter** - Reviews risk flags, makes decisions
-4. **Attorney/Lender/Buyer** - Receives reports
-
-## Core Requirements (Static)
-- Multi-tenant architecture with org-based purchasing
-- JWT authentication with role-based access control
-- PDF upload and AI processing pipeline
-- Risk flag detection and review workflow
-- Report generation (PDF/JSON)
-
-## Production AWS Deployment
-- **ALB URL**: http://title-intelligence-alb-1451612729.us-east-1.elb.amazonaws.com
-- **AWS Region**: us-east-1
-- **EC2 Instance**: c6i.2xlarge (i-0ad64a5caf555cb58)
-- **ECS Cluster**: title-intelligence-cluster
-- **ECS Service**: title-intelligence-service (EC2 launch type)
-- **RDS**: PostgreSQL (title-intelligence-db)
-- **S3**: title-intelligence-storage-628913890897
-- **ECR**: title-intelligence/backend, title-intelligence/frontend
+- **AI**: Gemini via litellm
+- **Cloud**: AWS (ECS, ALB, RDS, S3, ECR)
+- **Scraping**: Playwright (county portal automation)
 
 ## What's Been Implemented
-- [2026-03-28] Full AWS production deployment completed
-  - Fixed Docker architecture mismatch (ARM -> linux/amd64) in all Dockerfiles
-  - Enabled ECS Exec with SSM permissions on task role
-  - Ran database migrations and seeded RDS PostgreSQL
-  - Created both admin accounts (Logikality platform admin + Society Title customer)
-  - Reduced ALB target group draining timeout from 300s to 30s
-  - Configured deployment config: minimumHealthyPercent=0 for single-instance rolling updates
-  - Verified: Login, dashboard, and API health all working on production
 
-- [Previous sessions] Local environment features
-  - Configured SQLite database for preview environment
-  - Google API key for Gemini extraction pipeline
-  - Fixed missing fontTools dependency for PDF export
-  - Fixed frontend filter state (UI flickering on Readiness Dashboard)
-  - On-demand thumbnail generation and PDF memory caching
-  - Replaced filename with Underwriter/Property Address in sidebar
-  - Auto-refresh sidebar using Custom Events on pipeline completion
-  - Reorganized UI logos (Society Title SVG)
-  - Pagination on Current Analysis list
+### Title Intelligence (COMPLETE)
+- PDF upload and AI processing pipeline
+- Document viewer with on-demand thumbnails
+- Risk flag detection and review
+- Readiness dashboard
+- Report generation
+
+### Title Search & Abstracting (IN PROGRESS)
+- [2026-03-29] Real county portal integration built:
+  - US Census Geocoder API (address → county + FIPS code)
+  - Hendry County FL tax collector (Phenix.net) — real Playwright scraping
+  - Florida clerk portal detection (CAPTCHA-blocked portals flagged for manual retrieval)
+  - Acclaim/OnCore clerk scrapers (Duval County etc.)
+- [2026-03-29] Pipeline working end-to-end with real data:
+  - order → geocode → retrieve (real portal data) → parse → chain (AI) → package → complete
+  - Tested with 870 Friendship Cir, Labelle, FL 33935
+  - Returns: owner (WJHFL LLC), parcel (2084329-01000000440), legal description, tax data, chain analysis
+- [2026-03-29] Fixed UUID handling in chain stage, made county/state optional (geocoded automatically)
+
+### AWS Deployment (COMPLETE - currently shut down to save costs)
+- ALB: title-intelligence-alb-1451612729.us-east-1.elb.amazonaws.com
+- Shutdown/Startup scripts at /app/scripts/
 
 ## Prioritized Backlog
 
-### P0 - Critical
-- None currently (production deployment completed)
+### P0 - Critical (Title Search)
+- PDF report generation matching sample format (Logikality branding)
+- UI redesign for Title Search pages (order creation, pipeline progress, report preview)
+- Support more tax collector portals (currently Hendry FL only)
 
 ### P1 - High Priority
-- Add SSL/HTTPS via ACM certificate + ALB HTTPS listener
-- Set up custom domain name
-- Test full document processing pipeline on production (S3 storage)
+- Add more county portal adapters (expand portal registry)
+- Support Current Owner Search scope (vs Full Search)
+- Manual retrieval workflow for CAPTCHA-blocked portals
+- SSL/HTTPS + custom domain for AWS
 
-### P2 - Medium Priority
-- UI/UX improvements (as requested by user)
-- Additional features (to be specified)
-- CloudWatch monitoring and alarms setup
-- Auto-scaling policy configuration
+### P2 - Medium
+- Admin UI for managing county portal configurations
+- Batch order processing
+- Export functionality
+- CloudWatch monitoring
 
-## Next Tasks
-1. User to test the production application at the ALB URL
-2. Set up SSL/HTTPS with a custom domain (optional)
-3. Test document upload and AI processing pipeline on production
+## Architecture Notes
+- County portal integration uses API-first approach (REST APIs when available)
+- Falls back to Playwright scraping for portals without APIs
+- CAPTCHA-blocked portals flagged as "manual_retrieval_needed" with TAFlag
+- County registry expandable: add portal URL + platform type per county
+- Phenix.net adapter covers many Florida tax collectors
+- Acclaim/OnCore adapter covers many US clerk portals

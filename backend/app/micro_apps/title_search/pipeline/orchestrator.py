@@ -117,165 +117,139 @@ def _register_stage(name):
 
 @_register_stage("order")
 async def stage_order(order_id, org_id, db):
-    """Validate order and resolve sources."""
+    """Validate order and geocode address to identify county."""
+    from app.micro_apps.title_search.services.geocoding import geocode_address
+
     order = (await db.execute(
         select(TAOrder).where(TAOrder.id == order_id, TAOrder.org_id == org_id)
     )).scalar_one()
 
-    await resolve_sources_for_order(db, org_id, order_id, order.county, order.state_code)
+    # Build address for geocoding
+    address_parts = [order.property_address]
+    if order.city:
+        address_parts.append(order.city)
+    if order.state_code:
+        address_parts.append(order.state_code)
+    if order.zip_code:
+        address_parts.append(order.zip_code)
+    full_address = ", ".join(address_parts)
+
+    # Geocode to fill county if missing
+    if not order.county:
+        geo = await geocode_address(full_address)
+        if geo:
+            order.county = geo["county"]
+            if not order.state_code:
+                order.state_code = geo["state_code"]
+            logger.info(f"Geocoded address → {order.county} County, {order.state_code}")
+        else:
+            logger.warning(f"Geocoding failed for: {full_address}")
+
+    order.status = "processing"
 
 
 @_register_stage("retrieve")
 async def stage_retrieve(order_id, org_id, db):
-    """Fetch property data via race-based parallel portal fetching.
+    """Fetch property data from real county portals.
 
-    Fires all registered portals AND AI discovery concurrently.
-    First successful fetch wins; all other tasks are cancelled immediately.
+    Uses API-first approach (Census geocoder, ArcGIS) with
+    Playwright scraping fallback for tax collectors and clerk portals.
+    CAPTCHA-blocked portals are flagged for manual retrieval.
     """
-    from app.micro_apps.title_search.services.county_data_fetcher import CountyDataFetcher
-
-    assignments = (await db.execute(
-        select(TASourceAssignment).where(
-            TASourceAssignment.order_id == order_id,
-            TASourceAssignment.org_id == org_id,
-        )
-    )).scalars().all()
+    from app.micro_apps.title_search.services.geocoding import geocode_address
+    from app.micro_apps.title_search.services.real_data_fetcher import fetch_property_data
 
     order = (await db.execute(
         select(TAOrder).where(TAOrder.id == order_id, TAOrder.org_id == org_id)
     )).scalar_one()
 
-    # Batch-load all county sources in one query
-    portal_ids = [
-        a.portal_config_id for a in assignments
-        if a.portal_config_id and a.status == "pending"
-        and not (a.availability == "non_digital")
-    ]
-    county_sources_map: dict = {}
-    if portal_ids:
-        cs_rows = (await db.execute(
-            select(TACountySource).where(TACountySource.id.in_(portal_ids))
-        )).scalars().all()
-        county_sources_map = {cs.id: cs for cs in cs_rows}
+    # Build full address for geocoding
+    address_parts = [order.property_address]
+    if order.city:
+        address_parts.append(order.city)
+    if order.state_code:
+        address_parts.append(order.state_code)
+    if order.zip_code:
+        address_parts.append(order.zip_code)
+    full_address = ", ".join(address_parts)
 
-    # Collect fetchable assignments
-    fetchable: list[tuple] = []  # (assignment, county_source)
-    fetch_errors: list[str] = []
-    for assignment in assignments:
-        if assignment.availability == "non_digital" and assignment.status == "pending":
-            continue
-        if assignment.status != "pending":
-            continue
-
-        county_source = county_sources_map.get(assignment.portal_config_id)
-        if county_source:
-            fetchable.append((assignment, county_source))
-        else:
-            logger.warning(
-                f"No portal config for assignment {assignment.id} on order {order_id}"
+    # Geocode if county not already set
+    if not order.county or not order.state_code:
+        geo = await geocode_address(full_address)
+        if not geo:
+            raise RuntimeError(
+                f"Could not geocode address: {full_address}. "
+                "Please verify the address is correct."
             )
-            assignment.status = "failed"
-            fetch_errors.append("No portal configuration found")
+        order.county = geo["county"]
+        order.state_code = geo["state_code"]
+        if geo.get("matched_address"):
+            logger.info(f"Geocoded '{full_address}' → {geo['county']} County, {geo['state_code']}")
 
-    # Check for non-digital sources first
-    pending_non_digital = any(
-        a.availability == "non_digital" and a.status == "pending"
-        for a in assignments
+    # Fetch real property data from available portals
+    search_address = order.property_address
+    # Use just the street portion for tax collector search
+    if "," in search_address:
+        search_address = search_address.split(",")[0].strip()
+
+    prop_data = await fetch_property_data(
+        address=search_address,
+        county=order.county,
+        state_code=order.state_code,
+        owner_name=order.borrower_name or "",
     )
-    if pending_non_digital:
-        order.status = "awaiting_abstractor"
-        await db.commit()
-        raise _PipelinePause("Awaiting ground abstractor upload")
 
-    # Race all sources: registered portals + AI discovery in parallel
-    async with CountyDataFetcher() as fetcher:
-        race_result, race_errors = await _race_fetch(
-            fetcher, fetchable, order, org_id,
+    # Update order with fetched data
+    if prop_data.owner_name and not order.borrower_name:
+        order.borrower_name = prop_data.owner_name
+    if prop_data.parcel_number and not order.parcel_number:
+        order.parcel_number = prop_data.parcel_number
+    if prop_data.legal_description and not order.legal_description:
+        order.legal_description = prop_data.legal_description
+
+    # Store the fetched data as a raw document (JSON format)
+    import dataclasses
+    raw_content = json.dumps(dataclasses.asdict(prop_data), default=str, indent=2)
+
+    raw_doc = TARawDocument(
+        org_id=org_id,
+        order_id=order_id,
+        document_ref=f"{order.county.upper()}-PROPERTY-DATA",
+        raw_content=raw_content,
+        content_format="json",
+        source_url=", ".join(
+            s.get("url", "") for s in prop_data.sources_used if s.get("url")
+        ),
+    )
+    db.add(raw_doc)
+
+    # Create source assignments for tracking
+    for source in prop_data.sources_used:
+        assignment = TASourceAssignment(
+            org_id=org_id,
+            order_id=order_id,
+            source_type=source.get("type", "unknown"),
+            availability="digital",
+            status="completed",
         )
-    fetch_errors.extend(race_errors)
+        db.add(assignment)
 
-    if race_result:
-        # Winner found — write to DB
-        if race_result.assignment and race_result.county_source:
-            # Registered portal won
-            raw_doc = TARawDocument(
-                org_id=org_id,
-                order_id=order_id,
-                source_assignment_id=race_result.assignment.id,
-                document_ref=(
-                    f"{race_result.county_source.county.upper()}-"
-                    f"{race_result.assignment.source_type.upper()}"
-                ),
-                raw_content=race_result.fetch_result.content,
-                content_format=race_result.fetch_result.content_format,
-                source_url=race_result.fetch_result.source_url,
-            )
-            db.add(raw_doc)
-            race_result.assignment.status = "completed"
-            # Mark other assignments as failed
-            for a, _ in fetchable:
-                if a.id != race_result.assignment.id:
-                    a.status = "failed"
-        else:
-            # Discovered portal won — save to registry
-            portal_info = race_result.portal_info or {}
-            portal_type = portal_info.get("portal_type", "generic_web")
-            url_template = portal_info.get("url", race_result.fetch_result.source_url)
+    for source in prop_data.sources_failed:
+        assignment = TASourceAssignment(
+            org_id=org_id,
+            order_id=order_id,
+            source_type=source.get("type", "unknown"),
+            availability="digital" if not source.get("manual_retrieval") else "non_digital",
+            status="failed",
+        )
+        db.add(assignment)
 
-            # Upsert: check for existing county source with same key
-            existing_cs = (await db.execute(
-                select(TACountySource).where(
-                    TACountySource.county == order.county,
-                    TACountySource.state_code == order.state_code,
-                    TACountySource.source_type == "recorder",
-                )
-            )).scalar_one_or_none()
-            if existing_cs:
-                existing_cs.portal_url = url_template
-                existing_cs.search_config = portal_info.get("search_config")
-                existing_cs.portal_type = portal_type
-                existing_cs.is_active = True
-                cs = existing_cs
-            else:
-                cs = TACountySource(
-                    county=order.county,
-                    state_code=order.state_code,
-                    source_type="recorder",
-                    availability="digital",
-                    portal_type=portal_type,
-                    portal_url=url_template,
-                    search_config=portal_info.get("search_config"),
-                    is_active=True,
-                )
-                db.add(cs)
-            await db.flush()
-
-            raw_doc = TARawDocument(
-                org_id=org_id,
-                order_id=order_id,
-                document_ref=f"{order.county.upper()}-DISCOVERED",
-                raw_content=race_result.fetch_result.content,
-                content_format=race_result.fetch_result.content_format,
-                source_url=race_result.fetch_result.source_url,
-            )
-            db.add(raw_doc)
-
-            assignment = TASourceAssignment(
-                org_id=org_id,
-                order_id=order_id,
-                source_type="recorder",
-                availability="digital",
-                portal_config_id=cs.id,
-                status="completed",
-            )
-            db.add(assignment)
-    else:
-        # All sources failed
-        county_label = f"{order.county} County, {order.state_code}"
-        error_detail = "; ".join(fetch_errors[:3])
+    # If no data was retrieved at all, fail
+    if not prop_data.sources_used:
+        errors = "; ".join(s.get("error", "Unknown") for s in prop_data.sources_failed)
         raise RuntimeError(
-            f"Unable to retrieve property records for {county_label}. "
-            f"No accessible portal found. Errors: {error_detail}"
+            f"Unable to retrieve any property data for {order.county} County, "
+            f"{order.state_code}. Errors: {errors}"
         )
 
 
@@ -321,7 +295,10 @@ async def stage_parse(order_id, org_id, db):
     )).scalar_one()
 
     for raw_doc in raw_docs:
-        if raw_doc.content_format == "html":
+        if raw_doc.content_format == "json":
+            # Structured JSON from real data fetcher
+            await _parse_json_property_data(db, org_id, order_id, raw_doc, order)
+        elif raw_doc.content_format == "html":
             # HTML from county portal — use PropertyDataExtractorAgent
             await _parse_html_document(db, org_id, order_id, raw_doc, order)
         else:
@@ -415,7 +392,10 @@ async def stage_chain(order_id, org_id, db):
     for cl in analysis_result.get("chain_links", []):
         doc_id = cl.get("document_id")
         if doc_id and not isinstance(doc_id, uuid.UUID):
-            doc_id = uuid.UUID(doc_id)
+            try:
+                doc_id = uuid.UUID(doc_id)
+            except (ValueError, AttributeError):
+                doc_id = None
         link = TAChainLink(
             org_id=org_id,
             order_id=order_id,
@@ -438,10 +418,16 @@ async def stage_chain(order_id, org_id, db):
     for rf in all_flags:
         _doc_id = rf.get("document_id")
         if _doc_id and not isinstance(_doc_id, uuid.UUID):
-            _doc_id = uuid.UUID(_doc_id)
+            try:
+                _doc_id = uuid.UUID(_doc_id)
+            except (ValueError, AttributeError):
+                _doc_id = None
         _cl_id = rf.get("chain_link_id")
         if _cl_id and not isinstance(_cl_id, uuid.UUID):
-            _cl_id = uuid.UUID(_cl_id)
+            try:
+                _cl_id = uuid.UUID(_cl_id)
+            except (ValueError, AttributeError):
+                _cl_id = None
         flag = TAFlag(
             org_id=org_id,
             order_id=order_id,
@@ -1161,6 +1147,143 @@ async def _parse_html_document(
             },
         )
         db.add(doc)
+
+
+
+async def _parse_json_property_data(
+    db: AsyncSession, org_id: uuid.UUID, order_id: uuid.UUID,
+    raw_doc: TARawDocument, order: TAOrder,
+) -> None:
+    """Parse structured JSON property data from real_data_fetcher into TADocuments.
+
+    The JSON contains tax, assessment, legal description, and sales history
+    from real county portal scraping. We also use Gemini to enrich with
+    deed/mortgage detail extraction if clerk data is available.
+    """
+    prop_data = json.loads(raw_doc.raw_content or "{}")
+
+    # Update order fields from fetched data
+    if prop_data.get("legal_description") and not order.legal_description:
+        order.legal_description = prop_data["legal_description"]
+    if prop_data.get("owner_name") and not order.borrower_name:
+        order.borrower_name = prop_data["owner_name"]
+    if prop_data.get("parcel_number") and not order.parcel_number:
+        order.parcel_number = prop_data["parcel_number"]
+    if prop_data.get("subdivision") and not order.subdivision:
+        order.subdivision = prop_data["subdivision"]
+
+    confidence = 0.85  # Real portal data is high confidence
+
+    # Create tax assessment document
+    if prop_data.get("assessed_value") or prop_data.get("tax_amount"):
+        tax_doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            raw_document_id=raw_doc.id,
+            doc_type="other",
+            summary="Tax Assessment Record",
+            confidence=0.95,
+            needs_review=False,
+            doc_metadata={
+                "tax_info": {
+                    "parcel_id": prop_data.get("parcel_number"),
+                    "land_value": prop_data.get("land_value"),
+                    "improvement_value": prop_data.get("improvement_value"),
+                    "assessed_value": prop_data.get("assessed_value"),
+                    "tax_amount": prop_data.get("tax_amount"),
+                    "tax_year": prop_data.get("tax_year"),
+                    "tax_status": prop_data.get("tax_status"),
+                    "homestead_exemption": prop_data.get("homestead_exemption"),
+                    "payment_history": prop_data.get("payment_history", []),
+                }
+            },
+        )
+        db.add(tax_doc)
+
+    # Create documents from sales history (deed transfers)
+    for sale in prop_data.get("sales_history", []):
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            raw_document_id=raw_doc.id,
+            doc_type=sale.get("doc_type", "deed"),
+            recording_date=sale.get("recording_date") or sale.get("sale_date"),
+            recording_ref=sale.get("instrument_number") or sale.get("book_page"),
+            grantor={"names": [sale["grantor"]]} if sale.get("grantor") else None,
+            grantee={"names": [sale["grantee"]]} if sale.get("grantee") else None,
+            consideration=sale.get("consideration") or sale.get("sale_price"),
+            confidence=confidence,
+            needs_review=confidence < 0.70,
+            doc_metadata={
+                "book_page": sale.get("book_page"),
+                "instrument_number": sale.get("instrument_number"),
+                "deed_type_detail": sale.get("deed_type"),
+                "source": "property_appraiser",
+            },
+        )
+        db.add(doc)
+
+    # Create documents from recorded_documents (clerk of court)
+    for rec in prop_data.get("recorded_documents", []):
+        doc_type = _map_doc_type(rec.get("doc_type", ""))
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            raw_document_id=raw_doc.id,
+            doc_type=doc_type,
+            recording_date=rec.get("record_date"),
+            recording_ref=rec.get("instrument_number") or rec.get("book_page"),
+            grantor={"names": rec["grantors"]} if rec.get("grantors") else None,
+            grantee={"names": rec["grantees"]} if rec.get("grantees") else None,
+            consideration=rec.get("consideration"),
+            confidence=confidence,
+            needs_review=confidence < 0.70,
+            doc_metadata={
+                "book_page": rec.get("book_page"),
+                "instrument_number": rec.get("instrument_number"),
+                "source": "clerk_of_court",
+            },
+        )
+        db.add(doc)
+
+    # Track sources that failed (for flags)
+    for source in prop_data.get("sources_failed", []):
+        if source.get("manual_retrieval"):
+            # Create a flag for manual retrieval needed
+            flag = TAFlag(
+                org_id=org_id,
+                order_id=order_id,
+                flag_type="missing_source",
+                severity="medium",
+                title=f"Manual Retrieval Needed: {source.get('type', 'Unknown').replace('_', ' ').title()}",
+                description=(
+                    f"{source.get('type', 'Unknown source').replace('_', ' ').title()}: "
+                    f"{source.get('error', 'Could not auto-retrieve')}. "
+                    "Manual retrieval may be needed."
+                ),
+                status="open",
+            )
+            db.add(flag)
+
+
+def _map_doc_type(raw_type: str) -> str:
+    """Map clerk document type codes to TADocument doc_type values."""
+    mapping = {
+        "WD": "deed", "QCD": "deed", "DEED": "deed",
+        "MTG": "mortgage", "ASSIGN MTG": "mortgage",
+        "SAT": "satisfaction", "SATISFACTION": "satisfaction",
+        "RELEASE": "satisfaction",
+        "LIS": "lien", "JUDG": "lien", "FINAL JUDG": "lien",
+        "NTC": "other", "NOTICE": "other",
+        "EASEMENT": "other", "AFFIDAVIT": "other", "AFF": "other",
+        "PLAT": "other", "SURVEY": "other",
+        "AMENDMENT": "other", "AMEND": "other",
+        "AGREEMENT": "other", "SUBORDINATION": "other",
+        "POWER OF ATTY": "other", "DECLARATION": "other",
+        "MODIFICATION": "mortgage", "COURT ORDER": "lien",
+        "ASSIGN": "other",
+    }
+    return mapping.get(raw_type.upper(), "other")
 
 
 async def _parse_text_document(

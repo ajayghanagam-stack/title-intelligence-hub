@@ -21,8 +21,8 @@ class TAOrder(Base, TenantMixin, TimestampMixin):
     city: Mapped[str | None] = mapped_column(String(100), nullable=True)
     zip_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     parcel_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    county: Mapped[str] = mapped_column(String(100), nullable=False)
-    state_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    county: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
     borrower_name: Mapped[str | None] = mapped_column(String(500), nullable=True)
     legal_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     search_scope: Mapped[str] = mapped_column(

@@ -28,8 +28,8 @@ class OrderCreate(BaseModel):
     property_address: str = Field(..., min_length=1, max_length=500)
     city: str | None = Field(None, max_length=100)
     zip_code: str | None = Field(None, max_length=20)
-    county: str = Field(..., min_length=1, max_length=100)
-    state_code: str = Field(..., min_length=2, max_length=2)
+    county: str | None = Field(None, max_length=100)
+    state_code: str | None = Field(None, max_length=2)
     borrower_name: str | None = Field(None, max_length=500)
     parcel_number: str | None = Field(None, max_length=100)
     legal_description: str | None = None
@@ -41,7 +41,9 @@ class OrderCreate(BaseModel):
 
     @field_validator("state_code")
     @classmethod
-    def validate_state_code(cls, v: str) -> str:
+    def validate_state_code(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
         v = v.upper()
         if v not in US_STATES:
             raise ValueError(f"Invalid US state code: {v}")
@@ -56,8 +58,8 @@ class OrderResponse(BaseModel):
     city: str | None = None
     zip_code: str | None = None
     parcel_number: str | None = None
-    county: str
-    state_code: str
+    county: str | None = None
+    state_code: str | None = None
     borrower_name: str | None = None
     legal_description: str | None = None
     search_scope: SearchScope
@@ -77,8 +79,8 @@ class OrderResponse(BaseModel):
 class OrderListResponse(BaseModel):
     id: uuid.UUID
     property_address: str
-    county: str
-    state_code: str
+    county: str | None = None
+    state_code: str | None = None
     borrower_name: str | None = None
     status: OrderStatus
     pipeline_stage: PipelineStage | None = None
