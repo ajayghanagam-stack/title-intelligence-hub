@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: process.env.NODE_ENV === 'production' ? 'standalone' : undefined,
+  output: process.env.DOCKER_BUILD === 'true' ? 'standalone' : undefined,
   experimental: {},
   async headers() {
     return [
