@@ -19,6 +19,7 @@ COPY . .
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NODE_ENV=production
+ENV DOCKER_BUILD=true
 
 # Build the application
 RUN npm run build
