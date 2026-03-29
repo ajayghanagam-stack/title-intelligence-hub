@@ -132,11 +132,12 @@ def _section_header(pdf, title: str, w: float) -> None:
     pdf.set_text_color(*_HEADER_FG)
     pdf.set_font(_FONT, "B", 10)
     pdf.cell(
-        w, _ROW_H + 1, _clean(title), border=1, align="C",
+        w, _ROW_H + 1, _clean(title), border=0, align="C",
         new_x="LMARGIN", new_y="NEXT", fill=True,
     )
     pdf.set_text_color(0, 0, 0)  # Reset to black
     pdf.set_font(_FONT, "", 8)
+    pdf.ln(1)
 
 
 def _ensure_space(pdf, needed: float) -> None:
@@ -161,10 +162,10 @@ def _label_value_row(pdf, label: str, value: str, w: float) -> None:
 
     x, y = pdf.get_x(), pdf.get_y()
     pdf.set_font(_FONT, "B", 8)
-    pdf.cell(lw, row_h, label_clean, border=1, new_x="END", new_y="TOP")
+    pdf.cell(lw, row_h, label_clean, border=0, new_x="END", new_y="TOP")
     pdf.set_font(_FONT, "", 8)
     pdf.set_xy(x + lw, y)
-    pdf.multi_cell(vw, _ROW_H, val_clean, border=1, new_x="LMARGIN", new_y="NEXT")
+    pdf.multi_cell(vw, _ROW_H, val_clean, border=0, new_x="LMARGIN", new_y="NEXT")
 
     expected_y = y + row_h
     if pdf.get_y() < expected_y:
@@ -175,13 +176,13 @@ def _split_row(pdf, l1, v1, l2, v2, w) -> None:
     _ensure_space(pdf, _ROW_H + 2)
     col = w / 4
     pdf.set_font(_FONT, "B", 8)
-    pdf.cell(col, _ROW_H, _clean(l1), border=1, new_x="END", new_y="TOP")
+    pdf.cell(col, _ROW_H, _clean(l1), border=0, new_x="END", new_y="TOP")
     pdf.set_font(_FONT, "", 8)
-    pdf.cell(col, _ROW_H, _clean(v1), border=1, new_x="END", new_y="TOP")
+    pdf.cell(col, _ROW_H, _clean(v1), border=0, new_x="END", new_y="TOP")
     pdf.set_font(_FONT, "B", 8)
-    pdf.cell(col, _ROW_H, _clean(l2), border=1, new_x="END", new_y="TOP")
+    pdf.cell(col, _ROW_H, _clean(l2), border=0, new_x="END", new_y="TOP")
     pdf.set_font(_FONT, "", 8)
-    pdf.cell(col, _ROW_H, _clean(v2), border=1, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(col, _ROW_H, _clean(v2), border=0, new_x="LMARGIN", new_y="NEXT")
 
 
 def _text_block_row(pdf, text: str, w: float) -> None:
