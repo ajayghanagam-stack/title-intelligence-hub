@@ -58,6 +58,13 @@ export interface TSDocument {
   summary: string | null;
   confidence: number | null;
   needs_review: boolean;
+  doc_metadata: {
+    deed_type_detail?: string;
+    book_page?: string;
+    instrument_number?: string;
+    source?: string;
+    [key: string]: unknown;
+  } | null;
   created_at: string;
 }
 

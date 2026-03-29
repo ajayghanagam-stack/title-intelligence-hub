@@ -6,7 +6,65 @@ import { useOrg } from "@/hooks/use-org";
 import { getDocuments, downloadDocument } from "@/lib/title-search/api";
 import { DOC_TYPE_LABELS } from "@/lib/title-search/constants";
 import type { TSDocument } from "@/lib/title-search/types";
-import { FileText, AlertTriangle, Download } from "lucide-react";
+import { FileText, AlertTriangle, Download, ArrowRight } from "lucide-react";
+
+/**
+ * Build a meaningful display name from document data.
+ * e.g. "Special Warranty Deed — PITTS DERRICK R ($259,000)"
+ */
+function getDocumentName(doc: TSDocument): string {
+  const typeLabel = DOC_TYPE_LABELS[doc.doc_type] || doc.doc_type;
+
+  // Use summary if available (e.g. "Tax Assessment Record")
+  if (doc.summary) return doc.summary;
+
+  const parts: string[] = [];
+
+  // Use metadata deed_type_detail if available
+  const meta = doc.doc_metadata;
+  if (meta?.deed_type_detail) {
+    const dtd = meta.deed_type_detail;
+    // "SW - Special Warranty" → "Special Warranty Deed"
+    // "WD - Warranty Deed" → "Warranty Deed" (don't double-append)
+    if (dtd.includes(" - ")) {
+      const name = dtd.split(" - ")[1];
+      const nameLower = name.toLowerCase();
+      if (nameLower.includes("deed") || nameLower.includes("mortgage") || nameLower.includes("lien") || nameLower.includes("book")) {
+        parts.push(name);
+      } else {
+        parts.push(name + " " + typeLabel);
+      }
+    } else {
+      parts.push(dtd);
+    }
+  } else {
+    parts.push(typeLabel);
+  }
+
+  // Add grantee name if available
+  const granteeName = doc.grantee?.names?.join(", ");
+  const grantorName = doc.grantor?.names?.join(", ");
+  if (granteeName) {
+    parts.push(`to ${granteeName}`);
+  } else if (grantorName) {
+    parts.push(`from ${grantorName}`);
+  }
+
+  // Add consideration
+  if (doc.consideration) {
+    parts.push(`($${doc.consideration.toLocaleString()})`);
+  }
+
+  return parts.join(" — ");
+}
+
+function getDocumentSubtitle(doc: TSDocument): string {
+  const parts: string[] = [];
+  if (doc.recording_date) parts.push(doc.recording_date);
+  if (doc.recording_ref) parts.push(`Ref: ${doc.recording_ref}`);
+  if (!parts.length) parts.push("No recording info");
+  return parts.join(" · ");
+}
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -99,12 +157,11 @@ export default function DocumentsPage() {
                     <FileText className="h-4 w-4 text-muted-foreground" />
                   </div>
                   <div>
-                    <p className="font-medium">
-                      {DOC_TYPE_LABELS[doc.doc_type] || doc.doc_type}
+                    <p className="font-medium" data-testid={`doc-name-${doc.id}`}>
+                      {getDocumentName(doc)}
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      {doc.recording_ref || "No ref"} &middot;{" "}
-                      {doc.recording_date || "No date"}
+                      {getDocumentSubtitle(doc)}
                     </p>
                   </div>
                 </div>
