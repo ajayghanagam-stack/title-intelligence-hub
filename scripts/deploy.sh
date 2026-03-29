@@ -171,7 +171,80 @@ restart_ecs_service() {
         > /dev/null
     
     print_success "ECS service restart initiated"
-    print_info "New containers will be live in 2-3 minutes"
+    print_info "Waiting for new task to be running..."
+
+    for i in $(seq 1 40); do
+        RUNNING=$(aws ecs describe-services \
+            --cluster ${APP_NAME}-cluster \
+            --services ${APP_NAME}-service \
+            --region ${AWS_REGION} \
+            --query 'services[0].runningCount' \
+            --output text 2>/dev/null)
+        if [ "$RUNNING" = "1" ]; then
+            print_success "New task is running"
+            return
+        fi
+        sleep 10
+    done
+    print_warning "Task may still be starting. Check ECS console."
+}
+
+# Run database migrations and seed
+run_migrations_and_seed() {
+    print_header "Running Database Migrations & Seed"
+
+    # Get the running task ARN
+    print_info "Finding running ECS task..."
+    TASK_ARN=$(aws ecs list-tasks \
+        --cluster ${APP_NAME}-cluster \
+        --service-name ${APP_NAME}-service \
+        --region ${AWS_REGION} \
+        --query 'taskArns[0]' \
+        --output text 2>/dev/null)
+
+    if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
+        print_warning "No running task found. Skipping migrations."
+        print_info "Run './scripts/aws-deploy-part3.sh' manually once the task is up."
+        return
+    fi
+
+    print_info "Task: $TASK_ARN"
+
+    # Run migrations
+    print_info "Running database migrations..."
+    aws ecs execute-command \
+        --cluster ${APP_NAME}-cluster \
+        --task ${TASK_ARN} \
+        --container backend \
+        --region ${AWS_REGION} \
+        --interactive \
+        --command "python -c \"
+import asyncio
+from sqlalchemy.ext.asyncio import create_async_engine
+from app.models import Base
+from app.micro_apps.title_intelligence.models import *
+from app.micro_apps.title_search.models import *
+import os
+
+async def migrate():
+    engine = create_async_engine(os.environ['DATABASE_URL'])
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    print('Migration complete')
+
+asyncio.run(migrate())
+\"" 2>/dev/null && print_success "Migrations complete" || print_warning "Migration command failed — may need ECS Exec enabled"
+
+    # Seed data
+    print_info "Seeding initial data..."
+    aws ecs execute-command \
+        --cluster ${APP_NAME}-cluster \
+        --task ${TASK_ARN} \
+        --container backend \
+        --region ${AWS_REGION} \
+        --interactive \
+        --command "cd /app && PYTHONPATH=. python scripts/seed.py" \
+        2>/dev/null && print_success "Database seeded" || print_warning "Seed command failed — may need ECS Exec enabled"
 }
 
 # Show deployment summary
@@ -206,6 +279,7 @@ main() {
             login_ecr
             deploy_backend
             restart_ecs_service
+            run_migrations_and_seed
             show_summary
             ;;
         frontend)
@@ -225,6 +299,7 @@ main() {
             deploy_backend
             deploy_frontend
             restart_ecs_service
+            run_migrations_and_seed
             show_summary
             ;;
         *)
