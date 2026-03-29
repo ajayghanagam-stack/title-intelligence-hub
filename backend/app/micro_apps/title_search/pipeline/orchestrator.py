@@ -197,6 +197,7 @@ async def stage_retrieve(order_id, org_id, db):
         county=order.county,
         state_code=order.state_code,
         owner_name=order.borrower_name or "",
+        search_scope=order.search_scope or "full",
     )
 
     # Update order with fetched data
@@ -243,6 +244,23 @@ async def stage_retrieve(order_id, org_id, db):
             status="failed",
         )
         db.add(assignment)
+
+        # Create a flag for CAPTCHA-blocked portals
+        if source.get("captcha_blocked"):
+            captcha_flag = TAFlag(
+                org_id=org_id,
+                order_id=order_id,
+                title=f"Clerk Portal CAPTCHA Blocked ({source.get('type', 'unknown')})",
+                description=(
+                    f"Automated access to {source.get('url', 'clerk portal')} "
+                    f"was blocked by CAPTCHA. Manual retrieval of clerk records "
+                    f"is required. Error: {source.get('error', 'N/A')}"
+                ),
+                severity="medium",
+                flag_type="captcha_blocked",
+                status="open",
+            )
+            db.add(captcha_flag)
 
     # If no data was retrieved at all, fail
     if not prop_data.sources_used:

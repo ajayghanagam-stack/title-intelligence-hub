@@ -68,7 +68,8 @@ async def issue_package(
 # PDF helper utilities
 # ---------------------------------------------------------------------------
 
-_HEADER_BG = (180, 198, 231)  # Light blue matching sample
+_HEADER_BG = (230, 126, 34)  # Logikality brand orange
+_HEADER_FG = (255, 255, 255)  # White text on orange
 _ROW_H = 7
 _FONT = "Helvetica"
 
@@ -127,11 +128,13 @@ def _deed_type_label(doc) -> str:
 
 def _section_header(pdf, title: str, w: float) -> None:
     pdf.set_fill_color(*_HEADER_BG)
-    pdf.set_font(_FONT, "BU", 10)
+    pdf.set_text_color(*_HEADER_FG)
+    pdf.set_font(_FONT, "B", 10)
     pdf.cell(
         w, _ROW_H + 1, _clean(title), border=1, align="C",
         new_x="LMARGIN", new_y="NEXT", fill=True,
     )
+    pdf.set_text_color(0, 0, 0)  # Reset to black
     pdf.set_font(_FONT, "", 8)
 
 
@@ -176,7 +179,9 @@ def _text_block_row(pdf, text: str, w: float) -> None:
 
 
 def _find_logo_path() -> str | None:
+    # Prefer the high-res converted PNG from the SVG source
     candidates = [
+        Path(__file__).parent / "logikality_logo.png",
         Path(__file__).resolve().parents[5] / "frontend" / "public" / "logikality_logo.png",
         Path(__file__).resolve().parents[4] / "frontend" / "public" / "logikality_logo.png",
     ]

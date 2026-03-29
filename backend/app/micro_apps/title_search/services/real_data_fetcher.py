@@ -17,6 +17,57 @@ from playwright.async_api import async_playwright, Browser, Page
 logger = logging.getLogger(__name__)
 
 
+# ─── CAPTCHA Handling ──────────────────────────────────────────────────
+
+class CaptchaBlockedError(Exception):
+    """Raised when a CAPTCHA blocks automated access."""
+    pass
+
+
+_CAPTCHA_INDICATORS = [
+    "captcha", "recaptcha", "hcaptcha", "challenge-platform",
+    "cf-turnstile", "just a moment", "verify you are human",
+    "checking your browser", "cloudflare", "ddos-guard",
+    "attention required",
+]
+
+
+def _detect_captcha(page_content: str) -> bool:
+    """Detect common CAPTCHA/bot-block indicators in page content."""
+    lower = page_content.lower()
+    return any(indicator in lower for indicator in _CAPTCHA_INDICATORS)
+
+
+async def _clerk_search_with_retry(
+    browser: Browser,
+    url: str,
+    name: str,
+    county: str,
+    max_retries: int = 2,
+) -> list:
+    """Search clerk records with CAPTCHA detection and retry logic."""
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            docs = await ClerkOfCourtScraper.search_by_name(browser, url, name)
+            return docs
+        except Exception as e:
+            err_msg = str(e).lower()
+            # Check if it's a CAPTCHA/Cloudflare block
+            if any(ind in err_msg for ind in _CAPTCHA_INDICATORS):
+                raise CaptchaBlockedError(
+                    f"{county} clerk portal blocked by CAPTCHA after {attempt + 1} attempt(s)"
+                )
+            last_error = e
+            if attempt < max_retries:
+                wait = 3 * (attempt + 1)
+                logger.info(f"Clerk search attempt {attempt + 1} failed, retrying in {wait}s...")
+                await asyncio.sleep(wait)
+            else:
+                raise last_error
+    return []
+
+
 @dataclass
 class PropertyData:
     """Structured property data from all sources."""
@@ -709,6 +760,13 @@ FLORIDA_COUNTY_IDS = {
 # Known Acclaim/OnCore clerk portals (no CAPTCHA)
 ACCLAIM_PORTALS = {
     "Duval": "https://or.duvalclerk.com",
+    "Hillsborough": "https://publicaccess.hillsclerk.com",
+    "Volusia": "https://vcpa.vcgov.org/OfficialRecords",
+    "Bay": "https://or.baycoclerk.com",
+    "Nassau": "https://or.nassauclerk.com",
+    "St. Johns": "https://or.stjohnsclerk.com",
+    "Clay": "https://or.clayclerk.com",
+    "Putnam": "https://or.putnamclerk.com",
 }
 
 # Known Phenix.net tax collector portals
@@ -771,10 +829,15 @@ async def fetch_property_data(
     owner_name: str = "",
     latitude: float | None = None,
     longitude: float | None = None,
+    search_scope: str = "full",
 ) -> PropertyData:
     """Fetch property data from all available sources for a county.
 
     Uses API-first approach: tries REST APIs before Playwright scraping.
+
+    Args:
+        search_scope: "full" fetches tax + clerk records,
+                      "current_owner" fetches tax only (skips deep clerk search).
     """
     prop = PropertyData(
         address=address,
@@ -874,15 +937,19 @@ async def fetch_property_data(
                     "manual_retrieval": True,
                 })
 
-            # Source 2: Clerk of Court - try Acclaim portals first, then Florida clerk
+            # Source 2: Clerk of Court
+            # For current_owner scope, only search if we need to identify the owner
+            # For full scope, search for all recorded documents
             search_name = owner_name or prop.owner_name
-            if search_name:
+            skip_clerk = (search_scope == "current_owner" and prop.owner_name)
+
+            if search_name and not skip_clerk:
                 acclaim_url = ACCLAIM_PORTALS.get(county)
                 if acclaim_url:
                     logger.info(f"Searching clerk records at {acclaim_url}")
                     try:
-                        docs = await ClerkOfCourtScraper.search_by_name(
-                            browser, acclaim_url, search_name
+                        docs = await _clerk_search_with_retry(
+                            browser, acclaim_url, search_name, county
                         )
                         prop.recorded_documents = docs
                         prop.sources_used.append({
@@ -890,6 +957,15 @@ async def fetch_property_data(
                             "url": acclaim_url,
                             "status": "success",
                             "docs_found": len(docs),
+                        })
+                    except CaptchaBlockedError as e:
+                        logger.warning(f"CAPTCHA blocked at {acclaim_url}: {e}")
+                        prop.sources_failed.append({
+                            "type": "clerk_of_court",
+                            "url": acclaim_url,
+                            "error": f"CAPTCHA blocked: {e}",
+                            "captcha_blocked": True,
+                            "manual_retrieval": True,
                         })
                     except Exception as e:
                         logger.error(f"Acclaim clerk fetch failed: {e}")
@@ -912,6 +988,7 @@ async def fetch_property_data(
                                     "type": "clerk_of_court",
                                     "url": f"myfloridacounty.com/orisearch/{county_id}",
                                     "error": clerk_result.get("error", "CAPTCHA blocked"),
+                                    "captcha_blocked": True,
                                     "manual_retrieval": True,
                                 })
                             elif clerk_result.get("success"):
@@ -934,6 +1011,11 @@ async def fetch_property_data(
                         "error": f"No clerk portal configured for {county}, {state_code}",
                         "manual_retrieval": True,
                     })
+            elif skip_clerk:
+                logger.info(
+                    "Skipping deep clerk search for current_owner scope "
+                    f"(owner: {prop.owner_name})"
+                )
 
         finally:
             await browser.close()
