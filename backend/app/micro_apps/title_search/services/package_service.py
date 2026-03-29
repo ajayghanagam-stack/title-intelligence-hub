@@ -187,7 +187,7 @@ def _split_row(pdf, l1, v1, l2, v2, w) -> None:
 
 def _text_block_row(pdf, text: str, w: float) -> None:
     pdf.set_font(_FONT, "", 8)
-    pdf.multi_cell(w, _ROW_H, _clean(text), border=1, new_x="LMARGIN", new_y="NEXT")
+    pdf.multi_cell(w, _ROW_H, _clean(text), border=0, new_x="LMARGIN", new_y="NEXT")
 
 
 def _find_logo_path() -> str | None:
@@ -231,10 +231,10 @@ def _render_tax_table(pdf, ti: dict, w: float) -> None:
                "Total Amount (P&I):", "Good through Date:"]
     col_w = w / len(headers)
 
-    # Header row
+    # Header row — horizontal borders only (top+bottom), no vertical
     pdf.set_font(_FONT, "B", 7)
     for h in headers:
-        pdf.cell(col_w, _ROW_H, _clean(h), border=1, new_x="END", new_y="TOP")
+        pdf.cell(col_w, _ROW_H, _clean(h), border="TB", new_x="END", new_y="TOP")
     pdf.ln(_ROW_H)
 
     # Data row
@@ -251,7 +251,7 @@ def _render_tax_table(pdf, ti: dict, w: float) -> None:
 
     values = ["Annual", tax_amt, status, paid_date, "", ""]
     for v in values:
-        pdf.cell(col_w, _ROW_H, _clean(v), border=1, new_x="END", new_y="TOP")
+        pdf.cell(col_w, _ROW_H, _clean(v), border="B", new_x="END", new_y="TOP")
     pdf.ln(_ROW_H)
 
 

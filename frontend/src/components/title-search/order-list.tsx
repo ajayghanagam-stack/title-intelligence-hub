@@ -4,10 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { OrderStatusBadge } from "./order-status-badge";
-import { Search, ChevronRight, Calendar, MapPin, Trash2, Check, X } from "lucide-react";
+import { Search, ChevronRight, ChevronLeft, Calendar, MapPin, Trash2, Check, X } from "lucide-react";
 import { deleteOrder } from "@/lib/title-search/api";
 import { useOrg } from "@/hooks/use-org";
 import type { TSOrderListItem } from "@/lib/title-search/types";
+
+const PAGE_SIZE = 10;
 
 export function OrderList({
   orders,
@@ -21,6 +23,14 @@ export function OrderList({
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<Record<string, string>>({});
+  const [page, setPage] = useState(0);
+
+  // Sort latest first, then paginate
+  const sorted = [...orders].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const paged = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   const handleDelete = async (orderId: string) => {
     if (!currentOrgId || deletingId) return;
@@ -30,6 +40,10 @@ export function OrderList({
       await deleteOrder(currentOrgId, orderId);
       setConfirmId(null);
       onOrderDeleted?.(orderId);
+      // If deleting the last item on current page, go back one page
+      const newTotal = sorted.length - 1;
+      const newTotalPages = Math.max(1, Math.ceil(newTotal / PAGE_SIZE));
+      if (page >= newTotalPages) setPage(Math.max(0, newTotalPages - 1));
     } catch (err) {
       setConfirmId(null);
       setErrorMsg((prev) => ({
@@ -62,8 +76,8 @@ export function OrderList({
   }
 
   return (
-    <div className="space-y-3">
-      {orders.map((order) => {
+    <div className="space-y-3" data-testid="order-list">
+      {paged.map((order) => {
         const isConfirming = confirmId === order.id;
         const isDeleting = deletingId === order.id;
         const error = errorMsg[order.id];
@@ -165,6 +179,38 @@ export function OrderList({
           </div>
         );
       })}
+
+      {/* Pagination controls */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between pt-4 border-t border-border/40" data-testid="pagination-controls">
+          <span className="text-xs text-muted-foreground">
+            Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, sorted.length)} of {sorted.length}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-muted hover:bg-muted/80 text-foreground"
+              data-testid="pagination-prev"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              Prev
+            </button>
+            <span className="text-xs font-medium text-muted-foreground tabular-nums">
+              {page + 1} / {totalPages}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={page >= totalPages - 1}
+              className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-muted hover:bg-muted/80 text-foreground"
+              data-testid="pagination-next"
+            >
+              Next
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
