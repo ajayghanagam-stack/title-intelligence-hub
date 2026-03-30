@@ -546,6 +546,120 @@ def _extract_pdf_pages(pdf_bytes: bytes, start_page: int, end_page: int) -> byte
     return result
 
 
+async def _clone_analysis_from_donor(
+    donor_pack_id: uuid.UUID,
+    target_pack_id: uuid.UUID,
+    org_id: uuid.UUID,
+    db: AsyncSession,
+) -> bool:
+    """Clone flags, extractions, sections, and text chunks from a donor pack.
+
+    Called when the target pack has the same file content as an already-completed
+    pack in the same org. Guarantees identical analysis results without re-running
+    the AI, regardless of LLM non-determinism or cache key changes.
+
+    Returns True if cloning succeeded (donor has data), False otherwise.
+    """
+    log = get_logger(__name__, org_id=org_id, pack_id=target_pack_id, stage="examine")
+
+    # Verify donor has sections (guard against empty / failed donors)
+    donor_section_result = await db.execute(
+        select(Section).where(Section.pack_id == donor_pack_id, Section.org_id == org_id)
+    )
+    donor_sections = list(donor_section_result.scalars().all())
+    if not donor_sections:
+        return False
+
+    # Clear any existing analysis for target pack
+    await db.execute(delete(Extraction).where(Extraction.pack_id == target_pack_id, Extraction.org_id == org_id))
+    await db.execute(delete(Section).where(Section.pack_id == target_pack_id, Section.org_id == org_id))
+    await db.execute(delete(Flag).where(Flag.pack_id == target_pack_id, Flag.org_id == org_id))
+    await db.execute(delete(TextChunk).where(TextChunk.pack_id == target_pack_id, TextChunk.org_id == org_id))
+
+    # Clone sections, building an ID mapping for extractions
+    section_id_map: dict[uuid.UUID, uuid.UUID] = {}
+    for s in donor_sections:
+        new_id = uuid.uuid4()
+        section_id_map[s.id] = new_id
+        db.add(Section(
+            id=new_id,
+            pack_id=target_pack_id,
+            org_id=org_id,
+            section_type=s.section_type,
+            start_page=s.start_page,
+            end_page=s.end_page,
+            confidence=s.confidence,
+        ))
+
+    # Clone extractions (map section_id via the above mapping)
+    donor_extraction_result = await db.execute(
+        select(Extraction).where(Extraction.pack_id == donor_pack_id, Extraction.org_id == org_id)
+    )
+    for e in donor_extraction_result.scalars().all():
+        new_section_id = section_id_map.get(e.section_id) if e.section_id else None
+        db.add(Extraction(
+            pack_id=target_pack_id,
+            org_id=org_id,
+            extraction_type=e.extraction_type,
+            label=e.label,
+            value=e.value,
+            evidence_refs=e.evidence_refs,
+            section_id=new_section_id,
+            confidence=e.confidence,
+        ))
+
+    # Clone flags — always start as "open" (don't carry over reviewer decisions)
+    donor_flag_result = await db.execute(
+        select(Flag).where(Flag.pack_id == donor_pack_id, Flag.org_id == org_id)
+    )
+    donor_flags = list(donor_flag_result.scalars().all())
+    for f in donor_flags:
+        db.add(Flag(
+            pack_id=target_pack_id,
+            org_id=org_id,
+            flag_type=f.flag_type,
+            severity=f.severity,
+            title=f.title,
+            description=f.description,
+            ai_explanation=f.ai_explanation,
+            evidence_refs=f.evidence_refs,
+            status="open",
+        ))
+
+    # Clone text chunks
+    donor_chunk_result = await db.execute(
+        select(TextChunk).where(TextChunk.pack_id == donor_pack_id, TextChunk.org_id == org_id)
+    )
+    for c in donor_chunk_result.scalars().all():
+        db.add(TextChunk(
+            pack_id=target_pack_id,
+            org_id=org_id,
+            page_number=c.page_number,
+            section_type=c.section_type,
+            content=c.content,
+        ))
+
+    # Copy ocr_text to existing target pages from donor pages
+    donor_page_result = await db.execute(
+        select(Page).where(Page.pack_id == donor_pack_id, Page.org_id == org_id)
+    )
+    donor_pages_by_num = {p.page_number: p for p in donor_page_result.scalars().all()}
+    target_page_result = await db.execute(
+        select(Page).where(Page.pack_id == target_pack_id, Page.org_id == org_id)
+    )
+    for tp in target_page_result.scalars().all():
+        dp = donor_pages_by_num.get(tp.page_number)
+        if dp and dp.ocr_text:
+            tp.ocr_text = dp.ocr_text
+
+    await db.commit()
+    log.info(
+        f"Analysis cloned from donor pack {donor_pack_id} — "
+        f"{len(donor_sections)} sections, {len(donor_flags)} flags"
+    )
+    return True
+
+
 async def _stage_examine_native_pdf(
     pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, storage: StorageProvider
 ):
@@ -576,7 +690,7 @@ async def _stage_examine_native_pdf(
     if not pages:
         raise ValueError("No page records found — run stage_render first")
 
-    # Compute cache key (uses "examiner_native" prefix for isolation from legacy cache)
+    # Compute input file hash for deduplication and cache key
     settings = get_settings()
     version_info = collect_version_info(settings)
     files_result = await db.execute(
@@ -584,6 +698,16 @@ async def _stage_examine_native_pdf(
     )
     pack_files = list(files_result.scalars().all())
     input_file_hash = await compute_input_file_hash(storage, org_id, pack_files)
+
+    # --- DB-level deduplication: clone analysis from a completed pack with identical content ---
+    # This is the primary determinism guarantee — identical files always produce identical
+    # results regardless of AI non-determinism or cache key version changes.
+    donor_pack_id = await _find_donor_pack(db, org_id, pack_id, input_file_hash)
+    if donor_pack_id:
+        cloned = await _clone_analysis_from_donor(donor_pack_id, pack_id, org_id, db)
+        if cloned:
+            return
+
     cache_key = compute_examiner_cache_key(input_file_hash, version_info)
     cache_path = storage.make_ai_cache_path(org_id, pack_id, "examiner_native", cache_key)
 
