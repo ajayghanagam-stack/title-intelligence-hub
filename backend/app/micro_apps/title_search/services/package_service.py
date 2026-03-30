@@ -357,19 +357,28 @@ async def generate_package_pdf(
         order_date = order.created_at.strftime("%m/%d/%Y")
 
     # ---- Header: Logo + Order info ----
+    # Logo anchored at top-right; text anchored at top-left at same baseline.
+    # After both, cursor is forced below the taller of the two before sections begin.
+    LOGO_Y = 10        # mm from top of page
+    LOGO_H = 15        # mm tall
+    HEADER_GAP = 6     # mm gap between header block and first section
+
     logo_path = _find_logo_path(org_id)
     if logo_path:
-        # Constrain logo to max height of 15mm (mirrors sidebar height:56px behaviour).
-        # For square logos (e.g. Grid 151 200×200) use h= to control height;
-        # for wide banners (e.g. Society Title 160×40) width naturally fits.
-        pdf.image(logo_path, x=pdf.w - 55, y=10, h=15)
+        pdf.image(logo_path, x=pdf.w - 65, y=LOGO_Y, h=LOGO_H)
 
+    # Place caption text at same top-left baseline as the logo
+    pdf.set_xy(pdf.l_margin, LOGO_Y)
     pdf.set_font(_FONT, "", 10)
     scope_label = "Full Search" if is_full_search else "Current Owner Search"
     pdf.cell(0, 6, _clean(f"Product Type: {scope_label}"), new_x="LMARGIN", new_y="NEXT")
     order_ref = order.order_reference or pkg.package_number
     pdf.cell(0, 6, _clean(f"Order/Loan#: {order_ref}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
+
+    # Push cursor below both the logo and the text before the first section
+    cursor_after_text = pdf.get_y()
+    logo_bottom = LOGO_Y + LOGO_H
+    pdf.set_y(max(cursor_after_text, logo_bottom) + HEADER_GAP)
 
     # ---- 1. PROPERTY INFORMATION ----
     _section_header(pdf, "PROPERTY INFORMATION", w)
