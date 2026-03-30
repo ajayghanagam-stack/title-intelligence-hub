@@ -251,32 +251,31 @@ export function Sidebar() {
             href="/dashboard"
             className="flex items-center w-full group"
           >
-            <div
-              className="w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:scale-[1.02] flex items-center justify-start"
-              style={{
-                boxShadow: "0 4px 18px rgba(0,0,0,0.18), 0 1px 4px rgba(0,0,0,0.10)",
-                border: "1px solid rgba(255,255,255,0.12)",
-              }}
-            >
-              <Image
-                src={
-                  currentOrgId && ORG_LOGOS[currentOrgId]
-                    ? ORG_LOGOS[currentOrgId]
-                    : "/society-title-logo.jpeg"
-                }
-                alt="Organization Logo"
-                width={224}
-                height={224}
-                priority
+            <div className="w-full flex justify-center items-center">
+              <div
+                className="overflow-hidden rounded-xl transition-all duration-300 group-hover:scale-[1.02]"
                 style={{
-                  width: "100%",
-                  height: "auto",
-                  maxHeight: 64,
-                  objectFit: "contain",
-                  objectPosition: "left center",
-                  display: "block",
+                  boxShadow: "0 4px 18px rgba(0,0,0,0.18), 0 1px 4px rgba(0,0,0,0.10)",
+                  border: "1px solid rgba(255,255,255,0.12)",
                 }}
-              />
+              >
+                <Image
+                  src={
+                    currentOrgId && ORG_LOGOS[currentOrgId]
+                      ? ORG_LOGOS[currentOrgId]
+                      : "/society-title-logo.jpeg"
+                  }
+                  alt="Organization Logo"
+                  width={224}
+                  height={224}
+                  priority
+                  style={{
+                    height: 56,
+                    width: "auto",
+                    display: "block",
+                  }}
+                />
+              </div>
             </div>
           </Link>
         ) : (
