@@ -10,7 +10,7 @@ export default function AuthLayout({
       {/* Left panel - branding */}
       <div
         className="hidden lg:flex lg:w-1/2 items-center justify-center relative overflow-hidden"
-        style={{ background: "linear-gradient(160deg, #ffffff 0%, #fffdf9 40%, #fff9f0 100%)" }}
+        style={{ background: "linear-gradient(160deg, #fff8f0 0%, #fff4e8 40%, #fff0e0 100%)" }}
       >
         {/* Warm amber glow — top left */}
         <div
@@ -57,12 +57,8 @@ export default function AuthLayout({
             ].map((feature) => (
               <div
                 key={feature}
-                className="flex items-center gap-3 text-sm text-neutral-500 bg-white/70 px-4 py-2.5 rounded-xl border border-neutral-100 shadow-sm"
+                className="flex items-center justify-center text-sm text-neutral-500 bg-white/70 px-4 py-2.5 rounded-xl border border-neutral-100 shadow-sm"
               >
-                <span
-                  className="h-2 w-2 rounded-full shrink-0"
-                  style={{ background: "linear-gradient(135deg, #f59e0b, #f97316)" }}
-                />
                 {feature}
               </div>
             ))}
