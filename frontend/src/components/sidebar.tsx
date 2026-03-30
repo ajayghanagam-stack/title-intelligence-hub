@@ -174,16 +174,24 @@ export function Sidebar() {
         {!isPlatformAdmin ? (
           <Link
             href="/dashboard"
-            className="flex items-center"
+            className="flex items-center w-full group"
           >
-            <Image
-              src="/society-title-logo.jpeg"
-              alt="Society Title"
-              width={160}
-              height={44}
-              priority
-              style={{ height: "auto", borderRadius: "6px" }}
-            />
+            <div
+              className="w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:scale-[1.02]"
+              style={{
+                boxShadow: "0 4px 18px rgba(0,0,0,0.18), 0 1px 4px rgba(0,0,0,0.10)",
+                border: "1px solid rgba(255,255,255,0.12)",
+              }}
+            >
+              <Image
+                src="/society-title-logo.jpeg"
+                alt="Society Title"
+                width={224}
+                height={60}
+                priority
+                style={{ width: "100%", height: "auto", display: "block" }}
+              />
+            </div>
           </Link>
         ) : (
           <Link
