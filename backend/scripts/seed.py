@@ -26,6 +26,7 @@ from app.models.user import User
 from app.models.micro_app import MicroApp
 from app.services.auth_service import hash_password
 from app.micro_apps.title_search.models.county_source import TACountySource
+from app.models.subscription import Subscription
 
 # ── Seed constants ──────────────────────────────────────────────
 ADMIN_EMAIL = "admin@logikality.com"
@@ -87,6 +88,8 @@ async def seed(session: AsyncSession) -> None:
             print(f"  Updated user to platform admin: {ADMIN_FULL_NAME}")
         else:
             print(f"  Platform admin already exists: {ADMIN_FULL_NAME} <{ADMIN_EMAIL}> (id={user.id})")
+        # Always ensure password is correct
+        user.password_hash = hash_password(ADMIN_PASSWORD)
 
     # ── 3. Title Intelligence micro app ─────────────────────────
     # Seeded so the admin can assign it to customer accounts.
@@ -126,7 +129,66 @@ async def seed(session: AsyncSession) -> None:
     else:
         print(f"  Micro app already exists: {TS_APP_NAME} (id={ts_app.id})")
 
-    # ── 5. Seed county sources for testing ──────────────────────
+    # ── 5. Society Title customer account ──────────────────────
+    # Create the Society Title org + admin user with subscriptions to both apps
+    CUSTOMER_ORG_NAME = "Society Title Co"
+    CUSTOMER_ORG_SLUG = "society-title-co"
+    CUSTOMER_EMAIL = "admin@societytitle.com"
+    CUSTOMER_PASSWORD = "admin123"
+    CUSTOMER_FULL_NAME = "Society Title Admin"
+
+    result = await session.execute(
+        select(Organization).where(Organization.slug == CUSTOMER_ORG_SLUG)
+    )
+    customer_org = result.scalar_one_or_none()
+    if customer_org is None:
+        customer_org = Organization(name=CUSTOMER_ORG_NAME, slug=CUSTOMER_ORG_SLUG)
+        session.add(customer_org)
+        await session.flush()
+        print(f"  Created customer org: {CUSTOMER_ORG_NAME} (id={customer_org.id})")
+    else:
+        print(f"  Customer org already exists: {CUSTOMER_ORG_NAME} (id={customer_org.id})")
+
+    result = await session.execute(
+        select(User).where(User.email == CUSTOMER_EMAIL)
+    )
+    customer_user = result.scalar_one_or_none()
+    if customer_user is None:
+        customer_user = User(
+            email=CUSTOMER_EMAIL,
+            full_name=CUSTOMER_FULL_NAME,
+            password_hash=hash_password(CUSTOMER_PASSWORD),
+            org_id=customer_org.id,
+            is_platform_admin=False,
+        )
+        session.add(customer_user)
+        await session.flush()
+        print(f"  Created customer admin: {CUSTOMER_FULL_NAME} <{CUSTOMER_EMAIL}> (id={customer_user.id})")
+    else:
+        # Always ensure password is correct
+        customer_user.password_hash = hash_password(CUSTOMER_PASSWORD)
+        print(f"  Customer admin already exists: {CUSTOMER_FULL_NAME} <{CUSTOMER_EMAIL}> (id={customer_user.id}) — password reset")
+
+    # Subscribe Society Title to both micro apps
+    for app_obj in [ti_app, ts_app]:
+        result = await session.execute(
+            select(Subscription).where(
+                Subscription.org_id == customer_org.id,
+                Subscription.app_id == app_obj.id,
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            session.add(Subscription(
+                org_id=customer_org.id,
+                app_id=app_obj.id,
+                is_active=True,
+            ))
+            print(f"  Subscribed {CUSTOMER_ORG_NAME} to {app_obj.name}")
+        else:
+            print(f"  Subscription already exists: {CUSTOMER_ORG_NAME} → {app_obj.name}")
+    await session.flush()
+
+    # ── 6. Seed county sources for testing ──────────────────────
     # Create digital county sources so the TSA pipeline can run end-to-end.
     test_counties = [
         ("Cook", "IL"),
