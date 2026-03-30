@@ -10,7 +10,7 @@ export default function AuthLayout({
       {/* Left panel - branding */}
       <div
         className="hidden lg:flex lg:w-1/2 items-center justify-center relative overflow-hidden"
-        style={{ background: "linear-gradient(135deg, oklch(0.820 0.085 65) 0%, oklch(0.760 0.095 55) 100%)" }}
+        style={{ background: "linear-gradient(135deg, oklch(0.800 0.106 65) 0%, oklch(0.745 0.119 55) 100%)" }}
       >
         {/* Animated pulse glow behind the card */}
         <div
