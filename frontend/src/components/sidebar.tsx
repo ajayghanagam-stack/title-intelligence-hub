@@ -197,8 +197,9 @@ export function Sidebar() {
               src="/Logo_withTagline.svg"
               alt="Logikality"
               width={140}
-              height={36}
+              height={56}
               priority
+              style={{ height: "auto" }}
             />
           </Link>
         )}
@@ -358,7 +359,8 @@ export function Sidebar() {
           src="/Logo_withTagline.svg"
           alt="Logikality"
           width={100}
-          height={26}
+          height={40}
+          style={{ height: "auto" }}
         />
         <p className="text-[10px] text-sidebar-foreground/40">
           Powered by Logikality
