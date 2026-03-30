@@ -283,7 +283,7 @@ export function Sidebar() {
                     )}
                   >
                     <Link
-                      href={`/apps/title-intelligence/packs/${pack.id}/results`}
+                      href={`/apps/title-intelligence/packs/${pack.id}`}
                       className="flex items-center gap-2.5 min-w-0 flex-1"
                     >
                       <div className="shrink-0">
