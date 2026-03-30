@@ -673,17 +673,11 @@ async def stage_package(order_id, org_id, db):
         select(TAOrder).where(TAOrder.id == order_id, TAOrder.org_id == org_id)
     )).scalar_one()
 
-    # Generate package number
+    # Generate package number — use order_id short hash for guaranteed uniqueness
     now = datetime.now(timezone.utc)
     date_str = now.strftime("%Y%m%d")
-    existing_count = (await db.execute(
-        select(TAPackage).where(
-            TAPackage.org_id == org_id,
-            TAPackage.package_number.like(f"TA-{date_str}-%"),
-        )
-    )).scalars().all()
-    seq = len(existing_count) + 1
-    package_number = f"TA-{date_str}-{seq:04d}"
+    order_short = str(order_id).split("-")[0].upper()
+    package_number = f"TA-{date_str}-{order_short}"
 
     # Check if auto-issue conditions are met
     can_auto_issue = chain_complete and open_critical_high == 0
