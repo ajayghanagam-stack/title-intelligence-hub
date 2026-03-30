@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import {
   Eye,
   FileBarChart,
@@ -24,7 +24,6 @@ import { usePipelineStatus } from "@/hooks/use-pipeline-status";
 
 export default function PackOverviewPage() {
   const params = useParams();
-  const router = useRouter();
   const packId = params.packId as string;
   const { pack, loading, refetch } = usePack(packId);
   const isProcessing = pack?.status === "processing";
@@ -39,18 +38,15 @@ export default function PackOverviewPage() {
     return () => clearInterval(interval);
   }, [isProcessing, refetch]);
 
-  // Auto-redirect to results when pipeline completes and refresh sidebar
+  // When pipeline finishes, refresh sidebar so it picks up the new property address
   useEffect(() => {
     if (prevStatusRef.current === "processing" && pack?.status === "completed") {
-      // Dispatch event to refresh sidebar with new property address
-      // Add a small delay to ensure extractions are ready
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent("pack-completed"));
       }, 500);
-      router.push(`/apps/title-intelligence/packs/${packId}/results`);
     }
     prevStatusRef.current = pack?.status;
-  }, [pack?.status, packId, router]);
+  }, [pack?.status]);
 
   if (loading) {
     return (
