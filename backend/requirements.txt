@@ -28,6 +28,7 @@ litellm>=1.0
 anthropic>=0.20
 google-generativeai>=0.5
 google-genai>=1.0
+playwright>=1.40
 
 # PDF & Image
 fpdf2==2.8.7

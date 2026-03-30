@@ -18,6 +18,10 @@ trap cleanup SIGINT SIGTERM
 # Create storage directory if it doesn't exist
 mkdir -p "$ROOT_DIR/storage"
 
+# Ensure Playwright browser binaries are installed
+echo "Checking Playwright browsers..."
+python -m playwright install chromium 2>&1 | tail -2 || echo "Playwright install skipped"
+
 # Run database migrations
 echo "Running database migrations..."
 cd "$BACKEND_DIR"
