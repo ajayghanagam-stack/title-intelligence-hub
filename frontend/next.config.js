@@ -2,6 +2,14 @@
 const nextConfig = {
   output: process.env.DOCKER_BUILD === 'true' ? 'standalone' : undefined,
   experimental: {},
+  async rewrites() {
+    return [
+      {
+        source: "/api/v1/:path*",
+        destination: "http://localhost:8000/api/v1/:path*",
+      },
+    ];
+  },
   async headers() {
     return [
       {
