@@ -10,7 +10,7 @@ export default function AuthLayout({
       {/* Left panel - branding */}
       <div
         className="hidden lg:flex lg:w-1/2 items-center justify-center relative overflow-hidden"
-        style={{ background: "linear-gradient(160deg, #fff8f0 0%, #fff4e8 45%, #ffeedd 100%)" }}
+        style={{ background: "linear-gradient(135deg, oklch(0.750 0.170 65) 0%, oklch(0.680 0.190 55) 100%)" }}
       >
         {/* Animated pulse glow behind the card */}
         <div
@@ -21,7 +21,7 @@ export default function AuthLayout({
               width: 420,
               height: 420,
               borderRadius: "50%",
-              background: "radial-gradient(circle, rgba(251,191,36,0.22) 0%, rgba(249,115,22,0.10) 40%, transparent 70%)",
+              background: "radial-gradient(circle, rgba(255,255,255,0.18) 0%, transparent 70%)",
               animation: "pulseGlow 4s ease-in-out infinite",
             }}
           />
@@ -34,7 +34,7 @@ export default function AuthLayout({
             width: 560,
             height: 560,
             borderRadius: "50%",
-            border: "1px solid rgba(251,191,36,0.15)",
+            border: "1px solid rgba(255,255,255,0.18)",
             top: "50%",
             left: "50%",
             transform: "translate(-50%, -50%)",
@@ -47,7 +47,7 @@ export default function AuthLayout({
             width: 700,
             height: 700,
             borderRadius: "50%",
-            border: "1px solid rgba(251,191,36,0.08)",
+            border: "1px solid rgba(255,255,255,0.10)",
             top: "50%",
             left: "50%",
             transform: "translate(-50%, -50%)",
@@ -57,50 +57,46 @@ export default function AuthLayout({
         {/* Corner glows */}
         <div
           className="absolute -top-20 -left-20 h-80 w-80 rounded-full pointer-events-none"
-          style={{ background: "radial-gradient(circle, rgba(251,191,36,0.15) 0%, transparent 70%)" }}
+          style={{ background: "radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%)" }}
         />
         <div
           className="absolute -bottom-20 -right-12 h-72 w-72 rounded-full pointer-events-none"
-          style={{ background: "radial-gradient(circle, rgba(217,70,239,0.08) 0%, transparent 70%)" }}
+          style={{ background: "radial-gradient(circle, rgba(0,0,0,0.08) 0%, transparent 70%)" }}
         />
 
         {/* Right-edge accent */}
-        <div className="absolute right-0 inset-y-0 w-px bg-gradient-to-b from-transparent via-amber-300/50 to-transparent" />
+        <div className="absolute right-0 inset-y-0 w-px bg-gradient-to-b from-transparent via-white/30 to-transparent" />
 
         {/* Content */}
         <div className="relative z-10 flex flex-col items-center gap-8 px-16 text-center w-full max-w-sm mx-auto">
 
-          {/* Logo card — orange gradient matching Sign In button */}
+          {/* Logo card — white card on orange background */}
           <div
-            className="w-full rounded-3xl flex flex-col items-center justify-center px-10 py-10"
+            className="w-full rounded-3xl bg-white flex flex-col items-center justify-center px-10 py-10"
             style={{
-              background: "linear-gradient(135deg, oklch(0.750 0.170 65) 0%, oklch(0.680 0.190 55) 100%)",
-              boxShadow: "0 8px 40px oklch(0.750 0.170 65 / 0.40), 0 2px 12px rgba(0,0,0,0.10)",
-              border: "1px solid rgba(255,255,255,0.20)",
+              boxShadow: "0 8px 40px rgba(0,0,0,0.20), 0 2px 12px rgba(0,0,0,0.10)",
+              border: "1px solid rgba(255,255,255,0.60)",
             }}
           >
             <Image
-              src="/Logo_rev_no-tagline.svg"
+              src="/Logo_withTagline.svg"
               alt="Logikality"
-              width={180}
-              height={60}
+              width={240}
+              height={65}
               priority
-              style={{ width: "auto", height: "auto", maxWidth: 180 }}
+              style={{ width: "auto", height: "auto", maxWidth: 240 }}
             />
           </div>
 
           {/* Tagline */}
           <div className="flex flex-col items-center gap-3">
-            <p className="text-base font-medium text-neutral-700 leading-relaxed tracking-wide">
+            <p className="text-base font-medium text-white/90 leading-relaxed tracking-wide">
               Decision-ready AI for mortgage operations
             </p>
-            {/* Gradient rule */}
-            <div
-              className="h-0.5 w-16 rounded-full"
-              style={{ background: "linear-gradient(90deg, #f59e0b, #f97316, #d946ef)" }}
-            />
+            {/* White rule */}
+            <div className="h-0.5 w-16 rounded-full bg-white/40" />
             {/* Trust line */}
-            <p className="text-xs text-neutral-400 tracking-wider uppercase">
+            <p className="text-xs text-white/60 tracking-wider uppercase">
               Trusted by title professionals
             </p>
           </div>
