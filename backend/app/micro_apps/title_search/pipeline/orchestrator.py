@@ -547,6 +547,9 @@ async def stage_chain(order_id, org_id, db):
     analysis_agent = ChainAnalysisAgent(org_id)
     analysis_result = await analysis_agent.analyze(docs_for_chain)
 
+    # Build set of valid document IDs to guard against AI-hallucinated UUIDs
+    valid_doc_ids = {d.id for d in documents}
+
     # Insert chain links from AI result
     for cl in analysis_result.get("chain_links", []):
         doc_id = cl.get("document_id")
@@ -555,6 +558,9 @@ async def stage_chain(order_id, org_id, db):
                 doc_id = uuid.UUID(doc_id)
             except (ValueError, AttributeError):
                 doc_id = None
+        # Discard document_id if it doesn't exist in ta_documents (AI hallucination)
+        if doc_id and doc_id not in valid_doc_ids:
+            doc_id = None
         link = TAChainLink(
             org_id=org_id,
             order_id=order_id,
@@ -581,6 +587,9 @@ async def stage_chain(order_id, org_id, db):
                 _doc_id = uuid.UUID(_doc_id)
             except (ValueError, AttributeError):
                 _doc_id = None
+        # Discard document_id if it doesn't exist in ta_documents
+        if _doc_id and _doc_id not in valid_doc_ids:
+            _doc_id = None
         _cl_id = rf.get("chain_link_id")
         if _cl_id and not isinstance(_cl_id, uuid.UUID):
             try:
@@ -1805,12 +1814,19 @@ async def _replay_chain_cache(
             TAFlag.flag_type.notin_(["captcha_blocked", "missing_source"]),
         )
     )
+    # Build set of valid document IDs to guard against cached hallucinated UUIDs
+    valid_doc_ids = {row[0] for row in (await db.execute(
+        select(TADocument.id).where(TADocument.order_id == order_id, TADocument.org_id == org_id)
+    )).all()}
     for cl in cached_data["chain_links"]:
         doc_id = cl.get("document_id")
+        parsed_doc_id = uuid.UUID(doc_id) if doc_id else None
+        if parsed_doc_id and parsed_doc_id not in valid_doc_ids:
+            parsed_doc_id = None
         db.add(TAChainLink(
             org_id=org_id,
             order_id=order_id,
-            document_id=uuid.UUID(doc_id) if doc_id else None,
+            document_id=parsed_doc_id,
             position=cl["position"],
             link_type=cl["link_type"],
             from_party=cl.get("from_party"),
@@ -1821,11 +1837,14 @@ async def _replay_chain_cache(
         ))
     for f in cached_data["flags"]:
         doc_id = f.get("document_id")
+        parsed_flag_doc_id = uuid.UUID(doc_id) if doc_id else None
+        if parsed_flag_doc_id and parsed_flag_doc_id not in valid_doc_ids:
+            parsed_flag_doc_id = None
         cl_id = f.get("chain_link_id")
         db.add(TAFlag(
             org_id=org_id,
             order_id=order_id,
-            document_id=uuid.UUID(doc_id) if doc_id else None,
+            document_id=parsed_flag_doc_id,
             chain_link_id=uuid.UUID(cl_id) if cl_id else None,
             flag_type=f["flag_type"],
             severity=f["severity"],
