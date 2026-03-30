@@ -44,7 +44,7 @@ export default function AuthLayout({
           <div className="h-0.5 w-20 rounded-full" style={{ background: "linear-gradient(90deg, #f59e0b, #d946ef)" }} />
 
           {/* Description */}
-          <p className="text-sm text-neutral-400 leading-relaxed tracking-wide">
+          <p className="text-sm text-neutral-600 leading-relaxed tracking-wide">
             Decision-ready AI for mortgage operations
           </p>
 
