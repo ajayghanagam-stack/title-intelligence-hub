@@ -52,7 +52,7 @@ def create_app(session_factory_override=None) -> FastAPI:
     if session_factory_override:
         sf = session_factory_override
     else:
-        engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_size=5)
+        engine = create_async_engine(settings.effective_database_url, echo=False, pool_size=5)
         sf = async_sessionmaker(engine, expire_on_commit=False)
     app.add_middleware(MicroAppAccessMiddleware, session_factory=sf)
 

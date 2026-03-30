@@ -16,7 +16,7 @@ _session_factory = None
 def get_engine(settings: Settings = Depends(get_settings)):
     global _engine
     if _engine is None:
-        _engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_size=5)
+        _engine = create_async_engine(settings.effective_database_url, echo=False, pool_size=5)
     return _engine
 
 
@@ -25,7 +25,7 @@ def get_session_factory(settings: Settings | None = None):
     if _session_factory is None:
         if settings is None:
             settings = get_settings()
-        engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_size=5)
+        engine = create_async_engine(settings.effective_database_url, echo=False, pool_size=5)
         _session_factory = async_sessionmaker(engine, expire_on_commit=False)
     return _session_factory
 
@@ -35,7 +35,7 @@ async def get_db(
 ) -> AsyncGenerator[AsyncSession, None]:
     global _session_factory
     if _session_factory is None:
-        engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_size=5)
+        engine = create_async_engine(settings.effective_database_url, echo=False, pool_size=5)
         _session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with _session_factory() as session:
         yield session

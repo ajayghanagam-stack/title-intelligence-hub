@@ -24,19 +24,14 @@ aiofiles==24.1.0
 aiobotocore>=2.15
 
 # AI & LLM
-emergentintegrations==0.1.0
 litellm>=1.0
 anthropic>=0.20
 google-generativeai>=0.5
 
 # PDF & Image
 fpdf2==2.8.7
-CairoSVG==2.9.0
 pillow==10.4.0
 PyMuPDF>=1.23
-
-# Scraping
-playwright==1.58.0
 
 # Text matching
 rapidfuzz>=3.0

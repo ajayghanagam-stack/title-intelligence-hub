@@ -1,0 +1,49 @@
+modules = ["python-3.12", "nodejs-20", "bash", "web"]
+[agent]
+expertMode = true
+
+[nix]
+channel = "stable-25_05"
+packages = ["cargo", "libiconv", "libxcrypt", "postgresql", "rustc"]
+
+[userenv]
+
+[userenv.shared]
+ASYNC_DATABASE_URL = "postgresql+asyncpg://postgres:password@helium/heliumdb?ssl=disable"
+PIPELINE_BACKEND = "background_tasks"
+DEBUG = "true"
+STORAGE_PATH = "./storage"
+CORS_ORIGINS = "[\"http://localhost:5000\",\"http://localhost:3000\",\"https://localhost:5000\"]"
+NEXT_PUBLIC_API_URL = "http://localhost:8000"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash start.sh"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 8000
+externalPort = 8000

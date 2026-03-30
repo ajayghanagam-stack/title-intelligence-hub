@@ -46,7 +46,7 @@ async def run_single_benchmark(page_count: int) -> str:
     settings = get_settings()
     ensure_micro_app_models()
 
-    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    engine = create_async_engine(settings.effective_database_url, echo=False)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     storage = get_storage_provider(settings)
 

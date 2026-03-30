@@ -154,11 +154,15 @@ async def seed(session: AsyncSession) -> None:
     )
     customer_user = result.scalar_one_or_none()
     if customer_user is None:
+        customer_user_id = uuid.uuid4()
         customer_user = User(
+            id=customer_user_id,
+            auth_user_id=customer_user_id,
             email=CUSTOMER_EMAIL,
             full_name=CUSTOMER_FULL_NAME,
             password_hash=hash_password(CUSTOMER_PASSWORD),
             org_id=customer_org.id,
+            role="admin",
             is_platform_admin=False,
         )
         session.add(customer_user)
@@ -181,7 +185,7 @@ async def seed(session: AsyncSession) -> None:
             session.add(Subscription(
                 org_id=customer_org.id,
                 app_id=app_obj.id,
-                is_active=True,
+                status="active",
             ))
             print(f"  Subscribed {CUSTOMER_ORG_NAME} to {app_obj.name}")
         else:
@@ -226,7 +230,7 @@ async def seed(session: AsyncSession) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    engine = create_async_engine(settings.effective_database_url, echo=False)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     print("Seeding database...")

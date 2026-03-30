@@ -94,7 +94,7 @@ COUNTY_SOURCES = [
 
 async def seed():
     settings = get_settings()
-    engine = create_async_engine(str(settings.DATABASE_URL))
+    engine = create_async_engine(str(settings.effective_database_url))
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with session_factory() as db:

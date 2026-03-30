@@ -6,8 +6,24 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    # Database
+    # Database — supports both asyncpg (ASYNC_DATABASE_URL) and standard postgres (DATABASE_URL)
+    # On Replit, DATABASE_URL is set automatically as postgresql://...; ASYNC_DATABASE_URL
+    # wraps it with asyncpg driver for SQLAlchemy async engine use.
+    ASYNC_DATABASE_URL: str = ""
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@db:5432/title_intelligence_hub"
+
+    @property
+    def effective_database_url(self) -> str:
+        """Return the asyncpg-compatible URL for SQLAlchemy async engine."""
+        if self.ASYNC_DATABASE_URL:
+            return self.ASYNC_DATABASE_URL
+        url = self.DATABASE_URL
+        if url.startswith("postgresql://") or url.startswith("postgres://"):
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+            if "sslmode=disable" in url:
+                url = url.replace("sslmode=disable", "ssl=false")
+        return url
 
     # JWT Auth
     JWT_SECRET: str = "change-me-in-production"
