@@ -143,7 +143,7 @@ async def list_packs(
             except (json.JSONDecodeError, TypeError):
                 pass
     
-    # Convert to list of dicts with property address as buyer_name
+    # Convert to list of dicts with property address
     return [
         {
             "id": p.id,
@@ -152,7 +152,7 @@ async def list_packs(
             "current_stage": p.current_stage,
             "readiness_score": p.readiness_score,
             "created_at": p.created_at,
-            "buyer_name": property_addresses.get(p.id),  # Using buyer_name field for property address
+            "property_address": property_addresses.get(p.id),
         }
         for p in packs
     ]

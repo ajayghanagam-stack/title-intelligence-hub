@@ -33,7 +33,7 @@ interface RecentPack {
   status: string;
   created_at: string;
   readiness_score: number | null;
-  buyer_name: string | null;
+  property_address: string | null;
 }
 
 const customerNavItems = [
@@ -119,7 +119,7 @@ export function Sidebar() {
   // Poll while any pack is still processing so status updates in real time
   const hasProcessing = recentPacks.some((p) => p.status === "processing");
   // Also poll if any pack has no address yet (might be recently completed)
-  const hasNoAddress = recentPacks.some((p) => p.status === "completed" && !p.buyer_name);
+  const hasNoAddress = recentPacks.some((p) => p.status === "completed" && !p.property_address);
   
   useEffect(() => {
     if (!hasProcessing && !hasNoAddress) return;
@@ -294,7 +294,7 @@ export function Sidebar() {
                           "font-medium truncate leading-tight",
                           isActive ? "text-amber-800" : "text-sidebar-foreground/80 group-hover:text-sidebar-foreground"
                         )}>
-                          {pack.buyer_name || pack.name}
+                          {pack.property_address || pack.name}
                         </p>
                         <p className={cn(
                           "text-[10px] mt-0.5",
