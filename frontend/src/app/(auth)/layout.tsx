@@ -48,21 +48,6 @@ export default function AuthLayout({
             Decision-ready AI for mortgage operations
           </p>
 
-          {/* Feature list */}
-          <div className="flex flex-col gap-2 w-full mt-1">
-            {[
-              "Title Intelligence Analysis",
-              "Search & Abstracting",
-              "Tax Search",
-            ].map((feature) => (
-              <div
-                key={feature}
-                className="flex items-center justify-center text-sm text-neutral-500 bg-white/70 px-4 py-2.5 rounded-xl border border-neutral-100 shadow-sm"
-              >
-                {feature}
-              </div>
-            ))}
-          </div>
         </div>
       </div>
 
