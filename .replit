@@ -15,6 +15,7 @@ DEBUG = "true"
 STORAGE_PATH = "./storage"
 CORS_ORIGINS = "[\"http://localhost:5000\",\"http://localhost:3000\",\"https://localhost:5000\"]"
 NEXT_PUBLIC_API_URL = "http://localhost:8000"
+AI_PROVIDER = "claude"
 
 [workflows]
 runButton = "Project"
