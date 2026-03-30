@@ -190,33 +190,22 @@ def _text_block_row(pdf, text: str, w: float) -> None:
     pdf.multi_cell(w, _ROW_H, _clean(text), border=0, new_x="LMARGIN", new_y="NEXT")
 
 
-_ORG_LOGO_FILES: dict[str, str] = {
-    "6f72d2ca-8c30-41dd-96f4-732f89c096a4": "grid151-logo.jpeg",      # Grid 151
-    "cb710fb8-a35f-4155-81a9-baece3d46639": "society-title-logo.jpeg", # Society Title Co
-}
-
-_FALLBACK_LOGO = "logikality_logo.png"
-
-
 def _find_logo_path(org_id: uuid.UUID | None = None) -> str | None:
-    """Return the filesystem path for the org's logo (same image as the sidebar)."""
+    """Return the filesystem path for the Logikality logo used on all reports."""
+    # Always use the same logo as the sidebar footer (Logo_withTagline rendered to PNG)
+    candidates = [
+        "logikality_with_tagline.png",
+        "logikality_logo.png",  # fallback if tagline version hasn't been built yet
+    ]
     public_dirs = [
         Path(__file__).resolve().parents[5] / "frontend" / "public",
         Path(__file__).resolve().parents[4] / "frontend" / "public",
     ]
-
-    filename = _ORG_LOGO_FILES.get(str(org_id), _FALLBACK_LOGO) if org_id else _FALLBACK_LOGO
-
-    for pub in public_dirs:
-        p = pub / filename
-        if p.is_file():
-            return str(p)
-
-    # Fallback: try logikality logo in the same service directory
-    local = Path(__file__).parent / _FALLBACK_LOGO
-    if local.is_file():
-        return str(local)
-
+    for filename in candidates:
+        for pub in public_dirs:
+            p = pub / filename
+            if p.is_file():
+                return str(p)
     return None
 
 

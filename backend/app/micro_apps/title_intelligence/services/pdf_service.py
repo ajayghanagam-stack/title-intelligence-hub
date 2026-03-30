@@ -3,7 +3,26 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from fpdf import FPDF
+
+
+def _find_logikality_logo() -> str | None:
+    """Return path to the Logikality sidebar-footer logo (same as TSA reports)."""
+    candidates = [
+        "logikality_with_tagline.png",
+        "logikality_logo.png",
+    ]
+    public_dirs = [
+        Path(__file__).resolve().parents[6] / "frontend" / "public",
+        Path(__file__).resolve().parents[5] / "frontend" / "public",
+    ]
+    for filename in candidates:
+        for pub in public_dirs:
+            p = pub / filename
+            if p.is_file():
+                return str(p)
+    return None
 
 
 # Severity sort order for table rows
@@ -57,6 +76,12 @@ def generate_pack_report_pdf(
     pdf.set_auto_page_break(auto=True, margin=20)
     pdf.add_page()
     usable = pdf.w - pdf.l_margin - pdf.r_margin
+
+    # ── Logo (top-right, same as TSA report and sidebar footer) ──
+    logo_path = _find_logikality_logo()
+    if logo_path:
+        pdf.image(logo_path, x=pdf.w - 65, y=8, h=15)
+    pdf.ln(2)
 
     # ── Title ──
     pdf.set_font("Helvetica", "B", 16)

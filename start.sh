@@ -87,6 +87,42 @@ if [ -f "$CHROMIUM_DIR/chrome" ]; then
 fi
 echo "Playwright Chromium patch complete."
 
+# Render Logo_withTagline.svg → PNG for PDF reports (same logo as sidebar footer)
+TAGLINE_PNG="$ROOT_DIR/frontend/public/logikality_with_tagline.png"
+if [ ! -f "$TAGLINE_PNG" ]; then
+  echo "Generating logikality_with_tagline.png from SVG..."
+  python3 - << 'PYEOF'
+import asyncio, base64
+from pathlib import Path
+from playwright.async_api import async_playwright
+
+SVG = Path('frontend/public/Logo_withTagline.svg').read_text()
+OUT = 'frontend/public/logikality_with_tagline.png'
+
+async def run():
+    html = f"""<!DOCTYPE html><html><head><style>
+      *{{margin:0;padding:0;box-sizing:border-box;}}
+      body{{background:white;display:flex;align-items:center;justify-content:center;
+           width:600px;height:150px;overflow:hidden;}}
+      img{{max-width:580px;max-height:130px;object-fit:contain;}}
+    </style></head><body>
+      <img src="data:image/svg+xml;base64,{base64.b64encode(SVG.encode()).decode()}" />
+    </body></html>"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True, args=[
+            '--no-sandbox','--disable-dev-shm-usage','--single-process','--no-zygote','--disable-gpu'])
+        page = await browser.new_page(viewport={'width':600,'height':150})
+        await page.set_content(html, wait_until='networkidle')
+        img = await page.query_selector('img')
+        data = await img.screenshot(type='png')
+        Path(OUT).write_bytes(data)
+        await browser.close()
+        print(f'  Generated {OUT} ({len(data)} bytes)')
+
+asyncio.run(run())
+PYEOF
+fi
+
 # Run database migrations
 echo "Running database migrations..."
 cd "$BACKEND_DIR"
