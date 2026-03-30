@@ -157,8 +157,17 @@ async def stage_retrieve(order_id, org_id, db):
     For counties without pre-configured portals, uses AI discovery to find
     and cache portal URLs for nationwide coverage.
     CAPTCHA-blocked portals are flagged for manual retrieval.
+    Idempotent: deletes old raw documents and source assignments before inserting.
     """
     from app.micro_apps.title_search.services.geocoding import geocode_address
+
+    # Idempotent: delete old raw docs and source assignments on retry
+    await db.execute(
+        delete(TARawDocument).where(TARawDocument.order_id == order_id, TARawDocument.org_id == org_id)
+    )
+    await db.execute(
+        delete(TASourceAssignment).where(TASourceAssignment.order_id == order_id, TASourceAssignment.org_id == org_id)
+    )
     from app.micro_apps.title_search.services.real_data_fetcher import (
         fetch_property_data,
         PHENIX_TAX_PORTALS, PROPERTY_APPRAISER_PORTALS, ACCLAIM_PORTALS,
@@ -1748,12 +1757,19 @@ async def _replay_parse_cache(
     await db.execute(
         delete(TADocument).where(TADocument.order_id == order_id, TADocument.org_id == org_id)
     )
+    # Build set of valid raw document IDs to guard against stale cached references
+    valid_raw_ids = {row[0] for row in (await db.execute(
+        select(TARawDocument.id).where(TARawDocument.order_id == order_id, TARawDocument.org_id == org_id)
+    )).all()}
     for d in cached_docs:
         raw_doc_id = d.get("raw_document_id")
+        parsed_raw_id = uuid.UUID(raw_doc_id) if raw_doc_id else None
+        if parsed_raw_id and parsed_raw_id not in valid_raw_ids:
+            parsed_raw_id = None
         db.add(TADocument(
             org_id=org_id,
             order_id=order_id,
-            raw_document_id=uuid.UUID(raw_doc_id) if raw_doc_id else None,
+            raw_document_id=parsed_raw_id,
             doc_type=d["doc_type"],
             recording_date=d.get("recording_date"),
             recording_ref=d.get("recording_ref"),
