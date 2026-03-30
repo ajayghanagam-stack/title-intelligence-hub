@@ -80,6 +80,11 @@ const tsaNavItems = [
   },
 ];
 
+const ORG_LOGOS: Record<string, string> = {
+  "6f72d2ca-8c30-41dd-96f4-732f89c096a4": "/grid151-logo.jpeg",      // Grid 151
+  "cb710fb8-a35f-4155-81a9-baece3d46639": "/society-title-logo.jpeg", // Society Title Co
+};
+
 function PackStatusIcon({ status }: { status: string }) {
   switch (status) {
     case "completed":
@@ -124,7 +129,7 @@ function formatRelativeDate(dateStr: string): string {
 export function Sidebar() {
   const pathname = usePathname();
   const { isPlatformAdmin } = useAuth();
-  const { orgFetch } = useOrg();
+  const { orgFetch, currentOrgId } = useOrg();
   const [recentPacks, setRecentPacks] = useState<RecentPack[]>([]);
 
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
@@ -254,8 +259,12 @@ export function Sidebar() {
               }}
             >
               <Image
-                src="/society-title-logo.jpeg"
-                alt="Society Title"
+                src={
+                  currentOrgId && ORG_LOGOS[currentOrgId]
+                    ? ORG_LOGOS[currentOrgId]
+                    : "/society-title-logo.jpeg"
+                }
+                alt="Organization Logo"
                 width={224}
                 height={60}
                 priority
