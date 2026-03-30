@@ -369,10 +369,6 @@ async def generate_package_pdf(
     pdf.cell(0, 6, _clean(f"Product Type: {scope_label}"), new_x="LMARGIN", new_y="NEXT")
     order_ref = order.order_reference or pkg.package_number
     pdf.cell(0, 6, _clean(f"Order/Loan#: {order_ref}"), new_x="LMARGIN", new_y="NEXT")
-
-    pdf.set_xy(pdf.w - 70, pdf.get_y() - 12)
-    pdf.cell(60, 6, _clean(f"Order Date: {order_date}"), align="R")
-    pdf.set_xy(pdf.l_margin, pdf.get_y() + 14)
     pdf.ln(2)
 
     # ---- 1. PROPERTY INFORMATION ----
