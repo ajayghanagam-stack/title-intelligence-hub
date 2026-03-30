@@ -252,11 +252,10 @@ export function Sidebar() {
             className="flex items-center w-full group"
           >
             <div
-              className="w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:scale-[1.02]"
+              className="w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:scale-[1.02] flex items-center justify-start"
               style={{
                 boxShadow: "0 4px 18px rgba(0,0,0,0.18), 0 1px 4px rgba(0,0,0,0.10)",
                 border: "1px solid rgba(255,255,255,0.12)",
-                height: 56,
               }}
             >
               <Image
@@ -267,12 +266,14 @@ export function Sidebar() {
                 }
                 alt="Organization Logo"
                 width={224}
-                height={56}
+                height={224}
                 priority
                 style={{
                   width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
+                  height: "auto",
+                  maxHeight: 64,
+                  objectFit: "contain",
+                  objectPosition: "left center",
                   display: "block",
                 }}
               />
