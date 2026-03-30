@@ -70,21 +70,22 @@ export default function AuthLayout({
         {/* Content */}
         <div className="relative z-10 flex flex-col items-center gap-8 px-16 text-center w-full max-w-sm mx-auto">
 
-          {/* Logo card — elevated with spotlight shadow */}
+          {/* Logo card — orange gradient matching Sign In button */}
           <div
-            className="w-full rounded-3xl bg-white flex flex-col items-center justify-center px-10 py-10"
+            className="w-full rounded-3xl flex flex-col items-center justify-center px-10 py-10"
             style={{
-              boxShadow: "0 8px 40px rgba(251,191,36,0.18), 0 2px 12px rgba(0,0,0,0.06)",
-              border: "1px solid rgba(251,191,36,0.20)",
+              background: "linear-gradient(135deg, oklch(0.750 0.170 65) 0%, oklch(0.680 0.190 55) 100%)",
+              boxShadow: "0 8px 40px oklch(0.750 0.170 65 / 0.40), 0 2px 12px rgba(0,0,0,0.10)",
+              border: "1px solid rgba(255,255,255,0.20)",
             }}
           >
             <Image
-              src="/Logo_withTagline.svg"
+              src="/Logo_rev_no-tagline.svg"
               alt="Logikality"
-              width={240}
-              height={65}
+              width={180}
+              height={60}
               priority
-              style={{ width: "auto", height: "auto", maxWidth: 240 }}
+              style={{ width: "auto", height: "auto", maxWidth: 180 }}
             />
           </div>
 
