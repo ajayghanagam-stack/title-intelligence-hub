@@ -194,7 +194,7 @@ export function Sidebar() {
             className="flex items-center"
           >
             <Image
-              src="/Logo_rev_no-tagline.svg"
+              src="/Logo_withTagline.svg"
               alt="Logikality"
               width={140}
               height={36}
@@ -355,7 +355,7 @@ export function Sidebar() {
       {/* Footer with Logikality Logo */}
       <div className="p-4 border-t border-sidebar-border flex flex-col items-center gap-2">
         <Image
-          src="/Logo_rev_no-tagline.svg"
+          src="/Logo_withTagline.svg"
           alt="Logikality"
           width={100}
           height={26}
