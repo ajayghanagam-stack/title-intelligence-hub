@@ -728,18 +728,27 @@ class TitleExaminerAgent(BaseAIService):
                     all_sections.append(s.model_copy())
 
         # Extractions — deduplicate by (extraction_type, label), keep higher confidence
+        # Sort by key so downstream flag generation (chain building, discrepancy detection)
+        # receives a stable, deterministic list regardless of batch completion order.
         extraction_map: dict[tuple[str, str], ExaminerExtraction] = {}
         for br in batch_results:
             for e in br.extractions:
                 key = (e.extraction_type, e.label)
                 if key not in extraction_map or e.confidence > extraction_map[key].confidence:
                     extraction_map[key] = e
-        all_extractions = list(extraction_map.values())
+        all_extractions = sorted(extraction_map.values(), key=lambda e: (e.extraction_type, e.label))
 
         # Flags — concatenate all (normalization via flag_rules later)
+        # Sort by (flag_type, first evidence page) so normalize_flags receives a
+        # consistent input order even when batches complete in different sequences.
         all_flags: list[ExaminerFlag] = []
         for br in batch_results:
             all_flags.extend(br.flags)
+        all_flags.sort(key=lambda f: (
+            f.flag_type,
+            min((r.page_number if hasattr(r, "page_number") else r.get("page_number", 0)
+                 for r in f.evidence_refs), default=0),
+        ))
 
         return ExaminerConsolidatedResult(
             page_transcriptions=all_transcriptions,

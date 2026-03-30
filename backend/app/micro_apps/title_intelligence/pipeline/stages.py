@@ -892,6 +892,31 @@ async def _stage_examine_native_pdf(
     if content_page_map:
         consolidated = _remap_page_numbers(consolidated, content_page_map)
 
+    # Race-condition guard: re-check the org-scoped cache before any DB writes.
+    # If another pack processed the same document concurrently and already saved
+    # the cache while we were running the AI call, replay their result instead of
+    # ours. This guarantees both packs produce identical flag sets for identical
+    # documents even when two pipelines start at the same time.
+    if await storage.exists(cache_path):
+        cached_data = json.loads(await storage.read(cache_path))
+        await _replay_examiner_cache(db, org_id, pack_id, cached_data, pages)
+        await _create_text_chunks_from_transcriptions(
+            db, org_id, pack_id, cached_data.get("page_transcriptions", [])
+        )
+        page_map_rc = {p.page_number: p for p in pages}
+        for pt_entry in cached_data.get("page_types", []):
+            page = page_map_rc.get(pt_entry.get("page_number"))
+            if page:
+                page.page_type = pt_entry.get("page_type", "content")
+        await db.commit()
+        log.info(
+            f"Race-condition guard: concurrent cache hit — replayed "
+            f"{len(cached_data.get('sections', []))} sections, "
+            f"{len(cached_data.get('extractions', []))} extractions, "
+            f"{len(cached_data.get('flags', []))} flags"
+        )
+        return
+
     # Write consolidated results — same logic as legacy examine
     await db.execute(delete(Extraction).where(Extraction.pack_id == pack_id, Extraction.org_id == org_id))
     await db.execute(delete(Section).where(Section.pack_id == pack_id, Section.org_id == org_id))
