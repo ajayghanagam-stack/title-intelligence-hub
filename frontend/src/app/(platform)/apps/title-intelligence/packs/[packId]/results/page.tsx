@@ -146,7 +146,8 @@ export default function ResultsPage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "title_intelligence_report.pdf";
+      const nameSlug = (pack?.name || packName || "report").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 60);
+      a.download = `${nameSlug}_title_intelligence_report.pdf`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);

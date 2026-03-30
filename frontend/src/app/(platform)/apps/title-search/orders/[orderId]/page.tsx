@@ -69,7 +69,9 @@ export default function OrderDetailPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `title-search-${orderId.slice(0, 8)}.pdf`;
+      const orderLabel = order?.property_address || order?.order_reference || orderId.slice(0, 8);
+      const nameSlug = orderLabel.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 60);
+      a.download = `${nameSlug}_title_search.pdf`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
