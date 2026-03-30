@@ -256,6 +256,7 @@ export function Sidebar() {
               style={{
                 boxShadow: "0 4px 18px rgba(0,0,0,0.18), 0 1px 4px rgba(0,0,0,0.10)",
                 border: "1px solid rgba(255,255,255,0.12)",
+                height: 56,
               }}
             >
               <Image
@@ -266,9 +267,14 @@ export function Sidebar() {
                 }
                 alt="Organization Logo"
                 width={224}
-                height={60}
+                height={56}
                 priority
-                style={{ width: "100%", height: "auto", display: "block" }}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  display: "block",
+                }}
               />
             </div>
           </Link>
