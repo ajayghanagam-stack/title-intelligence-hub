@@ -816,7 +816,7 @@ def _parse_coj_detail(text: str) -> dict:
             # Skip header row
             if stripped.startswith("Book/Page"):
                 continue
-            # Pattern: "17887-01785	2/10/2017	$259,000.00	SW - Special Warranty	Qualified	Improved"
+            # Pattern: "17887-01785     2/10/2017       $259,000.00     SW - Special Warranty   Qualified       Improved"
             parts = stripped.split("\t")
             if len(parts) >= 4:
                 m_price = re.search(r"\$([\d,]+(?:\.\d+)?)", parts[2] if len(parts) > 2 else "")
@@ -1011,7 +1011,17 @@ async def fetch_property_data(
     )
 
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
+        browser = await playwright.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-setuid-sandbox",
+                "--single-process",
+                "--no-zygote",
+                "--disable-gpu",
+            ],
+        )
 
         try:
             # Source 1: Tax/Property data
