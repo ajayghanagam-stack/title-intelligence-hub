@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useOrg } from "@/hooks/use-org";
 import { apiFetchBlob } from "@/lib/api";
@@ -98,9 +98,11 @@ export default function DocumentsPage() {
   const [showSections, setShowSections] = useState(false);
   const [zoomIndex, setZoomIndex] = useState(DEFAULT_ZOOM_INDEX);
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
+  const [highlightSnippet, setHighlightSnippet] = useState<string | null>(null);
 
   const { showToast } = useToast();
   const thumbsRef = useRef<HTMLDivElement>(null);
+  const highlightRef = useRef<HTMLElement | null>(null);
 
   const zoom = ZOOM_LEVELS[zoomIndex];
 
@@ -118,6 +120,12 @@ export default function DocumentsPage() {
         } else if (data.length > 0) {
           setSelectedPage(data[0].page_number);
         }
+
+        const snippet = searchParams.get("highlight");
+        if (snippet) {
+          setHighlightSnippet(snippet);
+          setShowOcr(true);
+        }
         
         // Trigger pre-rendering of first 20 pages in background
         if (data.length > 0) {
@@ -129,6 +137,13 @@ export default function DocumentsPage() {
       .catch(() => { setPages([]); showToast("error", "Failed to load pages"); })
       .finally(() => setLoading(false));
   }, [orgFetch, packId, searchParams]);
+
+  // Scroll to highlighted text once OCR panel renders it
+  useEffect(() => {
+    if (highlightSnippet && showOcr && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [highlightSnippet, showOcr, selectedPage]);
 
   // Fetch sections
   useEffect(() => {
@@ -192,6 +207,19 @@ export default function DocumentsPage() {
     : [...sections]
         .filter((s) => selectedPage >= s.start_page && selectedPage <= s.end_page)
         .sort((a, b) => b.start_page - a.start_page)[0] || null;
+
+  // Split OCR text around the highlight snippet for rendering
+  const ocrParts = useMemo(() => {
+    const text = pages.find((p) => p.page_number === selectedPage)?.ocr_text ?? "";
+    if (!highlightSnippet || !text) return null;
+    const idx = text.indexOf(highlightSnippet);
+    if (idx === -1) return null;
+    return {
+      before: text.slice(0, idx),
+      match: text.slice(idx, idx + highlightSnippet.length),
+      after: text.slice(idx + highlightSnippet.length),
+    };
+  }, [pages, selectedPage, highlightSnippet]);
 
   if (loading) {
     return (
@@ -461,7 +489,20 @@ export default function DocumentsPage() {
               <div className="ocr-text-overlay p-4">
                 {currentPage.ocr_text ? (
                   <pre className="text-[13px] whitespace-pre-wrap font-mono leading-relaxed text-foreground/70 selection:bg-amber-200/40">
-                    {currentPage.ocr_text}
+                    {ocrParts ? (
+                      <>
+                        {ocrParts.before}
+                        <mark
+                          ref={(el) => { highlightRef.current = el; }}
+                          className="bg-amber-300/70 text-amber-950 rounded-sm px-0.5 not-italic font-semibold"
+                        >
+                          {ocrParts.match}
+                        </mark>
+                        {ocrParts.after}
+                      </>
+                    ) : (
+                      currentPage.ocr_text
+                    )}
                   </pre>
                 ) : (
                   <div className="flex flex-col items-center justify-center py-12 text-center">

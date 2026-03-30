@@ -54,7 +54,7 @@ interface FlagRowProps {
   onToggle: (id: string) => void;
   onQuickAction: (flagId: string, decision: ReviewDecision) => void;
   onOpenDetail: (flag: Flag) => void;
-  onNavigateToPage: (pageNumber: number) => void;
+  onNavigateToPage: (pageNumber: number, textSnippet?: string) => void;
 }
 
 function getRequiredAction(flag: Flag): string {
@@ -125,7 +125,7 @@ const FlagRow = memo(function FlagRow({
         <div className="shrink-0 w-[120px] pt-3 pb-3 pr-2 hidden lg:block">
           {flag.evidence_refs.length > 0 ? (
             <button
-              onClick={(e) => { e.stopPropagation(); onNavigateToPage(flag.evidence_refs[0].page_number); }}
+              onClick={(e) => { e.stopPropagation(); onNavigateToPage(flag.evidence_refs[0].page_number, flag.evidence_refs[0].text_snippet); }}
               className="text-[12px] text-primary hover:text-primary/80 hover:underline font-medium transition-colors"
             >
               {docRef}
@@ -166,7 +166,7 @@ const FlagRow = memo(function FlagRow({
                 {flag.evidence_refs.map((ref, i) => (
                   <div key={i} className="flex items-start gap-2">
                     <button
-                      onClick={(e) => { e.stopPropagation(); onNavigateToPage(ref.page_number); }}
+                      onClick={(e) => { e.stopPropagation(); onNavigateToPage(ref.page_number, ref.text_snippet); }}
                       className="shrink-0 inline-flex items-center gap-1 text-[11px] text-primary font-medium bg-primary/5 hover:bg-primary/10 px-2 py-0.5 rounded cursor-pointer transition-colors"
                     >
                       <FileText className="h-3 w-3" />Page {ref.page_number}
@@ -254,8 +254,10 @@ export function FlagsTable({
   const handleOpenDetail = useCallback((flag: Flag) => setSelectedFlag(flag), []);
 
   const handleNavigateToPage = useCallback(
-    (pageNumber: number) => {
-      router.push(`/apps/title-intelligence/packs/${packId}/documents?page=${pageNumber}`);
+    (pageNumber: number, textSnippet?: string) => {
+      const params = new URLSearchParams({ page: String(pageNumber) });
+      if (textSnippet) params.set("highlight", textSnippet);
+      router.push(`/apps/title-intelligence/packs/${packId}/documents?${params.toString()}`);
     },
     [router, packId]
   );
