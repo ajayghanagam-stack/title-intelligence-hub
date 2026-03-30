@@ -113,7 +113,6 @@ export interface Pack {
   page_count?: number | null;
   title_company?: string | null;
   property_address?: string | null;
-  property_address?: string | null;  // Property address from list endpoint
 }
 
 export interface StageStatus {

@@ -116,7 +116,7 @@ export default function ResultsPage() {
     try {
       const data = await orgFetch<Pack>(`/api/v1/apps/title-intelligence/packs/${packId}`);
       setPack(data);
-      setPackName(data.name);
+      setPackName(data.property_address || data.name);
     } catch { /* non-critical */ }
   }, [orgFetch, packId]);
 
@@ -223,9 +223,10 @@ export default function ResultsPage() {
     return await orgFetch<Recommendation>(`/api/v1/apps/title-intelligence/packs/${packId}/flags/${flagId}/recommend`, { method: "POST" });
   };
 
-  const propertyAddress = findExtraction(extractions, "policy_info", "address", "property address", "full_address")
+  const propertyAddress = pack?.property_address
+    || findExtraction(extractions, "policy_info", "address", "property address", "full_address")
     || findExtraction(extractions, "property", "address", "property address", "full_address", "insured property");
-  const displayTitle = propertyAddress || packName || "Analysis Results";
+  const displayTitle = propertyAddress || pack?.name || packName || "Analysis Results";
   const orderNumber = findExtraction(extractions, "policy_info", "commitment number", "order number", "order no", "commitment_number")
     || findExtraction(extractions, "property", "commitment number", "order number", "order no");
   const commitmentDate = findExtraction(extractions, "policy_info", "effective date", "commitment date", "effective_date")
