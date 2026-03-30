@@ -190,16 +190,33 @@ def _text_block_row(pdf, text: str, w: float) -> None:
     pdf.multi_cell(w, _ROW_H, _clean(text), border=0, new_x="LMARGIN", new_y="NEXT")
 
 
-def _find_logo_path() -> str | None:
-    # Prefer the high-res converted PNG from the SVG source
-    candidates = [
-        Path(__file__).parent / "logikality_logo.png",
-        Path(__file__).resolve().parents[5] / "frontend" / "public" / "logikality_logo.png",
-        Path(__file__).resolve().parents[4] / "frontend" / "public" / "logikality_logo.png",
+_ORG_LOGO_FILES: dict[str, str] = {
+    "6f72d2ca-8c30-41dd-96f4-732f89c096a4": "grid151-logo.jpeg",      # Grid 151
+    "cb710fb8-a35f-4155-81a9-baece3d46639": "society-title-logo.jpeg", # Society Title Co
+}
+
+_FALLBACK_LOGO = "logikality_logo.png"
+
+
+def _find_logo_path(org_id: uuid.UUID | None = None) -> str | None:
+    """Return the filesystem path for the org's logo (same image as the sidebar)."""
+    public_dirs = [
+        Path(__file__).resolve().parents[5] / "frontend" / "public",
+        Path(__file__).resolve().parents[4] / "frontend" / "public",
     ]
-    for p in candidates:
+
+    filename = _ORG_LOGO_FILES.get(str(org_id), _FALLBACK_LOGO) if org_id else _FALLBACK_LOGO
+
+    for pub in public_dirs:
+        p = pub / filename
         if p.is_file():
             return str(p)
+
+    # Fallback: try logikality logo in the same service directory
+    local = Path(__file__).parent / _FALLBACK_LOGO
+    if local.is_file():
+        return str(local)
+
     return None
 
 
@@ -351,9 +368,12 @@ async def generate_package_pdf(
         order_date = order.created_at.strftime("%m/%d/%Y")
 
     # ---- Header: Logo + Order info ----
-    logo_path = _find_logo_path()
+    logo_path = _find_logo_path(org_id)
     if logo_path:
-        pdf.image(logo_path, x=pdf.w - 55, y=10, w=45)
+        # Constrain logo to max height of 15mm (mirrors sidebar height:56px behaviour).
+        # For square logos (e.g. Grid 151 200×200) use h= to control height;
+        # for wide banners (e.g. Society Title 160×40) width naturally fits.
+        pdf.image(logo_path, x=pdf.w - 55, y=10, h=15)
 
     pdf.set_font(_FONT, "", 10)
     scope_label = "Full Search" if is_full_search else "Current Owner Search"
