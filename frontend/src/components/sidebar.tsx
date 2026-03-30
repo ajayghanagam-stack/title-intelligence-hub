@@ -177,15 +177,12 @@ export function Sidebar() {
             className="flex items-center"
           >
             <Image
-              src="/society-title-logo.svg"
+              src="/society-title-logo.jpeg"
               alt="Society Title"
               width={160}
-              height={40}
+              height={44}
               priority
-              onError={(e) => {
-                // Fallback if logo doesn't exist
-                e.currentTarget.style.display = 'none';
-              }}
+              style={{ height: "auto", borderRadius: "6px" }}
             />
           </Link>
         ) : (
