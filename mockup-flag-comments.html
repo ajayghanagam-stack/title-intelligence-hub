@@ -20,7 +20,7 @@
   .flags-table { width: 100%; border-collapse: collapse; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
   .flags-table th { text-align: left; padding: 12px 16px; font-size: 12px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; }
   .flags-table td { padding: 14px 16px; border-bottom: 1px solid #f1f5f9; vertical-align: top; font-size: 14px; }
-  .flags-table tr.flag-row { cursor: pointer; transition: background 0.15s; }
+  .flags-table tr.flag-row { transition: background 0.15s; }
   .flags-table tr.flag-row:hover { background: #f8fafc; }
 
   /* Severity badges */
@@ -29,57 +29,51 @@
   .badge.high { background: #fff7ed; color: #ea580c; border-color: #fed7aa; }
   .badge.medium { background: #fefce8; color: #ca8a04; border-color: #fef08a; }
 
-  /* Comment button in row */
-  .comment-btn { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; border: 1px solid #e2e8f0; background: white; color: #64748b; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
-  .comment-btn:hover { background: #f1f5f9; border-color: #cbd5e1; color: #334155; }
-  .comment-btn.has-comments { background: #eff6ff; border-color: #bfdbfe; color: #2563eb; }
-  .comment-btn svg { width: 14px; height: 14px; }
-  .comment-count { font-weight: 600; }
-
-  /* Action buttons row */
-  .actions-cell { display: flex; align-items: center; gap: 8px; }
-
-  /* Status badge */
-  .status-open { color: #64748b; font-size: 12px; font-style: italic; }
-
-  /* Expanded comment thread */
-  .comment-thread { display: none; }
-  .comment-thread.open { display: table-row; }
-  .comment-thread td { padding: 0 16px 16px 16px; background: #f8fafc; }
-  .thread-container { background: white; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; max-width: 700px; margin-left: 40px; }
-  .thread-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #f1f5f9; background: #fafbfc; }
-  .thread-header span { font-size: 13px; font-weight: 600; color: #475569; }
-  .thread-close { background: none; border: none; cursor: pointer; color: #94a3b8; font-size: 18px; line-height: 1; }
-
-  /* Individual comment */
-  .comment { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; }
-  .comment:last-of-type { border-bottom: 1px solid #f1f5f9; }
-  .comment-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-  .avatar { width: 24px; height: 24px; border-radius: 50%; background: #6366f1; color: white; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; }
-  .avatar.green { background: #16a34a; }
-  .comment-author { font-size: 13px; font-weight: 600; color: #334155; }
-  .comment-time { font-size: 12px; color: #94a3b8; }
-  .comment-text { font-size: 13px; color: #475569; line-height: 1.5; margin-left: 32px; }
-
-  /* Add comment input */
-  .add-comment { display: flex; align-items: flex-start; gap: 8px; padding: 12px 14px; background: #fafbfc; }
-  .add-comment textarea { flex: 1; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; font-size: 13px; font-family: inherit; resize: none; min-height: 36px; line-height: 1.4; outline: none; transition: border-color 0.15s; }
-  .add-comment textarea:focus { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
-  .add-comment textarea::placeholder { color: #94a3b8; }
-  .submit-btn { padding: 7px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; border: none; background: #4f46e5; color: white; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
-  .submit-btn:hover { background: #4338ca; }
-
-  /* Quick action buttons */
-  .quick-actions { display: flex; gap: 6px; margin-top: 8px; }
-  .action-btn { padding: 4px 10px; border-radius: 5px; font-size: 11px; font-weight: 500; border: 1px solid; cursor: pointer; }
-  .action-btn.approve { background: #f0fdf4; color: #16a34a; border-color: #bbf7d0; }
-  .action-btn.reject { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
-  .action-btn.escalate { background: #fffbeb; color: #d97706; border-color: #fde68a; }
-
   /* Description truncation */
   .desc { color: #475569; line-height: 1.4; }
   .desc-truncated { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .page-ref { font-size: 12px; color: #6366f1; font-weight: 500; margin-top: 4px; }
+
+  /* Inline note textarea */
+  .note-cell { padding-top: 8px !important; }
+  .note-wrapper { position: relative; }
+  .note-wrapper textarea {
+    width: 100%;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 38px;
+    line-height: 1.4;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    color: #334155;
+    background: #fafbfc;
+  }
+  .note-wrapper textarea:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 2px rgba(99,102,241,0.15);
+    background: white;
+  }
+  .note-wrapper textarea::placeholder { color: #94a3b8; }
+
+  /* Save indicator */
+  .save-status {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-top: 4px;
+    height: 16px;
+    transition: opacity 0.3s;
+  }
+  .save-status.saved { color: #16a34a; }
+
+  /* Textarea with existing content styling */
+  .note-wrapper textarea.has-content {
+    background: white;
+    border-color: #c7d2fe;
+  }
 
   /* Annotation labels */
   .annotation { display: block; margin-top: 20px; margin-bottom: 8px; padding: 8px 14px; background: #dbeafe; color: #1e40af; font-size: 13px; font-weight: 600; border-radius: 6px; border-left: 4px solid #3b82f6; }
@@ -98,8 +92,7 @@
   <div class="tab">Review<span class="count">(1)</span></div>
 </div>
 
-<!-- Annotation: default state -->
-<div class="annotation">STATE 1 &mdash; Default view. Each row has a comment button with count. Click the button to expand the thread.</div>
+<div class="annotation">Each flag row has an inline "Note" textarea. Users type directly, and it auto-saves on blur or after a short pause. No threads, no history &mdash; just one editable note per flag.</div>
 
 <table class="flags-table">
   <thead>
@@ -108,13 +101,13 @@
       <th style="width:90px">Severity</th>
       <th>Description</th>
       <th style="width:120px">Page</th>
-      <th style="width:140px; text-align:right">Actions</th>
+      <th style="width:280px">Note</th>
     </tr>
   </thead>
   <tbody>
 
-    <!-- FLAG ROW 1: Critical, with 2 comments already -->
-    <tr class="flag-row" onclick="toggleThread('thread1')">
+    <!-- FLAG ROW 1: Critical, has a saved note -->
+    <tr class="flag-row">
       <td style="font-weight:600; color:#64748b">EX-001</td>
       <td><span class="badge critical">Critical</span></td>
       <td>
@@ -122,49 +115,15 @@
         <div class="page-ref">Page 12, 15</div>
       </td>
       <td style="font-size:13px; color:#64748b">Schedule B-II</td>
-      <td>
-        <div class="actions-cell" style="justify-content:flex-end">
-          <button class="comment-btn has-comments" onclick="event.stopPropagation(); toggleThread('thread1')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            <span class="comment-count">2</span>
-          </button>
+      <td class="note-cell">
+        <div class="note-wrapper">
+          <textarea class="has-content" rows="2" placeholder="Add a note..." oninput="onNoteChange(this)" onblur="saveNote(this)">Contacted First National Bank - payoff letter expected within 3 business days. Hold as open until received.</textarea>
+          <div class="save-status saved">Saved</div>
         </div>
       </td>
     </tr>
 
-    <!-- COMMENT THREAD 1: Expanded (has 2 existing comments + input) -->
-    <tr class="comment-thread open" id="thread1">
-      <td colspan="5">
-        <div class="thread-container">
-          <div class="thread-header">
-            <span>Comments (2)</span>
-            <button class="thread-close" onclick="toggleThread('thread1')">&times;</button>
-          </div>
-          <div class="comment">
-            <div class="comment-meta">
-              <div class="avatar">JD</div>
-              <span class="comment-author">John Davis</span>
-              <span class="comment-time">2 hours ago</span>
-            </div>
-            <div class="comment-text">Contacted First National Bank - they confirmed payoff letter is being sent. Expected within 3 business days.</div>
-          </div>
-          <div class="comment">
-            <div class="comment-meta">
-              <div class="avatar green">SM</div>
-              <span class="comment-author">Sarah Mitchell</span>
-              <span class="comment-time">45 min ago</span>
-            </div>
-            <div class="comment-text">Good. Let's hold this as open until we have the payoff statement in hand. Flag for follow-up on Friday.</div>
-          </div>
-          <div class="add-comment">
-            <textarea rows="1" placeholder="Add a comment..." onfocus="this.rows=2" onblur="if(!this.value)this.rows=1"></textarea>
-            <button class="submit-btn">Post</button>
-          </div>
-        </div>
-      </td>
-    </tr>
-
-    <!-- FLAG ROW 2: Critical, no comments -->
+    <!-- FLAG ROW 2: Critical, empty note -->
     <tr class="flag-row">
       <td style="font-weight:600; color:#64748b">EX-002</td>
       <td><span class="badge critical">Critical</span></td>
@@ -173,75 +132,32 @@
         <div class="page-ref">Page 18</div>
       </td>
       <td style="font-size:13px; color:#64748b">Schedule B-II</td>
-      <td>
-        <div class="actions-cell" style="justify-content:flex-end">
-          <button class="comment-btn" onclick="event.stopPropagation(); toggleThread('thread2')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          </button>
+      <td class="note-cell">
+        <div class="note-wrapper">
+          <textarea rows="2" placeholder="Add a note..." oninput="onNoteChange(this)" onblur="saveNote(this)"></textarea>
+          <div class="save-status"></div>
         </div>
       </td>
     </tr>
 
-    <!-- COMMENT THREAD 2: Collapsed by default -->
-    <tr class="comment-thread" id="thread2">
-      <td colspan="5">
-        <div class="thread-container">
-          <div class="thread-header">
-            <span>Comments (0)</span>
-            <button class="thread-close" onclick="toggleThread('thread2')">&times;</button>
-          </div>
-          <div class="add-comment">
-            <textarea rows="1" placeholder="Add a comment..." onfocus="this.rows=2" onblur="if(!this.value)this.rows=1"></textarea>
-            <button class="submit-btn">Post</button>
-          </div>
-        </div>
-      </td>
-    </tr>
-
-    <!-- FLAG ROW 3: High (Warning), 1 comment -->
+    <!-- FLAG ROW 3: High, has a saved note -->
     <tr class="flag-row">
       <td style="font-weight:600; color:#64748b">EX-003</td>
       <td><span class="badge high">High</span></td>
       <td>
-        <div class="desc desc-truncated"><strong>Easement conflict</strong> &mdash; Utility easement recorded in favor of Florida Power & Light (OR Book 4521, Page 112) may encroach on proposed building footprint per survey note.</div>
+        <div class="desc desc-truncated"><strong>Easement conflict</strong> &mdash; Utility easement recorded in favor of Florida Power &amp; Light (OR Book 4521, Page 112) may encroach on proposed building footprint per survey note.</div>
         <div class="page-ref">Page 8, 22</div>
       </td>
       <td style="font-size:13px; color:#64748b">Schedule B-II</td>
-      <td>
-        <div class="actions-cell" style="justify-content:flex-end">
-          <button class="comment-btn has-comments" onclick="event.stopPropagation(); toggleThread('thread3')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            <span class="comment-count">1</span>
-          </button>
+      <td class="note-cell">
+        <div class="note-wrapper">
+          <textarea class="has-content" rows="2" placeholder="Add a note..." oninput="onNoteChange(this)" onblur="saveNote(this)">Requesting updated survey from client to confirm 10ft clearance from building line.</textarea>
+          <div class="save-status saved">Saved</div>
         </div>
       </td>
     </tr>
 
-    <!-- COMMENT THREAD 3 -->
-    <tr class="comment-thread" id="thread3">
-      <td colspan="5">
-        <div class="thread-container">
-          <div class="thread-header">
-            <span>Comments (1)</span>
-            <button class="thread-close" onclick="toggleThread('thread3')">&times;</button>
-          </div>
-          <div class="comment">
-            <div class="comment-meta">
-              <div class="avatar">JD</div>
-              <span class="comment-author">John Davis</span>
-              <span class="comment-time">1 hour ago</span>
-            </div>
-            <div class="comment-text">Survey shows the easement is 10ft from the building line. Requesting updated survey from client to confirm clearance.</div>
-          </div>
-          <div class="add-comment">
-            <textarea rows="1" placeholder="Add a comment..." onfocus="this.rows=2" onblur="if(!this.value)this.rows=1"></textarea>
-            <button class="submit-btn">Post</button>
-          </div>
-        </div>
-      </td>
-    </tr>
-
-    <!-- FLAG ROW 4: Medium (Warning) -->
+    <!-- FLAG ROW 4: Medium, empty -->
     <tr class="flag-row">
       <td style="font-weight:600; color:#64748b">EX-004</td>
       <td><span class="badge medium">Medium</span></td>
@@ -250,31 +166,15 @@
         <div class="page-ref">Page 3, 7</div>
       </td>
       <td style="font-size:13px; color:#64748b">Schedule A</td>
-      <td>
-        <div class="actions-cell" style="justify-content:flex-end">
-          <button class="comment-btn" onclick="event.stopPropagation(); toggleThread('thread4')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          </button>
+      <td class="note-cell">
+        <div class="note-wrapper">
+          <textarea rows="2" placeholder="Add a note..." oninput="onNoteChange(this)" onblur="saveNote(this)"></textarea>
+          <div class="save-status"></div>
         </div>
       </td>
     </tr>
 
-    <tr class="comment-thread" id="thread4">
-      <td colspan="5">
-        <div class="thread-container">
-          <div class="thread-header">
-            <span>Comments (0)</span>
-            <button class="thread-close" onclick="toggleThread('thread4')">&times;</button>
-          </div>
-          <div class="add-comment">
-            <textarea rows="1" placeholder="Add a comment..." onfocus="this.rows=2" onblur="if(!this.value)this.rows=1"></textarea>
-            <button class="submit-btn">Post</button>
-          </div>
-        </div>
-      </td>
-    </tr>
-
-    <!-- FLAG ROW 5: Medium (Warning) -->
+    <!-- FLAG ROW 5: Medium, empty -->
     <tr class="flag-row">
       <td style="font-weight:600; color:#64748b">EX-005</td>
       <td><span class="badge medium">Medium</span></td>
@@ -283,26 +183,10 @@
         <div class="page-ref">Page 4</div>
       </td>
       <td style="font-size:13px; color:#64748b">Schedule A</td>
-      <td>
-        <div class="actions-cell" style="justify-content:flex-end">
-          <button class="comment-btn" onclick="event.stopPropagation(); toggleThread('thread5')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          </button>
-        </div>
-      </td>
-    </tr>
-
-    <tr class="comment-thread" id="thread5">
-      <td colspan="5">
-        <div class="thread-container">
-          <div class="thread-header">
-            <span>Comments (0)</span>
-            <button class="thread-close" onclick="toggleThread('thread5')">&times;</button>
-          </div>
-          <div class="add-comment">
-            <textarea rows="1" placeholder="Add a comment..." onfocus="this.rows=2" onblur="if(!this.value)this.rows=1"></textarea>
-            <button class="submit-btn">Post</button>
-          </div>
+      <td class="note-cell">
+        <div class="note-wrapper">
+          <textarea rows="2" placeholder="Add a note..." oninput="onNoteChange(this)" onblur="saveNote(this)"></textarea>
+          <div class="save-status"></div>
         </div>
       </td>
     </tr>
@@ -310,19 +194,37 @@
   </tbody>
 </table>
 
-<div class="annotation green" style="margin-top:32px;">INTERACTION: Click the comment button (speech bubble icon) on any row to expand/collapse its comment thread. Rows with existing comments show a blue button with the count.</div>
+<div class="annotation green" style="margin-top:32px;">INTERACTION: Click any "Note" textarea and type. It auto-saves when you click away (blur). EX-001 and EX-003 have pre-filled notes to show the saved state. The note is a single editable field per flag &mdash; each update overwrites the previous value.</div>
 
 <script>
-function toggleThread(id) {
-  const el = document.getElementById(id);
-  if (el) {
-    el.classList.toggle('open');
-    // Auto-focus textarea when opening
-    if (el.classList.contains('open')) {
-      const ta = el.querySelector('textarea');
-      if (ta) ta.focus();
-    }
+let saveTimers = {};
+
+function onNoteChange(textarea) {
+  const status = textarea.parentElement.querySelector('.save-status');
+  status.textContent = '';
+  status.classList.remove('saved');
+
+  // Add/remove has-content styling
+  if (textarea.value.trim()) {
+    textarea.classList.add('has-content');
+  } else {
+    textarea.classList.remove('has-content');
   }
+}
+
+function saveNote(textarea) {
+  const status = textarea.parentElement.querySelector('.save-status');
+  if (!textarea.value.trim()) {
+    status.textContent = '';
+    return;
+  }
+  // Simulate saving
+  status.textContent = 'Saving...';
+  status.classList.remove('saved');
+  setTimeout(() => {
+    status.textContent = 'Saved';
+    status.classList.add('saved');
+  }, 400);
 }
 </script>
 </body>
