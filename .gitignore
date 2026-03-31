@@ -45,6 +45,9 @@ alembic/versions/__pycache__/
 .coverage
 htmlcov/
 .pytest_cache/
+playwright-report/
+test-results/
+blob-report/
 
 # Local dev storage (uploaded PDFs, OCR output, AI cache, thumbnails)
 backend/storage/
