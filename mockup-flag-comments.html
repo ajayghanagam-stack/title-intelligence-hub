@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flag Comments Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; color: #1e293b; padding: 32px; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  .subtitle { color: #64748b; font-size: 14px; margin-bottom: 24px; }
+
+  /* Severity filter tabs */
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab { padding: 6px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid #e2e8f0; background: white; }
+  .tab.active { background: #1e293b; color: white; border-color: #1e293b; }
+  .tab .count { margin-left: 4px; opacity: 0.7; }
+
+  /* Flags table */
+  .flags-table { width: 100%; border-collapse: collapse; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .flags-table th { text-align: left; padding: 12px 16px; font-size: 12px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; }
+  .flags-table td { padding: 14px 16px; border-bottom: 1px solid #f1f5f9; vertical-align: top; font-size: 14px; }
+  .flags-table tr.flag-row { cursor: pointer; transition: background 0.15s; }
+  .flags-table tr.flag-row:hover { background: #f8fafc; }
+
+  /* Severity badges */
+  .badge { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; border: 1px solid; }
+  .badge.critical { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
+  .badge.high { background: #fff7ed; color: #ea580c; border-color: #fed7aa; }
+  .badge.medium { background: #fefce8; color: #ca8a04; border-color: #fef08a; }
+
+  /* Comment button in row */
+  .comment-btn { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; border: 1px solid #e2e8f0; background: white; color: #64748b; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+  .comment-btn:hover { background: #f1f5f9; border-color: #cbd5e1; color: #334155; }
+  .comment-btn.has-comments { background: #eff6ff; border-color: #bfdbfe; color: #2563eb; }
+  .comment-btn svg { width: 14px; height: 14px; }
+  .comment-count { font-weight: 600; }
+
+  /* Action buttons row */
+  .actions-cell { display: flex; align-items: center; gap: 8px; }
+
+  /* Status badge */
+  .status-open { color: #64748b; font-size: 12px; font-style: italic; }
+
+  /* Expanded comment thread */
+  .comment-thread { display: none; }
+  .comment-thread.open { display: table-row; }
+  .comment-thread td { padding: 0 16px 16px 16px; background: #f8fafc; }
+  .thread-container { background: white; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; max-width: 700px; margin-left: 40px; }
+  .thread-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #f1f5f9; background: #fafbfc; }
+  .thread-header span { font-size: 13px; font-weight: 600; color: #475569; }
+  .thread-close { background: none; border: none; cursor: pointer; color: #94a3b8; font-size: 18px; line-height: 1; }
+
+  /* Individual comment */
+  .comment { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; }
+  .comment:last-of-type { border-bottom: 1px solid #f1f5f9; }
+  .comment-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .avatar { width: 24px; height: 24px; border-radius: 50%; background: #6366f1; color: white; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; }
+  .avatar.green { background: #16a34a; }
+  .comment-author { font-size: 13px; font-weight: 600; color: #334155; }
+  .comment-time { font-size: 12px; color: #94a3b8; }
+  .comment-text { font-size: 13px; color: #475569; line-height: 1.5; margin-left: 32px; }
+
+  /* Add comment input */
+  .add-comment { display: flex; align-items: flex-start; gap: 8px; padding: 12px 14px; background: #fafbfc; }
+  .add-comment textarea { flex: 1; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; font-size: 13px; font-family: inherit; resize: none; min-height: 36px; line-height: 1.4; outline: none; transition: border-color 0.15s; }
+  .add-comment textarea:focus { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+  .add-comment textarea::placeholder { color: #94a3b8; }
+  .submit-btn { padding: 7px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; border: none; background: #4f46e5; color: white; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+  .submit-btn:hover { background: #4338ca; }
+
+  /* Quick action buttons */
+  .quick-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .action-btn { padding: 4px 10px; border-radius: 5px; font-size: 11px; font-weight: 500; border: 1px solid; cursor: pointer; }
+  .action-btn.approve { background: #f0fdf4; color: #16a34a; border-color: #bbf7d0; }
+  .action-btn.reject { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
+  .action-btn.escalate { background: #fffbeb; color: #d97706; border-color: #fde68a; }
+
+  /* Description truncation */
+  .desc { color: #475569; line-height: 1.4; }
+  .desc-truncated { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .page-ref { font-size: 12px; color: #6366f1; font-weight: 500; margin-top: 4px; }
+
+  /* Annotation labels */
+  .annotation { display: block; margin-top: 20px; margin-bottom: 8px; padding: 8px 14px; background: #dbeafe; color: #1e40af; font-size: 13px; font-weight: 600; border-radius: 6px; border-left: 4px solid #3b82f6; }
+  .annotation.green { background: #dcfce7; color: #166534; border-left-color: #22c55e; }
+</style>
+</head>
+<body>
+
+<h1>Exceptions & Requirements</h1>
+<p class="subtitle">Review critical issues and warnings for Pack #TC-2024-0847</p>
+
+<div class="tabs">
+  <div class="tab active">All<span class="count">(6)</span></div>
+  <div class="tab">Critical<span class="count">(2)</span></div>
+  <div class="tab">Warning<span class="count">(3)</span></div>
+  <div class="tab">Review<span class="count">(1)</span></div>
+</div>
+
+<!-- Annotation: default state -->
+<div class="annotation">STATE 1 &mdash; Default view. Each row has a comment button with count. Click the button to expand the thread.</div>
+
+<table class="flags-table">
+  <thead>
+    <tr>
+      <th style="width:60px">ID</th>
+      <th style="width:90px">Severity</th>
+      <th>Description</th>
+      <th style="width:120px">Page</th>
+      <th style="width:140px; text-align:right">Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+
+    <!-- FLAG ROW 1: Critical, with 2 comments already -->
+    <tr class="flag-row" onclick="toggleThread('thread1')">
+      <td style="font-weight:600; color:#64748b">EX-001</td>
+      <td><span class="badge critical">Critical</span></td>
+      <td>
+        <div class="desc desc-truncated"><strong>Unresolved mortgage lien</strong> &mdash; Open mortgage from First National Bank recorded 03/12/2019 (Inst. #2019-045672) for $385,000 has no corresponding satisfaction or release on record.</div>
+        <div class="page-ref">Page 12, 15</div>
+      </td>
+      <td style="font-size:13px; color:#64748b">Schedule B-II</td>
+      <td>
+        <div class="actions-cell" style="justify-content:flex-end">
+          <button class="comment-btn has-comments" onclick="event.stopPropagation(); toggleThread('thread1')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span class="comment-count">2</span>
+          </button>
+        </div>
+      </td>
+    </tr>
+
+    <!-- COMMENT THREAD 1: Expanded (has 2 existing comments + input) -->
+    <tr class="comment-thread open" id="thread1">
+      <td colspan="5">
+        <div class="thread-container">
+          <div class="thread-header">
+            <span>Comments (2)</span>
+            <button class="thread-close" onclick="toggleThread('thread1')">&times;</button>
+          </div>
+          <div class="comment">
+            <div class="comment-meta">
+              <div class="avatar">JD</div>
+              <span class="comment-author">John Davis</span>
+              <span class="comment-time">2 hours ago</span>
+            </div>
+            <div class="comment-text">Contacted First National Bank - they confirmed payoff letter is being sent. Expected within 3 business days.</div>
+          </div>
+          <div class="comment">
+            <div class="comment-meta">
+              <div class="avatar green">SM</div>
+              <span class="comment-author">Sarah Mitchell</span>
+              <span class="comment-time">45 min ago</span>
+            </div>
+            <div class="comment-text">Good. Let's hold this as open until we have the payoff statement in hand. Flag for follow-up on Friday.</div>
+          </div>
+          <div class="add-comment">
+            <textarea rows="1" placeholder="Add a comment..." onfocus="this.rows=2" onblur="if(!this.value)this.rows=1"></textarea>
+            <button class="submit-btn">Post</button>
+          </div>
+        </div>
+      </td>
+    </tr>
+
+    <!-- FLAG ROW 2: Critical, no comments -->
+    <tr class="flag-row">
+      <td style="font-weight:600; color:#64748b">EX-002</td>
+      <td><span class="badge critical">Critical</span></td>
+      <td>
+        <div class="desc desc-truncated"><strong>Tax lien - IRS federal tax lien</strong> &mdash; Federal tax lien filed 07/22/2023 (Inst. #2023-089441) against current owner for $42,150. No release or subordination recorded.</div>
+        <div class="page-ref">Page 18</div>
+      </td>
+      <td style="font-size:13px; color:#64748b">Schedule B-II</td>
+      <td>
+        <div class="actions-cell" style="justify-content:flex-end">
+          <button class="comment-btn" onclick="event.stopPropagation(); toggleThread('thread2')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </button>
+        </div>
+      </td>
+    </tr>
+
+    <!-- COMMENT THREAD 2: Collapsed by default -->
+    <tr class="comment-thread" id="thread2">
+      <td colspan="5">
+        <div class="thread-container">
+          <div class="thread-header">
+            <span>Comments (0)</span>
+            <button class="thread-close" onclick="toggleThread('thread2')">&times;</button>
+          </div>
+          <div class="add-comment">
+            <textarea rows="1" placeholder="Add a comment..." onfocus="this.rows=2" onblur="if(!this.value)this.rows=1"></textarea>
+            <button class="submit-btn">Post</button>
+          </div>
+        </div>
+      </td>
+    </tr>
+
+    <!-- FLAG ROW 3: High (Warning), 1 comment -->
+    <tr class="flag-row">
+      <td style="font-weight:600; color:#64748b">EX-003</td>
+      <td><span class="badge high">High</span></td>
+      <td>
+        <div class="desc desc-truncated"><strong>Easement conflict</strong> &mdash; Utility easement recorded in favor of Florida Power & Light (OR Book 4521, Page 112) may encroach on proposed building footprint per survey note.</div>
+        <div class="page-ref">Page 8, 22</div>
+      </td>
+      <td style="font-size:13px; color:#64748b">Schedule B-II</td>
+      <td>
+        <div class="actions-cell" style="justify-content:flex-end">
+          <button class="comment-btn has-comments" onclick="event.stopPropagation(); toggleThread('thread3')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span class="comment-count">1</span>
+          </button>
+        </div>
+      </td>
+    </tr>
+
+    <!-- COMMENT THREAD 3 -->
+    <tr class="comment-thread" id="thread3">
+      <td colspan="5">
+        <div class="thread-container">
+          <div class="thread-header">
+            <span>Comments (1)</span>
+            <button class="thread-close" onclick="toggleThread('thread3')">&times;</button>
+          </div>
+          <div class="comment">
+            <div class="comment-meta">
+              <div class="avatar">JD</div>
+              <span class="comment-author">John Davis</span>
+              <span class="comment-time">1 hour ago</span>
+            </div>
+            <div class="comment-text">Survey shows the easement is 10ft from the building line. Requesting updated survey from client to confirm clearance.</div>
+          </div>
+          <div class="add-comment">
+            <textarea rows="1" placeholder="Add a comment..." onfocus="this.rows=2" onblur="if(!this.value)this.rows=1"></textarea>
+            <button class="submit-btn">Post</button>
+          </div>
+        </div>
+      </td>
+    </tr>
+
+    <!-- FLAG ROW 4: Medium (Warning) -->
+    <tr class="flag-row">
+      <td style="font-weight:600; color:#64748b">EX-004</td>
+      <td><span class="badge medium">Medium</span></td>
+      <td>
+        <div class="desc desc-truncated"><strong>Name mismatch</strong> &mdash; Vesting deed shows grantor as "Robert J. Williams" but commitment shows "Robert James Williams". May require affidavit of identity.</div>
+        <div class="page-ref">Page 3, 7</div>
+      </td>
+      <td style="font-size:13px; color:#64748b">Schedule A</td>
+      <td>
+        <div class="actions-cell" style="justify-content:flex-end">
+          <button class="comment-btn" onclick="event.stopPropagation(); toggleThread('thread4')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </button>
+        </div>
+      </td>
+    </tr>
+
+    <tr class="comment-thread" id="thread4">
+      <td colspan="5">
+        <div class="thread-container">
+          <div class="thread-header">
+            <span>Comments (0)</span>
+            <button class="thread-close" onclick="toggleThread('thread4')">&times;</button>
+          </div>
+          <div class="add-comment">
+            <textarea rows="1" placeholder="Add a comment..." onfocus="this.rows=2" onblur="if(!this.value)this.rows=1"></textarea>
+            <button class="submit-btn">Post</button>
+          </div>
+        </div>
+      </td>
+    </tr>
+
+    <!-- FLAG ROW 5: Medium (Warning) -->
+    <tr class="flag-row">
+      <td style="font-weight:600; color:#64748b">EX-005</td>
+      <td><span class="badge medium">Medium</span></td>
+      <td>
+        <div class="desc desc-truncated"><strong>Missing endorsement</strong> &mdash; ALTA 9.0 (Restrictions, Encroachments, Minerals) endorsement referenced in Schedule A but not attached to commitment package.</div>
+        <div class="page-ref">Page 4</div>
+      </td>
+      <td style="font-size:13px; color:#64748b">Schedule A</td>
+      <td>
+        <div class="actions-cell" style="justify-content:flex-end">
+          <button class="comment-btn" onclick="event.stopPropagation(); toggleThread('thread5')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </button>
+        </div>
+      </td>
+    </tr>
+
+    <tr class="comment-thread" id="thread5">
+      <td colspan="5">
+        <div class="thread-container">
+          <div class="thread-header">
+            <span>Comments (0)</span>
+            <button class="thread-close" onclick="toggleThread('thread5')">&times;</button>
+          </div>
+          <div class="add-comment">
+            <textarea rows="1" placeholder="Add a comment..." onfocus="this.rows=2" onblur="if(!this.value)this.rows=1"></textarea>
+            <button class="submit-btn">Post</button>
+          </div>
+        </div>
+      </td>
+    </tr>
+
+  </tbody>
+</table>
+
+<div class="annotation green" style="margin-top:32px;">INTERACTION: Click the comment button (speech bubble icon) on any row to expand/collapse its comment thread. Rows with existing comments show a blue button with the count.</div>
+
+<script>
+function toggleThread(id) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.classList.toggle('open');
+    // Auto-focus textarea when opening
+    if (el.classList.contains('open')) {
+      const ta = el.querySelector('textarea');
+      if (ta) ta.focus();
+    }
+  }
+}
+</script>
+</body>
+</html>
