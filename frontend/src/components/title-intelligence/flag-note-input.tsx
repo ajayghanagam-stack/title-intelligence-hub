@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
+import { Check, X } from "lucide-react";
 
 interface FlagNoteInputProps {
   flagId: string;
@@ -10,51 +11,36 @@ interface FlagNoteInputProps {
 
 export function FlagNoteInput({ flagId, initialNote, onSave }: FlagNoteInputProps) {
   const [value, setValue] = useState(initialNote ?? "");
-  const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSaved = useRef(initialNote ?? "");
+  const [saving, setSaving] = useState(false);
+  const savedValue = useRef(initialNote ?? "");
 
   // Sync if parent provides a new initialNote (e.g. after refetch)
   useEffect(() => {
     const incoming = initialNote ?? "";
-    if (incoming !== lastSaved.current) {
+    if (incoming !== savedValue.current) {
       setValue(incoming);
-      lastSaved.current = incoming;
+      savedValue.current = incoming;
     }
   }, [initialNote]);
 
-  const save = useCallback(
-    async (text: string) => {
-      const trimmed = text.trim();
-      const noteValue = trimmed || null;
-      if (trimmed === (lastSaved.current ?? "").trim()) return;
+  const isDirty = value.trim() !== savedValue.current.trim();
 
-      setStatus("saving");
-      try {
-        await onSave(flagId, noteValue);
-        lastSaved.current = trimmed;
-        setStatus("saved");
-        setTimeout(() => setStatus("idle"), 2000);
-      } catch {
-        setStatus("idle");
-      }
-    },
-    [flagId, onSave],
-  );
-
-  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newValue = e.target.value;
-    setValue(newValue);
-    setStatus("idle");
-
-    // Auto-save after 1s of inactivity
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => save(newValue), 1000);
+  const handleSave = async () => {
+    const trimmed = value.trim();
+    const noteValue = trimmed || null;
+    setSaving(true);
+    try {
+      await onSave(flagId, noteValue);
+      savedValue.current = trimmed;
+    } catch {
+      // keep dirty state so user can retry
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleBlur = () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    save(value);
+  const handleDiscard = () => {
+    setValue(savedValue.current);
   };
 
   return (
@@ -66,13 +52,30 @@ export function FlagNoteInput({ flagId, initialNote, onSave }: FlagNoteInputProp
         rows={2}
         placeholder="Add a note..."
         value={value}
-        onChange={handleChange}
-        onBlur={handleBlur}
+        onChange={(e) => setValue(e.target.value)}
+        disabled={saving}
       />
-      <div className="h-4 text-xs">
-        {status === "saving" && <span className="text-slate-400">Saving...</span>}
-        {status === "saved" && <span className="text-green-600">Saved</span>}
-      </div>
+      {isDirty && (
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="inline-flex items-center justify-center h-6 w-6 rounded bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200 transition-colors disabled:opacity-40"
+            title="Save note"
+          >
+            <Check className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={handleDiscard}
+            disabled={saving}
+            className="inline-flex items-center justify-center h-6 w-6 rounded bg-red-50 text-red-500 hover:bg-red-100 border border-red-200 transition-colors disabled:opacity-40"
+            title="Discard changes"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+          {saving && <span className="text-xs text-slate-400 ml-1">Saving...</span>}
+        </div>
+      )}
     </div>
   );
 }
