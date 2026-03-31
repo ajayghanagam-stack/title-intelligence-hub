@@ -26,6 +26,7 @@ class Flag(Base, TenantMixin):
     ai_explanation: Mapped[str] = mapped_column(Text, nullable=False)
     evidence_refs: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="open")
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

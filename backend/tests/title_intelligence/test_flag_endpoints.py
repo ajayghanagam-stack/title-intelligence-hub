@@ -106,6 +106,67 @@ async def test_submit_review_creates_audit_event(client: AsyncClient, sample_pac
 
 
 @pytest.mark.asyncio
+async def test_update_flag_note(client: AsyncClient, sample_pack_with_data):
+    """PATCH a note onto a flag and verify it persists."""
+    response = await client.patch(
+        f"/api/v1/apps/title-intelligence/packs/{TEST_PACK_ID}/flags/{TEST_FLAG_ID}/note",
+        json={"note": "Waiting on payoff statement from lender."},
+        headers={"X-Org-Id": str(TEST_ORG_ID)},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["note"] == "Waiting on payoff statement from lender."
+
+    # Verify note appears in flag detail
+    detail = await client.get(
+        f"/api/v1/apps/title-intelligence/packs/{TEST_PACK_ID}/flags/{TEST_FLAG_ID}",
+        headers={"X-Org-Id": str(TEST_ORG_ID)},
+    )
+    assert detail.json()["note"] == "Waiting on payoff statement from lender."
+
+
+@pytest.mark.asyncio
+async def test_update_flag_note_clear(client: AsyncClient, sample_pack_with_data):
+    """Setting note to null clears it."""
+    # Set a note first
+    await client.patch(
+        f"/api/v1/apps/title-intelligence/packs/{TEST_PACK_ID}/flags/{TEST_FLAG_ID}/note",
+        json={"note": "Temporary note"},
+        headers={"X-Org-Id": str(TEST_ORG_ID)},
+    )
+    # Clear it
+    response = await client.patch(
+        f"/api/v1/apps/title-intelligence/packs/{TEST_PACK_ID}/flags/{TEST_FLAG_ID}/note",
+        json={"note": None},
+        headers={"X-Org-Id": str(TEST_ORG_ID)},
+    )
+    assert response.status_code == 200
+    assert response.json()["note"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_note_nonexistent_flag(client: AsyncClient, sample_pack):
+    """Updating note on a nonexistent flag returns 404."""
+    fake_id = uuid.uuid4()
+    response = await client.patch(
+        f"/api/v1/apps/title-intelligence/packs/{TEST_PACK_ID}/flags/{fake_id}/note",
+        json={"note": "test"},
+        headers={"X-Org-Id": str(TEST_ORG_ID)},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_flag_note_default_null(client: AsyncClient, sample_pack_with_data):
+    """Flags start with note=null by default."""
+    response = await client.get(
+        f"/api/v1/apps/title-intelligence/packs/{TEST_PACK_ID}/flags/{TEST_FLAG_ID}",
+        headers={"X-Org-Id": str(TEST_ORG_ID)},
+    )
+    assert response.json()["note"] is None
+
+
+@pytest.mark.asyncio
 async def test_review_nonexistent_flag(client: AsyncClient, sample_pack):
     """Reviewing a flag that doesn't exist returns 404."""
     fake_id = uuid.uuid4()

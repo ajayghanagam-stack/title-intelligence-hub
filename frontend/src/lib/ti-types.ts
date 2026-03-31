@@ -16,6 +16,7 @@ export interface Flag {
   ai_explanation: string;
   evidence_refs: EvidenceRef[];
   status: FlagStatus;
+  note: string | null;
 }
 
 export interface Review {

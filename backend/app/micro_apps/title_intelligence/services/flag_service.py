@@ -97,6 +97,21 @@ async def get_flag_for_pack_or_raise(
     return flag
 
 
+async def update_flag_note(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    pack_id: uuid.UUID,
+    flag_id: uuid.UUID,
+    note: str | None,
+) -> Flag:
+    """Update the note on a flag, returning the updated flag."""
+    flag = await get_flag_for_pack_or_raise(db, org_id, pack_id, flag_id)
+    flag.note = note
+    await db.commit()
+    await db.refresh(flag)
+    return flag
+
+
 async def create_review(
     db: AsyncSession,
     org_id: uuid.UUID,

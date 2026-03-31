@@ -22,6 +22,10 @@ class ReviewResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class NoteUpdate(BaseModel):
+    note: str | None = None
+
+
 class FlagResponse(BaseModel):
     id: uuid.UUID
     pack_id: uuid.UUID
@@ -32,6 +36,7 @@ class FlagResponse(BaseModel):
     ai_explanation: str
     evidence_refs: list[dict] = []
     status: str
+    note: str | None = None
     created_at: datetime
     reviews: list[ReviewResponse] = []
 

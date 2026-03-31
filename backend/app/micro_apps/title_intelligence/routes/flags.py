@@ -9,6 +9,7 @@ from app.models.user import User
 from app.micro_apps.title_intelligence.schemas.flag import (
     FlagResponse,
     FlagListResponse,
+    NoteUpdate,
     ReviewCreate,
     ReviewResponse,
     RecommendationResponse,
@@ -17,6 +18,7 @@ from app.micro_apps.title_intelligence.services.flag_service import (
     list_flags,
     get_flag_for_pack_or_raise,
     create_review,
+    update_flag_note,
     get_ai_recommendation,
 )
 
@@ -54,6 +56,18 @@ async def get_flag_detail(
     org_id: uuid.UUID = Depends(get_org_id),
 ):
     return await get_flag_for_pack_or_raise(db, org_id, pack_id, flag_id)
+
+
+@router.patch("/packs/{pack_id}/flags/{flag_id}/note", response_model=FlagResponse)
+async def update_note(
+    pack_id: uuid.UUID,
+    flag_id: uuid.UUID,
+    body: NoteUpdate,
+    db: AsyncSession = Depends(get_db),
+    member: User = Depends(get_current_member),
+    org_id: uuid.UUID = Depends(get_org_id),
+):
+    return await update_flag_note(db, org_id, pack_id, flag_id, body.note)
 
 
 @router.post("/packs/{pack_id}/flags/{flag_id}/review", response_model=ReviewResponse)

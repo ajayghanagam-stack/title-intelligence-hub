@@ -15,6 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { SeverityBadge } from "./severity-badge";
 import { FlagDetailDialog } from "./flag-detail-dialog";
+import { FlagNoteInput } from "./flag-note-input";
 import { Pagination } from "./pagination";
 import type { Flag, ReviewDecision } from "@/lib/ti-types";
 
@@ -55,6 +56,7 @@ interface FlagRowProps {
   onQuickAction: (flagId: string, decision: ReviewDecision) => void;
   onOpenDetail: (flag: Flag) => void;
   onNavigateToPage: (pageNumber: number, textSnippet?: string) => void;
+  onSaveNote: (flagId: string, note: string | null) => Promise<void>;
 }
 
 function getRequiredAction(flag: Flag): string {
@@ -84,6 +86,7 @@ const FlagRow = memo(function FlagRow({
   onQuickAction,
   onOpenDetail,
   onNavigateToPage,
+  onSaveNote,
 }: FlagRowProps) {
   const docRef = getDocumentRef(flag);
   const requiredAction = getRequiredAction(flag);
@@ -135,8 +138,12 @@ const FlagRow = memo(function FlagRow({
           )}
         </div>
         {/* Required Action — desktop only */}
-        <div className="shrink-0 w-[180px] pt-3 pb-3 pr-4 hidden lg:block">
+        <div className="shrink-0 w-[160px] pt-3 pb-3 pr-2 hidden lg:block">
           <p className="text-[12px] text-muted-foreground leading-snug line-clamp-3">{requiredAction}</p>
+        </div>
+        {/* Note — desktop only */}
+        <div className="shrink-0 w-[200px] pt-2 pb-2 pr-4 hidden lg:block" onClick={(e) => e.stopPropagation()}>
+          <FlagNoteInput flagId={flag.id} initialNote={flag.note} onSave={onSaveNote} />
         </div>
       </div>
 
@@ -207,6 +214,7 @@ export function FlagsTable({
   packId,
   onReview,
   onGetRecommendation,
+  onSaveNote,
   submitting,
   total,
   currentPage: serverPage,
@@ -216,6 +224,7 @@ export function FlagsTable({
   packId: string;
   onReview: (flagId: string, decision: ReviewDecision, reasonCode: string | null, notes: string) => void;
   onGetRecommendation: (flagId: string) => Promise<{ decision: string; reasoning: string; confidence: number }>;
+  onSaveNote: (flagId: string, note: string | null) => Promise<void>;
   submitting?: boolean;
   total?: number;
   currentPage?: number;
@@ -289,7 +298,8 @@ export function FlagsTable({
         <span className="w-[110px] py-2.5 pr-2">Category</span>
         <span className="flex-1 py-2.5 pr-3">Description</span>
         <span className="w-[120px] py-2.5 pr-2">Doc Ref</span>
-        <span className="w-[180px] py-2.5 pr-4">Required Action</span>
+        <span className="w-[160px] py-2.5 pr-2">Required Action</span>
+        <span className="w-[200px] py-2.5 pr-4">Note</span>
       </div>
 
       {/* Rows */}
@@ -309,6 +319,7 @@ export function FlagsTable({
               onQuickAction={handleQuickAction}
               onOpenDetail={handleOpenDetail}
               onNavigateToPage={handleNavigateToPage}
+              onSaveNote={onSaveNote}
             />
           );
         })}

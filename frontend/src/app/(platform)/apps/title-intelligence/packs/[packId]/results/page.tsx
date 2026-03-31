@@ -220,6 +220,13 @@ export default function ResultsPage() {
     }
   };
 
+  const handleSaveNote = useCallback(async (flagId: string, note: string | null) => {
+    await orgFetch<Flag>(`/api/v1/apps/title-intelligence/packs/${packId}/flags/${flagId}/note`, {
+      method: "PATCH",
+      body: JSON.stringify({ note }),
+    });
+  }, [orgFetch, packId]);
+
   const handleGetRecommendation = async (flagId: string) => {
     return await orgFetch<Recommendation>(`/api/v1/apps/title-intelligence/packs/${packId}/flags/${flagId}/recommend`, { method: "POST" });
   };
@@ -413,6 +420,7 @@ export default function ResultsPage() {
                 packId={packId}
                 onReview={handleReview}
                 onGetRecommendation={handleGetRecommendation}
+                onSaveNote={handleSaveNote}
                 submitting={submitting}
                 total={flagTotal}
                 currentPage={flagPage}
