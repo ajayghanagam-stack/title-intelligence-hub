@@ -24,6 +24,13 @@ GOOGLE_API_KEY=<your-google-api-key>
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
+### Default Login Credentials (Dev/Seed)
+
+- **Platform Admin**: `admin@logikality.com` / `admin123`
+- **Customer Demo**: `admin@societytitle.com` / `admin123`
+
+Created by `backend/scripts/seed.py`. The platform admin has `is_platform_admin=True`.
+
 ---
 
 ## Commands
@@ -111,6 +118,10 @@ scripts/factory-reset.sh                          # full production reset (destr
 See [docs/Plan.md](docs/Plan.md) for the full product spec — database schema, API contract, user roles, subscription lifecycle, pipeline stages, micro app descriptions, and acceptance criteria.
 
 See [docs/PRD_Platform_admin.md](docs/PRD_Platform_admin.md) for Platform Admin requirements — account onboarding, user management, subscription management, micro app CRUD, and admin frontend pages.
+
+See [docs/PRD_Title_Search_and_Abstracting.md](docs/PRD_Title_Search_and_Abstracting.md) for Title Search & Abstracting micro app spec.
+
+See [perf_optimizations.md](perf_optimizations.md) for the pipeline performance optimization roadmap (target: 250 pages in under 2 minutes).
 
 ---
 
