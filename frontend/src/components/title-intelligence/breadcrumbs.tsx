@@ -7,7 +7,6 @@ import { ChevronRight } from "lucide-react";
 const segmentLabels: Record<string, string> = {
   documents: "Documents",
   results: "Results",
-  readiness: "Readiness",
 };
 
 export function Breadcrumbs({ packName }: { packName?: string }) {

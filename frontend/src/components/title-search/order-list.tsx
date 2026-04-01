@@ -40,6 +40,7 @@ export function OrderList({
       await deleteOrder(currentOrgId, orderId);
       setConfirmId(null);
       onOrderDeleted?.(orderId);
+      window.dispatchEvent(new Event("order-deleted"));
       // If deleting the last item on current page, go back one page
       const newTotal = sorted.length - 1;
       const newTotalPages = Math.max(1, Math.ceil(newTotal / PAGE_SIZE));

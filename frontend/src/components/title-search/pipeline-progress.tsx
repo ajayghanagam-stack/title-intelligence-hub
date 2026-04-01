@@ -5,7 +5,9 @@ import { cn } from "@/lib/utils";
 import { STAGE_LABELS } from "@/lib/title-search/constants";
 import type { PipelineStageStatus } from "@/lib/title-search/types";
 
-const STAGES = ["order", "retrieve", "parse", "chain", "package", "complete"];
+// Dynamically determine stages from API response; fallback to scraper stages
+const SCRAPER_STAGES = ["order", "retrieve", "parse", "chain", "package", "complete"];
+const GROUNDED_STAGES = ["order", "research", "chain", "package", "complete"];
 
 export function PipelineProgress({
   stages,
@@ -15,6 +17,9 @@ export function PipelineProgress({
   error?: string | null;
 }) {
   const stageMap = new Map(stages.map((s) => [s.stage, s.status]));
+  // Auto-detect grounded vs scraper pipeline
+  const hasResearch = stageMap.has("research");
+  const STAGES = hasResearch ? GROUNDED_STAGES : SCRAPER_STAGES;
   const completed = stages.filter((s) => s.status === "completed").length;
   const failed = stages.some((s) => s.status === "failed");
   const total = stages.length;
@@ -71,7 +76,7 @@ export function PipelineProgress({
       </div>
 
       {/* Pipeline stages — circles + connecting lines */}
-      <div className="flex items-start gap-0 overflow-x-auto pb-1">
+      <div className="flex items-start justify-between overflow-x-auto pb-1">
         {STAGES.map((stageKey, i) => {
           const status = stageMap.get(stageKey) || "pending";
           const isCompleted = status === "completed";
@@ -107,7 +112,7 @@ export function PipelineProgress({
                 </div>
                 <span
                   className={cn(
-                    "mt-2 text-[10px] font-medium whitespace-nowrap leading-tight text-center",
+                    "mt-2 text-xs font-medium whitespace-nowrap leading-tight text-center",
                     isCompleted
                       ? "text-emerald-700"
                       : isCurrent
@@ -123,7 +128,7 @@ export function PipelineProgress({
               {i < STAGES.length - 1 && (
                 <div
                   className={cn(
-                    "mt-[18px] mx-1.5 h-0.5 w-10 flex-shrink-0 rounded-full transition-colors duration-500",
+                    "mt-[18px] mx-1 h-0.5 flex-1 min-w-6 rounded-full transition-colors duration-500",
                     isCompleted ? "bg-emerald-400" : "bg-border"
                   )}
                 />

@@ -54,7 +54,6 @@ def generate_pack_report_pdf(
     critical_count: int,
     warning_count: int,
     review_count: int,
-    validation_score: int,
     exceptions: list[dict],
 ) -> bytes:
     """Build a data-driven Title Intelligence Report PDF.
@@ -68,7 +67,6 @@ def generate_pack_report_pdf(
         critical_count: Number of critical-severity flags.
         warning_count: Number of high+medium-severity flags.
         review_count: Number of open/escalated flags.
-        validation_score: Readiness score 0-10.
         exceptions: List of dicts with keys:
             id, severity, category, description, doc_ref, action
     """
@@ -111,8 +109,7 @@ def generate_pack_report_pdf(
     summary = (
         f"Critical: {critical_count}  |  "
         f"Warnings: {warning_count}  |  "
-        f"Review: {review_count}  |  "
-        f"Validation: {validation_score}/10"
+        f"Review: {review_count}"
     )
     pdf.cell(0, 7, summary, new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)

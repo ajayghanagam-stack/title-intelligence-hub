@@ -45,7 +45,6 @@ Structure the report with clear sections:
         format: str,
         extractions: list,
         flags: list,
-        readiness_score: int,
         readiness_summary: str | None,
     ) -> str:
         """Generate an audience-specific report.
@@ -65,7 +64,6 @@ Structure the report with clear sections:
 
         context = (
             f"Title Pack: {pack_name}\n"
-            f"Readiness Score: {readiness_score}/100\n"
             f"Summary: {readiness_summary or 'Not yet generated'}\n\n"
             f"Extractions:\n{extraction_text}\n\n"
             f"Risk Flags:\n{flag_text}"
@@ -97,9 +95,8 @@ Structure the report with clear sections:
         pack_name: str,
         extractions: list,
         flags: list,
-        readiness_score: int,
     ) -> str:
-        """Generate a concise 2-3 sentence executive summary for the readiness dashboard."""
+        """Generate a concise executive summary as bullet points."""
         open_flags = [f for f in flags if f.status == "open"]
         critical_count = sum(1 for f in open_flags if f.severity == "critical")
         high_count = sum(1 for f in open_flags if f.severity == "high")
@@ -117,14 +114,13 @@ Structure the report with clear sections:
             "role": "user",
             "content": (
                 f"Title Pack: {pack_name}\n"
-                f"Readiness Score: {readiness_score}/100\n"
                 f"Open Flags: {len(open_flags)} ({critical_count} critical, {high_count} high)\n\n"
                 f"Extractions:\n{extraction_text}\n\n"
                 f"Risk Flags:\n{flag_text}\n\n"
                 "Write an executive summary of the title commitment's closing readiness as bullet points.\n"
                 "Rules:\n"
                 "- Return ONLY bullet points, one per line, each starting with '- '\n"
-                "- First bullet: overall closing readiness status and score rationale\n"
+                "- First bullet: overall closing readiness status based on open issues\n"
                 "- Then one bullet per critical or high severity issue, naming it specifically\n"
                 "- Then one bullet summarizing any medium/low issues if they exist\n"
                 "- Final bullet: recommended next steps or confirmation of readiness\n"
@@ -148,7 +144,6 @@ Structure the report with clear sections:
         audience: str,
         extractions: list,
         flags: list,
-        readiness_score: int,
         readiness_summary: str | None,
     ) -> dict[str, Any]:
         """Generate a structured report as JSON dict.
@@ -168,7 +163,6 @@ Structure the report with clear sections:
 
         context = (
             f"Title Pack: {pack_name}\n"
-            f"Readiness Score: {readiness_score}/100\n"
             f"Summary: {readiness_summary or 'Not yet generated'}\n\n"
             f"Extractions:\n{extraction_text}\n\n"
             f"Risk Flags:\n{flag_text}"

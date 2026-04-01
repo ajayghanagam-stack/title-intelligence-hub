@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     # llm calls Gemini for narrative summary (10-15s, non-deterministic)
     SUMMARY_MODE: Literal["data_driven", "llm"] = "data_driven"
 
+    # TSA Research mode: "grounded" uses Claude web search, "scraper" uses legacy portal scraping
+    TSA_RESEARCH_MODE: Literal["grounded", "scraper"] = "grounded"
+
     # Title Examiner (single-pass Gemini Vision pipeline)
     EXAMINER_BATCH_SIZE: int = 10        # Max pages per batch (image pages)
     EXAMINER_BATCH_SIZE_TEXT: int = 25   # Max pages per batch (text-only pages, cheaper)

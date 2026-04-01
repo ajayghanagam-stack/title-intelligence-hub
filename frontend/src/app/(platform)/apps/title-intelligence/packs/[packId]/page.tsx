@@ -7,7 +7,6 @@ import {
   Eye,
   FileBarChart,
   MessageCircle,
-  Shield,
   AlertTriangle,
   FileText,
   Sparkles,
@@ -70,24 +69,6 @@ export default function PackOverviewPage() {
     0
   );
 
-  const scoreColor =
-    pack.readiness_score !== null
-      ? pack.readiness_score >= 90
-        ? "text-emerald-700"
-        : pack.readiness_score >= 60
-          ? "text-amber-700"
-          : "text-red-700"
-      : "";
-
-  const scoreBg =
-    pack.readiness_score !== null
-      ? pack.readiness_score >= 90
-        ? "from-emerald-50 to-emerald-100/50 ring-emerald-200"
-        : pack.readiness_score >= 60
-          ? "from-amber-50 to-amber-100/50 ring-amber-200"
-          : "from-red-50 to-red-100/50 ring-red-200"
-      : "";
-
   return (
     <div className="space-y-8">
       {/* Title Company Header */}
@@ -124,53 +105,27 @@ export default function PackOverviewPage() {
         </div>
       </div>
 
-      {/* Readiness hero card — only show after pipeline completes */}
-      {isCompleted && pack.readiness_score !== null && (
-        <div className={cn("rounded-2xl bg-gradient-to-br ring-1 p-6", scoreBg)}>
-          <div className="flex items-center gap-6">
-            <div className="flex flex-col items-center">
-              <span className={cn("text-5xl font-bold tabular-nums", scoreColor)}>
-                {pack.readiness_score}
-              </span>
-              <span className="text-xs font-medium text-muted-foreground mt-1">of 100</span>
-            </div>
-            <div className="h-16 w-px bg-black/10" />
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <Shield className={cn("h-5 w-5", scoreColor)} />
-                <span className={cn("font-semibold", scoreColor)}>
-                  {pack.readiness_score >= 90 ? "Ready to Close" : pack.readiness_score >= 60 ? "At Risk" : "Not Ready"}
-                </span>
-              </div>
-              {pack.readiness_summary && (
-                <div className="mt-3 pt-3 border-t border-black/5">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <Sparkles className="h-3.5 w-3.5 text-amber-600" />
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Executive Summary
-                    </h3>
-                  </div>
-                  <ul className="space-y-1.5">
-                    {pack.readiness_summary
-                      .split("\n")
-                      .map((line) => line.replace(/^[-*]\s*/, "").trim())
-                      .filter((line) => line.length > 0)
-                      .map((point, i) => (
-                        <li key={i} className="flex items-start gap-2 text-sm text-foreground/80 leading-relaxed">
-                          <span className={cn(
-                            "mt-1.5 h-1.5 w-1.5 rounded-full shrink-0",
-                            scoreColor === "text-emerald-700" ? "bg-emerald-500"
-                              : scoreColor === "text-amber-700" ? "bg-amber-500"
-                              : "bg-red-500"
-                          )} />
-                          {point}
-                        </li>
-                      ))}
-                  </ul>
-                </div>
-              )}
-            </div>
+      {/* Executive Summary — only show after pipeline completes */}
+      {isCompleted && pack.readiness_summary && (
+        <div className="rounded-2xl border bg-card p-6">
+          <div className="flex items-center gap-1.5 mb-3">
+            <Sparkles className="h-3.5 w-3.5 text-amber-600" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Executive Summary
+            </h3>
           </div>
+          <ul className="space-y-1.5">
+            {pack.readiness_summary
+              .split("\n")
+              .map((line) => line.replace(/^[-*]\s*/, "").trim())
+              .filter((line) => line.length > 0)
+              .map((point, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-foreground/80 leading-relaxed">
+                  <span className="mt-1.5 h-1.5 w-1.5 rounded-full shrink-0 bg-amber-500" />
+                  {point}
+                </li>
+              ))}
+          </ul>
         </div>
       )}
 

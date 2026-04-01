@@ -34,7 +34,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=AuthResponse)
-@limiter.limit("5/minute")
+@limiter.limit("100/minute")
 async def login(
     request: Request,
     body: LoginRequest,
@@ -110,7 +110,7 @@ async def change_password_endpoint(
 
 
 @router.post("/forgot-password")
-@limiter.limit("5/minute")
+@limiter.limit("100/minute")
 async def forgot_password(
     request: Request,
     body: ForgotPasswordRequest,

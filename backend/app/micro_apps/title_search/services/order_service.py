@@ -96,6 +96,36 @@ async def delete_order_or_raise(
 ) -> None:
     order = await get_order_or_raise(db, org_id, order_id)
 
+    # Clean up storage artifacts (uploaded files, generated PDFs, and AI caches)
+    try:
+        from app.services.storage import get_storage
+        from app.config import get_settings
+        from app.micro_apps.title_search.pipeline.version_tracker import (
+            collect_version_info,
+            compute_research_cache_key,
+        )
+        storage = get_storage()
+
+        # Delete order-scoped files (uploads, raw docs, generated PDFs)
+        await storage.delete_dir(f"{org_id}/{order_id}")
+
+        # Delete org-level AI caches for this order's research key
+        # (keyed by address+county+state, lives at {org_id}/ai_cache/ta_*/...)
+        settings = get_settings()
+        version_info = collect_version_info(settings)
+        research_key = compute_research_cache_key(
+            order.property_address, order.county or "", order.state_code or "",
+            version_info,
+        )
+        research_cache = storage.make_ai_cache_path(org_id, order_id, "ta_research", research_key)
+        await storage.delete(research_cache)
+
+        # Also wipe parse and chain caches for this order
+        for stage in ("ta_parse", "ta_chain"):
+            await storage.delete_dir(f"{org_id}/ai_cache/{stage}")
+    except Exception:
+        pass  # Storage cleanup is best-effort; DB deletion proceeds regardless
+
     # Delete child records explicitly (SQLite doesn't enforce ON DELETE CASCADE)
     from sqlalchemy import delete as sa_delete
     from app.micro_apps.title_search.models.review import TAReview

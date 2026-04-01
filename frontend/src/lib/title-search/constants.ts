@@ -45,6 +45,7 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
 export const STAGE_LABELS: Record<string, string> = {
   order: "Order Created",
   retrieve: "Record Retrieval",
+  research: "Research",
   parse: "Document Parsing",
   chain: "Chain Building",
   package: "Package Assembly",

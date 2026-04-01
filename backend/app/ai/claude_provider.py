@@ -2,6 +2,7 @@
 
 Handles structured output via forced tool_use pattern with Anthropic prompt
 caching (cache_control blocks). Uses litellm for API calls.
+Web search uses the Anthropic SDK directly (server tools unsupported by litellm).
 """
 
 import asyncio
@@ -13,6 +14,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 CLAUDE_MODEL = "anthropic/claude-sonnet-4-20250514"
+# Direct SDK model name (without litellm prefix)
+CLAUDE_SDK_MODEL = "claude-sonnet-4-20250514"
 
 
 def configure_claude(settings: Any) -> None:
@@ -129,3 +132,122 @@ async def call_json_structured_claude(
                 await asyncio.sleep(2 ** attempt)
                 continue
             raise
+
+
+async def call_with_web_search_claude(
+    system_prompt: str,
+    messages: list[dict[str, Any]],
+    result_tool_schema: dict[str, Any],
+    result_tool_name: str = "submit_research_results",
+    result_tool_description: str = "Submit structured research results",
+    max_web_searches: int = 15,
+    max_tokens: int = 16384,
+    retries: int = 2,
+    temperature: float = 0.0,
+    timeout: int = 300,
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Call Claude with web_search server tool + custom result tool.
+
+    Uses the Anthropic SDK directly (not litellm) because server-side tools
+    (web_search_20250305) are not supported by litellm.
+
+    Claude autonomously performs web searches, then calls the result tool
+    with structured output.
+
+    Args:
+        system_prompt: System prompt for research guidance.
+        messages: User messages with research context.
+        result_tool_schema: JSON schema for the structured result tool.
+        result_tool_name: Name of the result submission tool.
+        result_tool_description: Description of the result tool.
+        max_web_searches: Max number of web searches Claude can perform.
+        max_tokens: Max output tokens.
+        retries: Number of retry attempts.
+        temperature: LLM temperature.
+        timeout: Call timeout in seconds.
+
+    Returns:
+        (structured_result, citations) tuple where citations is a list of
+        {"url": ..., "title": ...} dicts from web search results.
+    """
+    try:
+        from anthropic import AsyncAnthropic
+    except ImportError:
+        raise RuntimeError("anthropic SDK required for web search. Install with: pip install anthropic")
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set. Required for Claude web search.")
+
+    client = AsyncAnthropic(api_key=api_key)
+
+    tools = [
+        {
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "max_uses": max_web_searches,
+        },
+        {
+            "type": "custom",
+            "name": result_tool_name,
+            "description": result_tool_description,
+            "input_schema": result_tool_schema,
+        },
+    ]
+
+    for attempt in range(retries):
+        try:
+            response = await asyncio.wait_for(
+                client.messages.create(
+                    model=CLAUDE_SDK_MODEL,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system_prompt,
+                    messages=messages,
+                    tools=tools,
+                ),
+                timeout=timeout,
+            )
+
+            # Extract structured result from tool use blocks
+            structured_result = {}
+            citations: list[dict[str, str]] = []
+
+            for block in response.content:
+                # Extract tool use result
+                if block.type == "tool_use" and block.name == result_tool_name:
+                    structured_result = block.input if isinstance(block.input, dict) else {}
+
+                # Extract citations from web search result blocks
+                if block.type == "web_search_tool_result":
+                    for search_result in getattr(block, "search_results", []):
+                        url = getattr(search_result, "url", "")
+                        title = getattr(search_result, "title", "")
+                        if url:
+                            citations.append({"url": url, "title": title})
+
+            # Deduplicate citations by URL
+            seen_urls: set[str] = set()
+            unique_citations: list[dict[str, str]] = []
+            for c in citations:
+                if c["url"] not in seen_urls:
+                    seen_urls.add(c["url"])
+                    unique_citations.append(c)
+
+            return structured_result, unique_citations
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Claude web search timed out (attempt {attempt + 1}/{retries})")
+            if attempt < retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise
+        except Exception as e:
+            logger.warning(f"Claude web search failed (attempt {attempt + 1}/{retries}): {e}")
+            if attempt < retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise
+
+    # Should not reach here, but satisfy type checker
+    return {}, []

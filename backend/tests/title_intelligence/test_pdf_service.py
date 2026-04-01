@@ -45,7 +45,7 @@ def test_generate_report_basic():
         critical_count=1,
         warning_count=2,
         review_count=3,
-        validation_score=7,
+
         exceptions=_sample_exceptions(),
     )
     assert isinstance(pdf_bytes, (bytes, bytearray))
@@ -64,7 +64,7 @@ def test_generate_report_no_exceptions():
         critical_count=0,
         warning_count=0,
         review_count=0,
-        validation_score=10,
+
         exceptions=[],
     )
     assert pdf_bytes[:5] == b"%PDF-"
@@ -92,7 +92,7 @@ def test_generate_report_many_exceptions():
         critical_count=0,
         warning_count=50,
         review_count=50,
-        validation_score=3,
+
         exceptions=exceptions,
     )
     assert pdf_bytes[:5] == b"%PDF-"
@@ -110,7 +110,7 @@ def test_generate_report_unicode_handling():
         critical_count=1,
         warning_count=0,
         review_count=0,
-        validation_score=9,
+
         exceptions=[
             {
                 "id": 1,
@@ -136,7 +136,7 @@ def test_generate_report_empty_fields():
         critical_count=0,
         warning_count=0,
         review_count=0,
-        validation_score=0,
+
         exceptions=[],
     )
     assert pdf_bytes[:5] == b"%PDF-"

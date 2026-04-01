@@ -10,6 +10,7 @@ const TABS = [
   { href: "/chain", label: "Chain of Title" },
   { href: "/flags", label: "Flags" },
   { href: "/package", label: "Package" },
+  { href: "/results", label: "Results" },
 ];
 
 export default function OrderDetailLayout({

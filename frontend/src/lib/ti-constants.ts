@@ -17,11 +17,6 @@ export const CATEGORY_LABELS: Record<string, string> = {
   risk_assessment: "Risk Assessment",
   flag_resolution: "Flag Resolution",
   extraction_confidence: "Extraction Confidence",
-  requirements: "Requirements",
-  endorsements: "Endorsements",
-  liens: "Liens",
-  exceptions: "Exceptions",
-  consistency: "Consistency",
 };
 
 export const SECTION_TYPE_LABELS: Record<string, string> = {

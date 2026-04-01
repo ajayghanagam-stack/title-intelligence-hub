@@ -24,7 +24,8 @@ async def list_flags(
     flags = list(result.scalars().all())
     flags.sort(key=lambda f: SEVERITY_ORDER.get(f.severity, 99))
 
-    counts = dict(Counter(f.severity for f in flags))
+    open_flags = [f for f in flags if f.status == "open"]
+    counts = dict(Counter(f.severity for f in open_flags))
     return flags, counts
 
 

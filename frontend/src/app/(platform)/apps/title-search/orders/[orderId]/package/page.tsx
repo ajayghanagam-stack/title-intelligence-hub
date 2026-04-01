@@ -186,12 +186,14 @@ export default function PackagePage() {
             Property Summary
           </h3>
           <div className="grid grid-cols-2 gap-3 text-sm">
-            {Object.entries(pkg.property_summary).map(([key, value]) => (
+            {Object.entries(pkg.property_summary)
+              .filter(([, v]) => v != null && typeof v !== "object")
+              .map(([key, value]) => (
               <div key={key}>
                 <span className="text-muted-foreground capitalize">
                   {key.replace(/_/g, " ")}
                 </span>
-                <p className="font-medium mt-0.5">{value || "N/A"}</p>
+                <p className="font-medium mt-0.5">{String(value) || "N/A"}</p>
               </div>
             ))}
           </div>

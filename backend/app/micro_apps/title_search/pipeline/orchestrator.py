@@ -38,12 +38,33 @@ from app.micro_apps.title_search.pipeline.version_tracker import (
     compute_parse_cache_key,
     compute_parse_output_hash,
     compute_chain_cache_key,
+    compute_research_cache_key,
 )
 from app.models.audit_event import AuditEvent
 
 logger = logging.getLogger(__name__)
 
-PIPELINE_STAGES = [
+# Words that indicate AI returned instructions instead of actual data
+_INSTRUCTION_KEYWORDS = frozenset({
+    "verify", "obtain", "check", "contact", "visit", "search", "enter",
+    "available at", "can be found", "refer to", "see the", "go to",
+})
+
+
+def _is_real_value(value: str, max_len: int = 0) -> bool:
+    """Return False if value looks like AI instruction text rather than real data."""
+    if not value or not value.strip():
+        return False
+    lower = value.lower()
+    if any(kw in lower for kw in _INSTRUCTION_KEYWORDS):
+        return False
+    if max_len and len(value) > max_len:
+        return False
+    return True
+
+
+# Scraper pipeline: 6 stages
+SCRAPER_PIPELINE_STAGES = [
     ("order", 3),
     ("retrieve", 3),  # race-based fetch with per-stage timeout
     ("parse", 3),
@@ -51,6 +72,27 @@ PIPELINE_STAGES = [
     ("package", 3),
     ("complete", 3),
 ]
+
+# Grounded pipeline: 5 stages (research replaces retrieve+parse)
+GROUNDED_PIPELINE_STAGES = [
+    ("order", 3),
+    ("research", 2),  # Claude web search — longer timeout, fewer retries
+    ("chain", 3),
+    ("package", 3),
+    ("complete", 3),
+]
+
+
+def _get_pipeline_stages() -> list[tuple[str, int]]:
+    """Return the pipeline stages based on TSA_RESEARCH_MODE config."""
+    settings = get_settings()
+    if settings.TSA_RESEARCH_MODE == "grounded":
+        return GROUNDED_PIPELINE_STAGES
+    return SCRAPER_PIPELINE_STAGES
+
+
+# Legacy alias for backward compatibility
+PIPELINE_STAGES = SCRAPER_PIPELINE_STAGES
 
 PIPELINE_TIMEOUT = 30 * 60  # 30 minutes
 STAGE_TIMEOUT = 5 * 60  # 5 minutes per stage
@@ -146,6 +188,225 @@ async def stage_order(order_id, org_id, db):
             logger.warning(f"Geocoding failed for: {full_address}")
 
     order.status = "processing"
+
+
+@_register_stage("research")
+async def stage_research(order_id, org_id, db):
+    """Conduct title research via Claude web search (grounded mode).
+
+    Replaces retrieve+parse stages with autonomous web research that
+    gathers comprehensive 22-entity property data.
+
+    Stores full JSON in TARawDocument, creates TADocument records from
+    chain_of_title + mortgages + liens for chain analysis compatibility,
+    and stores citation URLs in TASourceAssignment.
+
+    Caches by SHA256(address + county + state + model + prompt_hash + schema_hash).
+    """
+    from app.services.storage import get_storage
+    from app.micro_apps.title_search.ai.title_research_agent import TitleResearchAgent
+
+    # Idempotent: delete old data on retry
+    await db.execute(
+        delete(TARawDocument).where(TARawDocument.order_id == order_id, TARawDocument.org_id == org_id)
+    )
+    await db.execute(
+        delete(TASourceAssignment).where(TASourceAssignment.order_id == order_id, TASourceAssignment.org_id == org_id)
+    )
+    await db.execute(
+        delete(TADocument).where(TADocument.order_id == order_id, TADocument.org_id == org_id)
+    )
+
+    order = (await db.execute(
+        select(TAOrder).where(TAOrder.id == order_id, TAOrder.org_id == org_id)
+    )).scalar_one()
+
+    # Check research cache
+    settings = get_settings()
+    version_info = collect_version_info(settings)
+    storage = get_storage()
+    cache_key = compute_research_cache_key(
+        order.property_address, order.county or "", order.state_code or "",
+        version_info,
+    )
+    cache_path = storage.make_ai_cache_path(org_id, order_id, "ta_research", cache_key)
+
+    research_data: dict
+    citations: list[dict[str, str]]
+
+    if await storage.exists(cache_path):
+        cached = json.loads(await storage.read(cache_path))
+        research_data = cached.get("research_data", {})
+        citations = cached.get("citations", [])
+        logger.info(f"TSA research cache hit for order {order_id}")
+    else:
+        # Cache miss — run Claude web search
+        agent = TitleResearchAgent(org_id)
+        research_data, citations = await agent.research(
+            property_address=order.property_address,
+            county=order.county or "",
+            state_code=order.state_code or "",
+            owner_name=order.borrower_name,
+            parcel_number=order.parcel_number,
+            search_scope=order.search_scope or "full",
+            search_years=order.search_years or 60,
+        )
+        # Cache the results
+        cache_payload = json.dumps({
+            "research_data": research_data,
+            "citations": citations,
+        }, default=str, indent=2)
+        await storage.save(cache_path, cache_payload.encode("utf-8"))
+        logger.info(f"TSA research cache miss — cached for order {order_id}")
+
+    # Store full research JSON as raw document
+    raw_doc = TARawDocument(
+        org_id=org_id,
+        order_id=order_id,
+        document_ref=f"{(order.county or 'UNKNOWN').upper()}-RESEARCH-DATA",
+        raw_content=json.dumps(research_data, default=str, indent=2),
+        content_format="json",
+        source_url=", ".join(c.get("url", "") for c in citations[:10]),
+    )
+    db.add(raw_doc)
+
+    # Store citation URLs as source assignments
+    for citation in citations:
+        assignment = TASourceAssignment(
+            org_id=org_id,
+            order_id=order_id,
+            source_type="web_search",
+            availability="digital",
+            status="completed",
+        )
+        db.add(assignment)
+
+    # Update order fields from research data (skip AI instruction text)
+    prop_id = research_data.get("property_identification", {})
+    _parcel = prop_id.get("parcel_number", "")
+    if _parcel and not order.parcel_number and _is_real_value(_parcel, max_len=100):
+        order.parcel_number = _parcel[:100]
+    _legal = prop_id.get("legal_description", "")
+    if _legal and not order.legal_description and _is_real_value(_legal):
+        order.legal_description = _legal
+
+    current_owner = research_data.get("current_ownership", {})
+    owner_names = current_owner.get("owner_names", [])
+    if owner_names and not order.borrower_name:
+        joined = ", ".join(owner_names)
+        if _is_real_value(joined, max_len=500):
+            order.borrower_name = joined[:500]
+
+    # Create TADocument records from chain_of_title for chain analysis compatibility
+    for i, deed in enumerate(research_data.get("chain_of_title", [])):
+        rec_date = deed.get("recording_date") or ""
+        rec_ref = deed.get("recording_ref") or ""
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            doc_type="deed",
+            recording_date=rec_date[:20] if rec_date else None,
+            recording_ref=rec_ref[:255] if rec_ref else None,
+            grantor={"names": [deed["grantor"]]} if deed.get("grantor") else None,
+            grantee={"names": [deed["grantee"]]} if deed.get("grantee") else None,
+            consideration=_parse_money(deed.get("consideration")),
+            confidence=0.85,  # web search confidence
+            summary=f"{deed.get('deed_type', 'Deed')}: {deed.get('grantor', '?')} → {deed.get('grantee', '?')}",
+            doc_metadata={
+                "source": "web_search",
+                "deed_type_detail": deed.get("deed_type"),
+                "notes": deed.get("notes"),
+                "recording_date_full": rec_date if len(rec_date) > 20 else None,
+                "recording_ref_full": rec_ref if len(rec_ref) > 255 else None,
+            },
+        )
+        db.add(doc)
+
+    # Create TADocument records from mortgages
+    for mortgage in research_data.get("mortgages", []):
+        rec_date = mortgage.get("recording_date") or ""
+        rec_ref = mortgage.get("recording_ref") or ""
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            doc_type="mortgage",
+            recording_date=rec_date[:20] if rec_date else None,
+            recording_ref=rec_ref[:255] if rec_ref else None,
+            grantor={"names": [mortgage["borrower"]]} if mortgage.get("borrower") else None,
+            grantee={"names": [mortgage["lender"]]} if mortgage.get("lender") else None,
+            consideration=_parse_money(mortgage.get("amount")),
+            confidence=0.85,
+            summary=f"Mortgage: {mortgage.get('lender', '?')} - {mortgage.get('amount', '?')}",
+            doc_metadata={
+                "source": "web_search",
+                "maturity_date": mortgage.get("maturity_date"),
+                "status": mortgage.get("status"),
+                "satisfaction_ref": mortgage.get("satisfaction_ref"),
+                "recording_date_full": rec_date if len(rec_date) > 20 else None,
+            },
+        )
+        db.add(doc)
+
+    # Create TADocument records from liens
+    for lien in research_data.get("liens", []):
+        rec_date = lien.get("recording_date") or ""
+        rec_ref = lien.get("recording_ref") or ""
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            doc_type="lien",
+            recording_date=rec_date[:20] if rec_date else None,
+            recording_ref=rec_ref[:255] if rec_ref else None,
+            grantor={"names": [lien["creditor"]]} if lien.get("creditor") else None,
+            grantee={"names": [lien["debtor"]]} if lien.get("debtor") else None,
+            consideration=_parse_money(lien.get("amount")),
+            confidence=0.85,
+            summary=f"{lien.get('lien_type', 'Lien')}: {lien.get('creditor', '?')}",
+            doc_metadata={
+                "source": "web_search",
+                "lien_type": lien.get("lien_type"),
+                "status": lien.get("status"),
+                "recording_date_full": rec_date if len(rec_date) > 20 else None,
+            },
+        )
+        db.add(doc)
+
+    # Create TADocument records from easements
+    for easement in research_data.get("easements", []):
+        rec_ref = easement.get("recording_ref") or ""
+        doc = TADocument(
+            org_id=org_id,
+            order_id=order_id,
+            doc_type="easement",
+            recording_ref=rec_ref[:255] if rec_ref else None,
+            confidence=0.85,
+            summary=easement.get("description", "Easement"),
+            doc_metadata={
+                "source": "web_search",
+                "easement_type": easement.get("easement_type"),
+                "beneficiary": easement.get("beneficiary"),
+            },
+        )
+        db.add(doc)
+
+    logger.info(
+        f"TSA research stage completed for order {order_id}: "
+        f"{len(research_data.get('chain_of_title', []))} deeds, "
+        f"{len(research_data.get('mortgages', []))} mortgages, "
+        f"{len(research_data.get('liens', []))} liens, "
+        f"{len(citations)} sources"
+    )
+
+
+def _parse_money(value: str | None) -> float | None:
+    """Parse a money string like '$250,000.00' into a float."""
+    if not value:
+        return None
+    try:
+        cleaned = value.replace("$", "").replace(",", "").strip()
+        return float(cleaned)
+    except (ValueError, TypeError):
+        return None
 
 
 @_register_stage("retrieve")
@@ -304,12 +565,12 @@ async def stage_retrieve(order_id, org_id, db):
         discovered_clerk_portal=discovered_clerk_url,
     )
 
-    # Update order with fetched data
-    if prop_data.owner_name and not order.borrower_name:
-        order.borrower_name = prop_data.owner_name
-    if prop_data.parcel_number and not order.parcel_number:
-        order.parcel_number = prop_data.parcel_number
-    if prop_data.legal_description and not order.legal_description:
+    # Update order with fetched data (skip AI instruction text)
+    if prop_data.owner_name and not order.borrower_name and _is_real_value(prop_data.owner_name, max_len=500):
+        order.borrower_name = prop_data.owner_name[:500]
+    if prop_data.parcel_number and not order.parcel_number and _is_real_value(prop_data.parcel_number, max_len=100):
+        order.parcel_number = prop_data.parcel_number[:100]
+    if prop_data.legal_description and not order.legal_description and _is_real_value(prop_data.legal_description):
         order.legal_description = prop_data.legal_description
 
     # Store the fetched data as a raw document (JSON format)
@@ -584,9 +845,32 @@ async def stage_chain(order_id, org_id, db):
         )
         db.add(link)
 
+    # Load property_summary for research-based flag rules (grounded mode)
+    _pkg = (await db.execute(
+        select(TAPackage).where(TAPackage.order_id == order_id, TAPackage.org_id == org_id)
+    )).scalar_one_or_none()
+    _property_summary = _pkg.property_summary if _pkg else None
+
+    # Also check raw documents for research data (before package stage)
+    if not _property_summary:
+        _raw_docs = (await db.execute(
+            select(TARawDocument).where(
+                TARawDocument.order_id == order_id,
+                TARawDocument.org_id == org_id,
+                TARawDocument.content_format == "json",
+            )
+        )).scalars().all()
+        for _rd in _raw_docs:
+            if _rd.raw_content:
+                try:
+                    _property_summary = json.loads(_rd.raw_content)
+                    break
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
     # AI anomalies + deterministic rules — merge results
     ai_flags = analysis_result.get("anomalies", [])
-    rule_flags = detect_all_flags(documents)
+    rule_flags = detect_all_flags(documents, property_summary=_property_summary)
     all_flags = normalize_flags(ai_flags + rule_flags)
 
     for rf in all_flags:
@@ -682,12 +966,48 @@ async def stage_package(order_id, org_id, db):
     # Check if auto-issue conditions are met
     can_auto_issue = chain_complete and open_critical_high == 0
 
-    property_summary = {
+    property_summary: dict[str, Any] = {
         "address": order.property_address,
         "county": order.county,
         "state": order.state_code,
         "parcel_number": order.parcel_number,
     }
+
+    # In grounded mode, merge research data into property_summary
+    settings = get_settings()
+    if settings.TSA_RESEARCH_MODE == "grounded":
+        raw_docs = (await db.execute(
+            select(TARawDocument).where(
+                TARawDocument.order_id == order_id,
+                TARawDocument.org_id == org_id,
+                TARawDocument.content_format == "json",
+            )
+        )).scalars().all()
+        for rd in raw_docs:
+            if rd.raw_content:
+                try:
+                    research = json.loads(rd.raw_content)
+                    # Merge all 22 entity sections into property_summary
+                    for key in (
+                        "property_identification", "physical_attributes", "lot_and_land",
+                        "hoa", "location_context", "current_ownership", "chain_of_title",
+                        "mortgages", "liens", "tax_status", "easements", "ccrs_restrictions",
+                        "notice_of_commencement", "court_proceedings", "permits",
+                        "survey_plat", "title_opinion_items", "next_steps",
+                        "key_contacts", "comparable_sales", "search_summary",
+                    ):
+                        if key in research:
+                            property_summary[key] = research[key]
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        # Mark as grounded if we actually merged any research entities
+        has_research = any(
+            key in property_summary
+            for key in ("property_identification", "current_ownership", "chain_of_title")
+        )
+        if has_research:
+            property_summary["research_mode"] = "grounded"
 
     # Generate data-driven narrative (no LLM call)
     narrative = _generate_data_driven_narrative(
@@ -1034,8 +1354,9 @@ async def _run_pipeline_inner(
 
     pipeline_start = time.monotonic()
     stage_timings: dict[str, float] = {}
+    active_stages = _get_pipeline_stages()
 
-    for stage_name, max_retries in PIPELINE_STAGES:
+    for stage_name, max_retries in active_stages:
         logger.info(f"TSA pipeline stage '{stage_name}' starting for order {order_id}")
 
         async with session_factory() as db:
@@ -1207,8 +1528,9 @@ async def _parse_html_document(
     confidence = result.get("confidence", 0.80)
 
     # Update order's legal_description from extracted data if blank
-    if not order.legal_description and prop_info.get("legal_description"):
-        order.legal_description = prop_info["legal_description"]
+    _ld = prop_info.get("legal_description", "")
+    if not order.legal_description and _ld and _is_real_value(_ld):
+        order.legal_description = _ld
 
     # Create TADocuments for each deed
     for deed in result.get("deeds", []):
@@ -1345,13 +1667,13 @@ async def _parse_json_property_data(
                 db, org_id, order_id, raw_doc, order, prop_data, source
             )
 
-    # Update order fields from fetched data
-    if prop_data.get("legal_description") and not order.legal_description:
+    # Update order fields from fetched data (skip AI instruction text)
+    if prop_data.get("legal_description") and not order.legal_description and _is_real_value(prop_data["legal_description"]):
         order.legal_description = prop_data["legal_description"]
-    if prop_data.get("owner_name") and not order.borrower_name:
-        order.borrower_name = prop_data["owner_name"]
-    if prop_data.get("parcel_number") and not order.parcel_number:
-        order.parcel_number = prop_data["parcel_number"]
+    if prop_data.get("owner_name") and not order.borrower_name and _is_real_value(prop_data["owner_name"], max_len=500):
+        order.borrower_name = prop_data["owner_name"][:500]
+    if prop_data.get("parcel_number") and not order.parcel_number and _is_real_value(prop_data["parcel_number"], max_len=100):
+        order.parcel_number = prop_data["parcel_number"][:100]
 
     confidence = 0.85  # Real portal data is high confidence
 
@@ -1453,7 +1775,7 @@ async def _parse_json_property_data(
 
         # Use clerk's legal description if it's more detailed than what we have
         clerk_legal = rec.get("legal_description", "")
-        if clerk_legal and len(clerk_legal) > len(order.legal_description or ""):
+        if clerk_legal and _is_real_value(clerk_legal) and len(clerk_legal) > len(order.legal_description or ""):
             order.legal_description = clerk_legal
 
         doc = TADocument(
@@ -1533,15 +1855,15 @@ async def _extract_generic_portal_data(
 
     confidence = extracted.get("confidence", 0.70)
 
-    # --- Merge property info into order ---
+    # --- Merge property info into order (skip AI instruction text) ---
     pinfo = extracted.get("property_info", {})
-    if pinfo.get("owner_name") and not order.borrower_name:
-        order.borrower_name = pinfo["owner_name"]
+    if pinfo.get("owner_name") and not order.borrower_name and _is_real_value(pinfo["owner_name"], max_len=500):
+        order.borrower_name = pinfo["owner_name"][:500]
         prop_data["owner_name"] = pinfo["owner_name"]
-    if pinfo.get("parcel_number") and not order.parcel_number:
-        order.parcel_number = pinfo["parcel_number"]
+    if pinfo.get("parcel_number") and not order.parcel_number and _is_real_value(pinfo["parcel_number"], max_len=100):
+        order.parcel_number = pinfo["parcel_number"][:100]
         prop_data["parcel_number"] = pinfo["parcel_number"]
-    if pinfo.get("legal_description") and not order.legal_description:
+    if pinfo.get("legal_description") and not order.legal_description and _is_real_value(pinfo["legal_description"]):
         order.legal_description = pinfo["legal_description"]
         prop_data["legal_description"] = pinfo["legal_description"]
     if pinfo.get("subdivision"):

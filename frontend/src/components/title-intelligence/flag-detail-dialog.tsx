@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { X, FileText } from "lucide-react";
 import { SeverityBadge } from "./severity-badge";
 import { ReviewForm } from "./review-form";
-import { ReviewAssistantPanel } from "./review-assistant-panel";
+import { FlagNoteInput } from "./flag-note-input";
 import { STATUS_COLORS } from "@/lib/ti-constants";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import type { Flag, ReviewDecision } from "@/lib/ti-types";
@@ -12,13 +12,13 @@ import type { Flag, ReviewDecision } from "@/lib/ti-types";
 export function FlagDetailDialog({
   flag,
   onReview,
-  onGetRecommendation,
+  onSaveNote,
   onClose,
   submitting,
 }: {
   flag: Flag;
   onReview: (decision: ReviewDecision, reasonCode: string | null, notes: string) => void;
-  onGetRecommendation: () => Promise<{ decision: string; reasoning: string; confidence: number }>;
+  onSaveNote: (flagId: string, note: string | null) => Promise<void>;
   onClose: () => void;
   submitting?: boolean;
 }) {
@@ -95,8 +95,11 @@ export function FlagDetailDialog({
             </div>
           )}
 
-          {/* AI Recommendation */}
-          <ReviewAssistantPanel onGetRecommendation={onGetRecommendation} />
+          {/* Notes */}
+          <div>
+            <h4 className="text-sm font-medium mb-1.5">Notes</h4>
+            <FlagNoteInput flagId={flag.id} initialNote={flag.note} onSave={onSaveNote} />
+          </div>
 
           {/* Review Form */}
           {flag.status === "open" && (

@@ -37,8 +37,6 @@ function useBreadcrumbs() {
       crumbs.push({ label: "Documents", href: path });
     } else if (segment === "chat") {
       crumbs.push({ label: "Chat", href: path });
-    } else if (segment === "readiness") {
-      crumbs.push({ label: "Readiness", href: path });
     } else if (segment === "flags") {
       crumbs.push({ label: "Flags", href: path });
     } else if (segment === "profile") {

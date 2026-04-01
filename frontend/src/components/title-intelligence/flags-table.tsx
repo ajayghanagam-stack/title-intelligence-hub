@@ -213,7 +213,6 @@ export function FlagsTable({
   flags,
   packId,
   onReview,
-  onGetRecommendation,
   onSaveNote,
   submitting,
   total,
@@ -223,7 +222,6 @@ export function FlagsTable({
   flags: Flag[];
   packId: string;
   onReview: (flagId: string, decision: ReviewDecision, reasonCode: string | null, notes: string) => void;
-  onGetRecommendation: (flagId: string) => Promise<{ decision: string; reasoning: string; confidence: number }>;
   onSaveNote: (flagId: string, note: string | null) => Promise<void>;
   submitting?: boolean;
   total?: number;
@@ -299,7 +297,7 @@ export function FlagsTable({
         <span className="flex-1 py-2.5 pr-3">Description</span>
         <span className="w-[120px] py-2.5 pr-2">Doc Ref</span>
         <span className="w-[160px] py-2.5 pr-2">Required Action</span>
-        <span className="w-[200px] py-2.5 pr-4">Note</span>
+        <span className="w-[200px] py-2.5 pr-4">Notes</span>
       </div>
 
       {/* Rows */}
@@ -340,7 +338,7 @@ export function FlagsTable({
         <FlagDetailDialog
           flag={selectedFlag}
           onReview={(decision, reasonCode, notes) => { onReview(selectedFlag.id, decision, reasonCode, notes); setSelectedFlag(null); }}
-          onGetRecommendation={() => onGetRecommendation(selectedFlag.id)}
+          onSaveNote={onSaveNote}
           onClose={() => setSelectedFlag(null)}
           submitting={submitting}
         />

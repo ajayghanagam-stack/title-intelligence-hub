@@ -50,6 +50,7 @@ export default function NewOrderPage() {
         effective_date: form.effective_date || undefined,
       });
       await processOrder(currentOrgId, order.id);
+      window.dispatchEvent(new Event("order-created"));
       router.push(`/apps/title-search/orders/${order.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create order");

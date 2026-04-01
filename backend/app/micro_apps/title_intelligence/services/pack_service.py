@@ -10,6 +10,12 @@ from app.micro_apps.title_intelligence.models.extraction import Extraction
 from app.micro_apps.title_intelligence.services.storage import StorageProvider
 from app.core.exceptions import NotFoundError, ConflictError, ValidationError
 
+# Values that indicate "no real data" — used to filter both property_address and pack name
+_SENTINEL_NAME_VALUES = frozenset({
+    "not specified", "n/a", "na", "none", "unknown",
+    "not available", "not provided",
+})
+
 
 async def create_pack(db: AsyncSession, org_id: uuid.UUID, name: str) -> Pack:
     pack = Pack(org_id=org_id, name=name, status="uploading")
@@ -70,16 +76,28 @@ async def get_pack_with_extractions(db: AsyncSession, org_id: uuid.UUID, pack_id
             elif label in ("Insured Property", "Subject Property", "Property 1", "Property Location", "Property Address") and isinstance(data, dict):
                 if not property_address:  # Only set if not already found
                     addr = data.get("address")
-                    if addr and addr != "Not specified" and addr.strip():
-                        property_address = addr
+                    if addr and addr.strip():
+                        normalized = addr.strip().lower()
+                        if normalized not in (
+                            "not specified", "n/a", "na", "none",
+                            "unknown", "not available", "not provided",
+                        ):
+                            property_address = addr.strip()
         except (json.JSONDecodeError, TypeError):
             pass
     
+    # If pack name is a sentinel value, fall back to original filename
+    display_name = pack.name
+    if display_name and display_name.strip().lower() in _SENTINEL_NAME_VALUES:
+        if pack.files:
+            fname = pack.files[0].original_filename
+            display_name = fname.rsplit(".", 1)[0] if fname and "." in fname else (fname or display_name)
+
     # Build response dict
     return {
         "id": pack.id,
         "org_id": pack.org_id,
-        "name": pack.name,
+        "name": display_name,
         "status": pack.status,
         "current_stage": pack.current_stage,
         "readiness_score": pack.readiness_score,
@@ -89,8 +107,15 @@ async def get_pack_with_extractions(db: AsyncSession, org_id: uuid.UUID, pack_id
         "updated_at": pack.updated_at,
         "files": pack.files,
         "title_company": title_company,
-        "property_address": property_address,
+        "property_address": _sanitize_property_address(property_address),
     }
+
+
+def _sanitize_property_address(addr: str | None) -> str | None:
+    """Return None if address is a sentinel value like 'N/A'."""
+    if not addr or not addr.strip():
+        return None
+    return None if addr.strip().lower() in _SENTINEL_NAME_VALUES else addr.strip()
 
 
 async def get_pack_or_raise(db: AsyncSession, org_id: uuid.UUID, pack_id: uuid.UUID) -> Pack:
@@ -138,24 +163,59 @@ async def list_packs(
                     data = value
                 if isinstance(data, dict):
                     addr = data.get("address")
-                    if addr and addr != "Not specified" and addr.strip():
-                        property_addresses[pack_id] = addr
+                    if addr and addr.strip():
+                        normalized = addr.strip().lower()
+                        if normalized not in (
+                            "not specified", "n/a", "na", "none",
+                            "unknown", "not available", "not provided",
+                        ):
+                            property_addresses[pack_id] = addr.strip()
             except (json.JSONDecodeError, TypeError):
                 pass
     
+    # For packs whose name is a sentinel, fall back to original filename
+    fallback_names = {}
+    sentinel_pack_ids = [
+        p.id for p in packs
+        if p.name and p.name.strip().lower() in _SENTINEL_NAME_VALUES
+    ]
+    if sentinel_pack_ids:
+        fn_result = await db.execute(
+            select(PackFile.pack_id, PackFile.original_filename)
+            .where(PackFile.pack_id.in_(sentinel_pack_ids))
+        )
+        for pid, fname in fn_result.fetchall():
+            if pid not in fallback_names and fname:
+                # Strip file extension for display
+                fallback_names[pid] = fname.rsplit(".", 1)[0] if "." in fname else fname
+
     # Convert to list of dicts with property address
     return [
         {
             "id": p.id,
-            "name": p.name,
+            "name": fallback_names.get(p.id, p.name) if (
+                p.name and p.name.strip().lower() in _SENTINEL_NAME_VALUES
+            ) else p.name,
             "status": p.status,
             "current_stage": p.current_stage,
             "readiness_score": p.readiness_score,
             "created_at": p.created_at,
-            "property_address": property_addresses.get(p.id),
+            "property_address": _sanitize_property_address(property_addresses.get(p.id)),
         }
         for p in packs
     ]
+
+
+async def _cleanup_pack_storage(org_id: uuid.UUID, pack_id: uuid.UUID, storage: StorageProvider) -> None:
+    """Delete all storage artifacts for a pack: files, pages, and org-level AI caches."""
+    # Pack-scoped files (uploads, pages, thumbs, OCR)
+    await storage.delete_dir(f"{org_id}/{pack_id}")
+    # Org-level AI caches (examiner, examiner_native, summary)
+    for stage in ("examiner", "examiner_native", "summary"):
+        try:
+            await storage.delete_dir(f"{org_id}/ai_cache/{stage}")
+        except Exception:
+            pass
 
 
 async def delete_pack(
@@ -164,7 +224,7 @@ async def delete_pack(
     pack = await get_pack(db, org_id, pack_id)
     if not pack:
         return False
-    await storage.delete_dir(f"{org_id}/{pack_id}")
+    await _cleanup_pack_storage(org_id, pack_id, storage)
     # Use SQL DELETE to let DB ON DELETE CASCADE handle child rows,
     # avoiding SQLAlchemy ORM's attempt to SET NULL on loaded relationships.
     await db.execute(delete(Pack).where(Pack.id == pack_id, Pack.org_id == org_id))
@@ -176,7 +236,7 @@ async def delete_pack_or_raise(
     db: AsyncSession, org_id: uuid.UUID, pack_id: uuid.UUID, storage: StorageProvider
 ) -> None:
     await get_pack_or_raise(db, org_id, pack_id)
-    await storage.delete_dir(f"{org_id}/{pack_id}")
+    await _cleanup_pack_storage(org_id, pack_id, storage)
     await db.execute(delete(Pack).where(Pack.id == pack_id, Pack.org_id == org_id))
     await db.commit()
 

@@ -26,6 +26,7 @@ def get_test_settings():
         CORS_ORIGINS=["http://localhost:3000"],
         STORAGE_PATH="./test_storage",
         PIPELINE_MODE="legacy",
+        TSA_RESEARCH_MODE="scraper",
     )
 
 
@@ -39,6 +40,8 @@ import os
 os.environ.setdefault("PIPELINE_MODE", "legacy")
 if os.environ.get("PIPELINE_MODE") not in ("native_pdf", "legacy"):
     os.environ["PIPELINE_MODE"] = "legacy"
+# Default TSA to scraper mode in tests (no ANTHROPIC_API_KEY available)
+os.environ["TSA_RESEARCH_MODE"] = "scraper"
 # Clear any cached settings from prior test runs
 get_settings.cache_clear()
 

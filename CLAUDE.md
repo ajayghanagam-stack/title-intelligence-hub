@@ -132,7 +132,6 @@ See [perf_optimizations.md](perf_optimizations.md) for the pipeline performance 
 | Output | Condition |
 |--------|-----------|
 | Text chunks | Same page text + same chunker version |
-| Readiness score, status, categories, estimated_days | Same flags + same rules version (`weighted_5cat_v2`) |
 | AI cache key | Same `(page hashes + model + prompt hash + schema hash)` → identical cache key |
 
 ### Practically Stable (temp=0, same model+prompt → near-identical)
@@ -341,7 +340,7 @@ The first fully implemented micro app. Processes title commitment PDFs through a
 - **Cache pre-warming**: Context cache creation runs concurrently with triage via `asyncio.create_task`, saving 1-2s
 - **Pydantic schemas**: `schemas/examiner.py` defines `ExaminerConsolidatedResult`, `ExaminerBatchResult`, `ExaminerExtraction`, `ExaminerFlag`, `ExaminerSection`, `PageTranscription`
 
-**Reports**: Report generation is **data-driven, no LLM needed**. `report_service.py` fetches pack data (extractions, flags, readiness) and passes structured inputs to `pdf_service.py` (`generate_pack_report_pdf()`) which renders via fpdf2. PDF is cached in storage for instant subsequent downloads.
+**Reports**: Report generation is **data-driven, no LLM needed**. `report_service.py` fetches pack data (extractions, flags) and passes structured inputs to `pdf_service.py` (`generate_pack_report_pdf()`) which renders via fpdf2. PDF is cached in storage for instant subsequent downloads. `generate_data_driven_summary()` produces a bullet-point executive summary from flag data (no LLM, no readiness score).
 
 **Pipeline** (`pipeline/orchestrator.py`):
 - Dual backend: `PIPELINE_BACKEND` setting selects `background_tasks` (FastAPI BackgroundTasks) or `temporal` (durable Temporal workflows)
@@ -453,14 +452,14 @@ TSA-specific: `TEST_ORDER_ID`, `TEST_SOURCE_ASSIGNMENT_ID`, `TEST_RAW_DOC_ID`, `
 - `/api/v1/organizations`, `/api/v1/subscriptions`, `/api/v1/micro-apps` — platform CRUD
 - `/api/v1/apps/{slug}/*` — micro app routes, gated by subscription middleware
 
-**Title Intelligence routes** mount at `/api/v1/apps/title-intelligence/packs/{packId}/` with sub-resources: `pipeline`, `pages`, `extractions`, `flags`, `readiness`, `chat` (+`/stream` for SSE), `reports` (`/download` for PDF, GET by URI), `search`.
+**Title Intelligence routes** mount at `/api/v1/apps/title-intelligence/packs/{packId}/` with sub-resources: `pipeline`, `pages`, `extractions`, `flags`, `chat` (+`/stream` for SSE), `reports` (`/download` for PDF, GET by URI), `search`.
 
 **Title Search routes** mount at `/api/v1/apps/title-search/` with: `orders` (CRUD + `/process` + `/pipeline`), `orders/{orderId}/sources` (list + upload), `orders/{orderId}/documents` (list + correct), `orders/{orderId}/chain`, `orders/{orderId}/flags` (list + review), `orders/{orderId}/package` (get + issue + PDF), `county-sources` (platform admin CRUD).
 
 **Frontend** (Next.js App Router at `frontend/src/app/`):
 - `(auth)/login` — unauthenticated layout
 - `(platform)/` — authenticated layout with sidebar: `dashboard`, `admin/*`, `apps/*`
-- TI pages: `apps/title-intelligence/packs/[packId]/` with sub-pages: `documents`, `results`, `readiness`, `export`
+- TI pages: `apps/title-intelligence/packs/[packId]/` with sub-pages: `documents`, `results`, `export`
 - TSA pages: `apps/title-search/` (order list), `orders/new` (create), `orders/[orderId]/` with sub-pages: `documents`, `chain`, `flags`, `package`
 
 ### Storage

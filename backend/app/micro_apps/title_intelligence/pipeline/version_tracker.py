@@ -57,18 +57,17 @@ def compute_ingestion_output_hash(sections_dicts: list[dict], extractions_dicts:
 
 
 def compute_summary_cache_key(
-    ingestion_output_hash: str, risk_output_hash: str, readiness_score: int, version_info: dict[str, Any]
+    ingestion_output_hash: str, risk_output_hash: str, version_info: dict[str, Any]
 ) -> str:
     """Composite cache key for the finalization summary.
 
-    Depends on extractions, flags (via their hashes), readiness score, and model/prompt.
+    Depends on extractions, flags (via their hashes), and model/prompt.
     The ReportAgent.generate_summary prompt is stable so we hash it at key-build time.
     """
     from app.micro_apps.title_intelligence.ai.report_agent import ReportAgent
     parts = (
         ingestion_output_hash
         + risk_output_hash
-        + str(readiness_score)
         + version_info["ai_model"]
         + hash_string(ReportAgent.SYSTEM_PROMPT if hasattr(ReportAgent, "SYSTEM_PROMPT") else "")
     )

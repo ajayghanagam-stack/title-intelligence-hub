@@ -11,12 +11,11 @@ import {
   ShieldCheck,
   AlertTriangle,
   CheckCircle2,
-  Building2,
 } from "lucide-react";
 import { useOrg } from "@/hooks/use-org";
 import { usePack } from "@/hooks/use-pack";
 import { cn } from "@/lib/utils";
-import type { Flag, ReadinessData } from "@/lib/ti-types";
+import type { Flag } from "@/lib/ti-types";
 
 export default function ExportPage() {
   const params = useParams();
@@ -26,16 +25,11 @@ export default function ExportPage() {
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flags, setFlags] = useState<Flag[]>([]);
-  const [readiness, setReadiness] = useState<ReadinessData | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
-      const [flagsData, readinessData] = await Promise.all([
-        orgFetch<{ flags: Flag[] }>(`/api/v1/apps/title-intelligence/packs/${packId}/flags`),
-        orgFetch<ReadinessData>(`/api/v1/apps/title-intelligence/packs/${packId}/readiness`),
-      ]);
+      const flagsData = await orgFetch<{ flags: Flag[] }>(`/api/v1/apps/title-intelligence/packs/${packId}/flags`);
       setFlags(flagsData.flags);
-      setReadiness(readinessData);
     } catch { /* non-critical preview data */ }
   }, [orgFetch, packId]);
 
@@ -68,7 +62,6 @@ export default function ExportPage() {
   const criticalCount = flags.filter((f) => f.severity === "critical").length;
   const warningCount = flags.filter((f) => f.severity === "high" || f.severity === "medium").length;
   const resolvedCount = flags.filter((f) => f.status === "approved" || f.status === "rejected").length;
-  const validationScore = readiness ? Math.round(readiness.score / 10) : 0;
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -112,12 +105,11 @@ export default function ExportPage() {
             <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">
               Report Preview
             </p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               {[
                 { value: criticalCount, label: "Critical", icon: AlertTriangle, color: "text-red-500", bg: "bg-red-50" },
                 { value: warningCount, label: "Warnings", icon: ShieldCheck, color: "text-amber-500", bg: "bg-amber-50" },
                 { value: resolvedCount, label: "Resolved", icon: CheckCircle2, color: "text-emerald-500", bg: "bg-emerald-50" },
-                { value: validationScore, label: "Score /10", icon: Building2, color: "text-blue-500", bg: "bg-blue-50" },
               ].map((stat) => {
                 const Icon = stat.icon;
                 return (

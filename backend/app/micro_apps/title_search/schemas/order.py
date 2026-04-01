@@ -10,8 +10,8 @@ OrderStatus = Literal[
     "review_required", "completed", "failed",
 ]
 SearchScope = Literal["full", "current_owner", "limited"]
-PipelineStage = Literal["order", "retrieve", "parse", "chain", "package", "complete"]
-StageStatus = Literal["pending", "running", "completed", "failed", "skipped"]
+PipelineStage = Literal["order", "retrieve", "research", "parse", "chain", "package", "complete"]
+StageStatus = Literal["pending", "running", "completed", "failed", "skipped", "paused"]
 
 # Valid US state abbreviations
 US_STATES = {

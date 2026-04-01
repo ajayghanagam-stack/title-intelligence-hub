@@ -125,10 +125,69 @@ export interface TSPackage {
   total_documents: number | null;
   chain_complete: boolean;
   open_flags_count: number | null;
-  property_summary: Record<string, string> | null;
+  property_summary: PropertySummary | null;
   issued_by: string | null;
   issued_at: string | null;
   created_at: string;
+}
+
+/** 22-entity research data stored in TAPackage.property_summary */
+export interface PropertySummary {
+  address?: string;
+  county?: string;
+  state?: string;
+  parcel_number?: string;
+  narrative?: string;
+  research_mode?: string;
+  property_identification?: Record<string, unknown>;
+  physical_attributes?: Record<string, unknown>;
+  lot_and_land?: Record<string, unknown>;
+  hoa?: Record<string, unknown>;
+  location_context?: Record<string, unknown>;
+  current_ownership?: {
+    owner_names?: string[];
+    ownership_type?: string;
+    vesting_deed_ref?: string;
+    vesting_deed_date?: string;
+    homestead_exemption?: boolean;
+    [key: string]: unknown;
+  };
+  chain_of_title?: Array<Record<string, unknown>>;
+  mortgages?: Array<Record<string, unknown>>;
+  liens?: Array<Record<string, unknown>>;
+  tax_status?: Record<string, unknown>;
+  easements?: Array<Record<string, unknown>>;
+  ccrs_restrictions?: Record<string, unknown>;
+  notice_of_commencement?: Record<string, unknown>;
+  court_proceedings?: Array<Record<string, unknown>>;
+  permits?: Array<Record<string, unknown>>;
+  survey_plat?: Record<string, unknown>;
+  title_opinion_items?: Array<{
+    item: string;
+    severity: string;
+    status: string;
+    recommendation?: string;
+  }>;
+  next_steps?: Array<{
+    action: string;
+    priority: string;
+    assigned_to?: string;
+    notes?: string;
+  }>;
+  key_contacts?: Array<{
+    name: string;
+    role?: string;
+    phone?: string;
+    website?: string;
+  }>;
+  comparable_sales?: Array<Record<string, unknown>>;
+  search_summary?: {
+    sources_searched?: string[];
+    sources_unavailable?: string[];
+    confidence_level?: string;
+    notes?: string;
+  };
+  [key: string]: unknown;
 }
 
 export interface SourceAssignment {

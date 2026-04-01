@@ -7,24 +7,6 @@ import { Upload, ChevronRight, Shield, Calendar, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Pack } from "@/lib/ti-types";
 
-function ScorePill({ score }: { score: number }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold tabular-nums",
-        score >= 90
-          ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-          : score >= 60
-            ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
-            : "bg-red-50 text-red-700 ring-1 ring-red-200"
-      )}
-    >
-      <Shield className="h-3 w-3" />
-      {score}
-    </span>
-  );
-}
-
 export function PackList({ packs, onDelete }: { packs: Pack[]; onDelete?: (id: string) => Promise<void> }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -67,26 +49,11 @@ export function PackList({ packs, onDelete }: { packs: Pack[]; onDelete?: (id: s
           href={`/apps/title-intelligence/packs/${pack.id}`}
           className="group flex items-center gap-4 card-warm px-5 py-4 hover:border-primary/20"
         >
-          {/* Score indicator */}
+          {/* Icon */}
           <div className="shrink-0">
-            {pack.readiness_score !== null ? (
-              <div
-                className={cn(
-                  "flex h-11 w-11 items-center justify-center rounded-xl text-sm font-bold tabular-nums",
-                  pack.readiness_score >= 90
-                    ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                    : pack.readiness_score >= 60
-                      ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
-                      : "bg-red-50 text-red-700 ring-1 ring-red-200"
-                )}
-              >
-                {pack.readiness_score}
-              </div>
-            ) : (
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-muted/60 text-muted-foreground/40">
-                <Shield className="h-5 w-5" />
-              </div>
-            )}
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-muted/60 text-muted-foreground/40">
+              <Shield className="h-5 w-5" />
+            </div>
           </div>
 
           {/* Content */}

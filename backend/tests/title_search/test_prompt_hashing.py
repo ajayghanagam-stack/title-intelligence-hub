@@ -167,7 +167,7 @@ def test_version_info_includes_rules_version():
 
     info = collect_version_info(_test_settings())
     assert info["rules_version"] == RULES_VERSION
-    assert info["rules_version"] == "ta_flag_rules_v1"
+    assert info["rules_version"] == "ta_flag_rules_v2"
 
 
 def test_all_hashes_are_64_char_hex():

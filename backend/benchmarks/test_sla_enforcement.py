@@ -359,56 +359,7 @@ class TestTokenBudget:
 
 
 class TestDeterminism:
-    """Verify deterministic outputs for readiness calculation."""
-
-    @pytest.mark.asyncio
-    async def test_readiness_deterministic_3x(self, db_session: AsyncSession, seed_data):
-        """Compute readiness 3x with identical inputs — all must match."""
-        from app.micro_apps.title_intelligence.models.pack import Pack
-        from app.micro_apps.title_intelligence.models.extraction import Extraction
-        from app.micro_apps.title_intelligence.models.flag import Flag
-        from app.micro_apps.title_intelligence.services.readiness_service import calculate_readiness
-
-        pack = Pack(id=BENCH_PACK_ID, org_id=TEST_ORG_ID, name="Determinism Pack", status="completed")
-        db_session.add(pack)
-
-        db_session.add(Extraction(
-            pack_id=BENCH_PACK_ID, org_id=TEST_ORG_ID,
-            extraction_type="requirement", label="Req 1",
-            value={"description": "Pay mortgage"},
-            evidence_refs=[{"page_number": 1}],
-            confidence=0.92,
-        ))
-        db_session.add(Extraction(
-            pack_id=BENCH_PACK_ID, org_id=TEST_ORG_ID,
-            extraction_type="party", label="Buyer: Smith",
-            value={"name": "Smith", "role": "buyer"},
-            evidence_refs=[{"page_number": 1}],
-            confidence=0.95,
-        ))
-        db_session.add(Flag(
-            pack_id=BENCH_PACK_ID, org_id=TEST_ORG_ID,
-            flag_type="unresolved_lien", severity="high",
-            title="Lien Flag", description="Open lien",
-            ai_explanation="Unreleased lien found",
-            evidence_refs=[{"page_number": 5}],
-        ))
-        await db_session.commit()
-
-        results = []
-        for _ in range(3):
-            r = await calculate_readiness(db_session, TEST_ORG_ID, BENCH_PACK_ID)
-            results.append(r)
-
-        first = results[0]
-        for r in results[1:]:
-            assert r.score == first.score
-            assert r.status == first.status
-            assert r.estimated_days == first.estimated_days
-            assert len(r.categories) == len(first.categories)
-            for c1, c2 in zip(first.categories, r.categories):
-                assert c1.category == c2.category
-                assert c1.score == c2.score
+    """Verify deterministic outputs for flag normalization."""
 
     def test_sla_check_deterministic(self):
         """SLA check with same inputs must always produce same result."""

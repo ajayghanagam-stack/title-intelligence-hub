@@ -46,10 +46,10 @@ export function FlagNoteInput({ flagId, initialNote, onSave }: FlagNoteInputProp
   return (
     <div className="flex flex-col gap-1">
       <textarea
-        className={`w-full rounded-md border px-2.5 py-1.5 text-sm leading-snug resize-y min-h-[36px] outline-none transition-colors
+        className={`w-full rounded-md border px-2.5 py-1.5 text-[13px] leading-snug resize-y min-h-[32px] outline-none transition-colors
           ${value ? "border-indigo-200 bg-white" : "border-slate-200 bg-slate-50"}
           focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:bg-white`}
-        rows={2}
+        rows={3}
         placeholder="Add a note..."
         value={value}
         onChange={(e) => setValue(e.target.value)}

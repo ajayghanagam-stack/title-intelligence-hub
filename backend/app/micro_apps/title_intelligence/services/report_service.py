@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.micro_apps.title_intelligence.models.extraction import Extraction
 from app.micro_apps.title_intelligence.models.flag import Flag
 from app.micro_apps.title_intelligence.models.pack import Pack
-from app.micro_apps.title_intelligence.services.readiness_service import calculate_readiness
 from app.micro_apps.title_intelligence.services.storage import StorageProvider
 from app.core.exceptions import ForbiddenError, NotFoundError
 
@@ -52,7 +51,6 @@ def generate_data_driven_summary(
     pack_name: str,
     extractions: list,
     flags: list,
-    readiness_score: int,
 ) -> str:
     """Generate a bullet-point executive summary from structured data.
 
@@ -64,7 +62,6 @@ def generate_data_driven_summary(
         pack_name: Display name of the title pack
         extractions: List of Extraction model instances
         flags: List of Flag model instances
-        readiness_score: Integer 0-100
 
     Returns:
         Bullet-point summary string (each line starts with '- ')
@@ -78,29 +75,24 @@ def generate_data_driven_summary(
     medium_flags = [f for f in open_flags if f.severity == "medium"]
     low_flags = [f for f in open_flags if f.severity == "low"]
 
-    # Extract key property/party info for context
-    property_address = _find_extraction_from_list(extractions, "policy_info", "address", "property address", "full_address")
-    if not property_address:
-        property_address = _find_extraction_from_list(extractions, "property", "address", "property address", "full_address")
-
-    # Bullet 1: Overall readiness status
-    if readiness_score >= 90:
-        status_text = f"Title commitment is ready to close with a readiness score of {readiness_score}/100"
-        if not open_flags:
-            status_text += ". No open issues remain."
-        else:
-            status_text += f", with {len(open_flags)} minor item{'s' if len(open_flags) != 1 else ''} remaining."
-    elif readiness_score >= 60:
+    # Bullet 1: Overall status based on flags
+    if not open_flags:
+        status_text = "Title commitment has no open issues remaining and is cleared for closing."
+    elif critical_flags:
         status_text = (
-            f"Title commitment is at risk with a readiness score of {readiness_score}/100. "
-            f"{len(open_flags)} open issue{'s' if len(open_flags) != 1 else ''} "
-            f"require{'s' if len(open_flags) == 1 else ''} attention before closing."
+            f"Title commitment has {len(open_flags)} open issue{'s' if len(open_flags) != 1 else ''}, "
+            f"including {len(critical_flags)} critical. "
+            f"Critical issues must be resolved before closing."
+        )
+    elif high_flags:
+        status_text = (
+            f"Title commitment has {len(open_flags)} open issue{'s' if len(open_flags) != 1 else ''} "
+            f"requiring attention before closing."
         )
     else:
         status_text = (
-            f"Title commitment is not ready to close (score: {readiness_score}/100). "
-            f"{len(open_flags)} open issue{'s' if len(open_flags) != 1 else ''} "
-            f"must be resolved."
+            f"Title commitment has {len(open_flags)} minor open item{'s' if len(open_flags) != 1 else ''} "
+            f"to review before closing."
         )
     bullets.append(status_text)
 
@@ -198,9 +190,6 @@ async def generate_report_pdf(
     )
     flags = list(flag_result.scalars().all())
 
-    # Calculate readiness
-    readiness = await calculate_readiness(db, org_id, pack_id)
-
     # Extract property info from extractions (try policy_info first, then property)
     property_address = (
         _find_extraction(extractions, "policy_info", "address", "property address", "full_address")
@@ -243,7 +232,6 @@ async def generate_report_pdf(
     critical_count = sum(1 for f in flags if f.severity == "critical")
     warning_count = sum(1 for f in flags if f.severity in ("high", "medium"))
     review_count = sum(1 for f in flags if f.status in ("open", "escalated"))
-    validation_score = round(readiness.score / 10) if readiness else 0
 
     generated_at = datetime.now(timezone.utc).strftime("%B %d, %Y at %I:%M %p UTC")
 
@@ -257,7 +245,6 @@ async def generate_report_pdf(
         critical_count=critical_count,
         warning_count=warning_count,
         review_count=review_count,
-        validation_score=validation_score,
         exceptions=exceptions,
     )
 

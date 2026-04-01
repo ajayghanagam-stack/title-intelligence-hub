@@ -37,33 +37,6 @@ export interface Extraction {
   confidence: number;
 }
 
-export interface CategoryScore {
-  category: string;
-  weight: number;
-  score: number;
-  max_score: number;
-  satisfied: number;
-  total: number;
-  details: string;
-}
-
-export interface ChecklistItem {
-  label: string;
-  status: "done" | "pending" | "blocked";
-  category: string;
-  severity?: FlagSeverity;
-}
-
-export interface ReadinessData {
-  score: number;
-  status: string;
-  summary: string | null;
-  categories: CategoryScore[];
-  checklist: ChecklistItem[];
-  estimated_days: number;
-  open_flags_count?: number;
-}
-
 export interface Section {
   id: string;
   section_type: string;
@@ -105,7 +78,6 @@ export interface Pack {
   name: string;
   status: "uploading" | "processing" | "completed" | "failed";
   current_stage: string | null;
-  readiness_score: number | null;
   readiness_summary: string | null;
   error_message: string | null;
   created_at: string;

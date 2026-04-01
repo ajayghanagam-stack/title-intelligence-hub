@@ -2,6 +2,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.micro_apps.title_search.models.order import TAOrder
 from app.micro_apps.title_search.services.order_service import get_order_or_raise
 from app.micro_apps.title_search.schemas.order import (
@@ -9,7 +10,19 @@ from app.micro_apps.title_search.schemas.order import (
     PipelineStageStatusSchema,
 )
 
-PIPELINE_STAGES = ["order", "retrieve", "parse", "chain", "package", "complete"]
+SCRAPER_PIPELINE_STAGES = ["order", "retrieve", "parse", "chain", "package", "complete"]
+GROUNDED_PIPELINE_STAGES = ["order", "research", "chain", "package", "complete"]
+
+
+def _get_active_stages() -> list[str]:
+    settings = get_settings()
+    if settings.TSA_RESEARCH_MODE == "grounded":
+        return GROUNDED_PIPELINE_STAGES
+    return SCRAPER_PIPELINE_STAGES
+
+
+# Legacy alias
+PIPELINE_STAGES = SCRAPER_PIPELINE_STAGES
 
 
 async def get_pipeline_status_or_raise(
@@ -27,12 +40,12 @@ async def get_pipeline_status_or_raise(
         # Pipeline finished — all stages completed
         stages = [
             PipelineStageStatusSchema(stage=s, status="completed")
-            for s in PIPELINE_STAGES
+            for s in _get_active_stages()
         ]
     elif order.status in paused_statuses:
         # Pipeline paused — show completed stages + paused current stage
         current_found = False
-        for stage_name in PIPELINE_STAGES:
+        for stage_name in _get_active_stages():
             if stage_name == order.pipeline_stage:
                 current_found = True
                 stages.append(PipelineStageStatusSchema(stage=stage_name, status="paused"))
@@ -44,11 +57,11 @@ async def get_pipeline_status_or_raise(
         # Pipeline hasn't started yet
         stages = [
             PipelineStageStatusSchema(stage=s, status="pending")
-            for s in PIPELINE_STAGES
+            for s in _get_active_stages()
         ]
     else:
         current_found = False
-        for stage_name in PIPELINE_STAGES:
+        for stage_name in _get_active_stages():
             if stage_name == order.pipeline_stage:
                 current_found = True
                 if order.status == "failed":

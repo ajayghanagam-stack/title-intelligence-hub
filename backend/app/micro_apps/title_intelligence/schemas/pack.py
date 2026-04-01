@@ -25,7 +25,6 @@ class PackResponse(BaseModel):
     name: str
     status: str
     current_stage: str | None = None
-    readiness_score: int | None = None
     readiness_summary: str | None = None
     error_message: str | None = None
     created_at: datetime
@@ -42,7 +41,6 @@ class PackListResponse(BaseModel):
     name: str
     status: str
     current_stage: str | None = None
-    readiness_score: int | None = None
     created_at: datetime
     property_address: str | None = None  # Property address extracted from document
 

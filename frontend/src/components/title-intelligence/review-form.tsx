@@ -14,10 +14,9 @@ export function ReviewForm({
   submitting?: boolean;
 }) {
   const [reasonCode, setReasonCode] = useState("");
-  const [notes, setNotes] = useState("");
 
   const handleSubmit = (decision: ReviewDecision) => {
-    onSubmit(decision, reasonCode || null, notes);
+    onSubmit(decision, reasonCode || null, "");
   };
 
   return (
@@ -37,18 +36,6 @@ export function ReviewForm({
             </option>
           ))}
         </select>
-      </div>
-
-      <div>
-        <label htmlFor="review-notes" className="text-sm font-medium">Notes</label>
-        <textarea
-          id="review-notes"
-          className="mt-1.5 w-full rounded-lg border bg-background p-3 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
-          rows={3}
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="Optional review notes..."
-        />
       </div>
 
       <div className="flex gap-2 pt-1">

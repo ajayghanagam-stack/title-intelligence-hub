@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 class ReviewCreate(BaseModel):
     decision: str = Field(..., pattern="^(approve|reject|escalate)$")
-    reason_code: str = ""
+    reason_code: str | None = ""
     notes: str | None = None
 
 

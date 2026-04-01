@@ -32,7 +32,6 @@ interface RecentPack {
   name: string;
   status: string;
   created_at: string;
-  readiness_score: number | null;
   property_address: string | null;
 }
 
@@ -81,8 +80,8 @@ const tsaNavItems = [
 ];
 
 const ORG_LOGOS: Record<string, string> = {
-  "6f72d2ca-8c30-41dd-96f4-732f89c096a4": "/grid151-logo.jpeg",      // Grid 151
-  "cb710fb8-a35f-4155-81a9-baece3d46639": "/society-title-logo.jpeg", // Society Title Co
+  "6cc2b64a-d3ab-4b98-8246-96c6e98efedf": "/grid151-logo.jpeg",      // Grid151
+  "5e704ee4-fc88-4d1e-855f-50d379ea6c0f": "/society-title-logo.jpeg", // Society Title Co
 };
 
 function PackStatusIcon({ status }: { status: string }) {
@@ -385,18 +384,13 @@ export function Sidebar() {
                           "font-medium truncate leading-tight",
                           isActive ? "text-amber-800" : "text-sidebar-foreground/80 group-hover:text-sidebar-foreground"
                         )}>
-                          {pack.property_address || pack.name}
+                          {(pack.property_address && !["N/A", "n/a", "NA", "None", "Unknown"].includes(pack.property_address)) ? pack.property_address : pack.name}
                         </p>
                         <p className={cn(
                           "text-[10px] mt-0.5",
                           isActive ? "text-amber-600/60" : "text-sidebar-foreground/35"
                         )}>
                           {formatRelativeDate(pack.created_at)}
-                          {pack.readiness_score != null && (
-                            <span className="ml-1.5">
-                              &middot; {Math.round(pack.readiness_score / 10)}/10
-                            </span>
-                          )}
                         </p>
                       </div>
                     </Link>

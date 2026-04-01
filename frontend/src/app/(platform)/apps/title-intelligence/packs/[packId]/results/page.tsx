@@ -16,7 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useToast } from "@/components/ui/toast";
 import { PAGE_SIZE } from "@/components/title-intelligence/flags-table";
-import type { Flag, FlagListResponse, Extraction, ReadinessData, ReviewDecision, Pack, Recommendation } from "@/lib/ti-types";
+import type { Flag, FlagListResponse, Extraction, ReviewDecision, Pack } from "@/lib/ti-types";
 
 type SeverityFilter = "all" | "critical" | "warning" | "review";
 
@@ -59,7 +59,6 @@ export default function ResultsPage() {
   const [flagTotal, setFlagTotal] = useState(0);
   const [flagPage, setFlagPage] = useState(1);
   const [extractions, setExtractions] = useState<Extraction[]>([]);
-  const [readiness, setReadiness] = useState<ReadinessData | null>(null);
   const [pack, setPack] = useState<Pack | null>(null);
   const [packName, setPackName] = useState<string>("");
   const [flagsLoading, setFlagsLoading] = useState(true);
@@ -103,13 +102,6 @@ export default function ResultsPage() {
       const data = await orgFetch<Extraction[]>(`/api/v1/apps/title-intelligence/packs/${packId}/extractions`);
       setExtractions(data);
     } catch { setExtractions([]); }
-  }, [orgFetch, packId]);
-
-  const fetchReadiness = useCallback(async () => {
-    try {
-      const data = await orgFetch<ReadinessData>(`/api/v1/apps/title-intelligence/packs/${packId}/readiness`);
-      setReadiness(data);
-    } catch { setReadiness(null); }
   }, [orgFetch, packId]);
 
   const fetchPack = useCallback(async () => {
@@ -169,9 +161,8 @@ export default function ResultsPage() {
   useEffect(() => {
     fetchFlags();
     fetchExtractions();
-    fetchReadiness();
     fetchPack();
-  }, [fetchFlags, fetchExtractions, fetchReadiness, fetchPack]);
+  }, [fetchFlags, fetchExtractions, fetchPack]);
 
   // Poll pack data while processing to detect completion
   useEffect(() => {
@@ -188,10 +179,9 @@ export default function ResultsPage() {
       setFlagPage(1);
       fetchFlags(1, "all");
       fetchExtractions();
-      fetchReadiness();
     }
     prevStatusRef.current = pack?.status;
-  }, [pack?.status, fetchFlags, fetchExtractions, fetchReadiness]);
+  }, [pack?.status, fetchFlags, fetchExtractions]);
 
   const handleSeverityFilter = (filter: SeverityFilter) => {
     setSeverityFilter(filter);
@@ -211,8 +201,14 @@ export default function ResultsPage() {
         method: "POST",
         body: JSON.stringify({ decision, reason_code: reasonCode, notes }),
       });
+      // Sync review notes to the flag's note field so the line-item column stays updated
+      if (notes) {
+        await orgFetch<unknown>(`/api/v1/apps/title-intelligence/packs/${packId}/flags/${flagId}/note`, {
+          method: "PATCH",
+          body: JSON.stringify({ note: notes }),
+        });
+      }
       fetchFlags(flagPage, severityFilter);
-      fetchReadiness();
     } catch (error) {
       showToast("error", error instanceof Error ? error.message : "Failed to submit review");
     } finally {
@@ -225,11 +221,9 @@ export default function ResultsPage() {
       method: "PATCH",
       body: JSON.stringify({ note }),
     });
+    // Update local state so dialog sees the latest note
+    setFlags((prev) => prev.map((f) => (f.id === flagId ? { ...f, note: note ?? null } : f)));
   }, [orgFetch, packId]);
-
-  const handleGetRecommendation = async (flagId: string) => {
-    return await orgFetch<Recommendation>(`/api/v1/apps/title-intelligence/packs/${packId}/flags/${flagId}/recommend`, { method: "POST" });
-  };
 
   const propertyAddress = pack?.property_address
     || findExtraction(extractions, "policy_info", "address", "property address", "full_address")
@@ -246,7 +240,6 @@ export default function ResultsPage() {
   const criticalCount = flagCounts["critical"] || 0;
   const warningCount = (flagCounts["high"] || 0) + (flagCounts["medium"] || 0);
   const reviewCount = flagCounts["low"] || 0;
-  const validationScore = readiness ? Math.round(readiness.score / 10) : 0;
 
   const analyzedAt = pack?.status === "completed" && pack?.updated_at
     ? new Date(pack.updated_at).toLocaleString("en-US", { month: "numeric", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
@@ -311,7 +304,7 @@ export default function ResultsPage() {
 
       {/* ── Summary Cards ── */}
       {!flagsLoading && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           {[
             { value: criticalCount, label: "Critical Issues", sub: "Require immediate resolution", color: "border-l-red-500", text: "text-red-600" },
             { value: warningCount, label: "Warnings", sub: "Require attention before closing", color: "border-l-amber-500", text: "text-amber-600" },
@@ -323,20 +316,13 @@ export default function ResultsPage() {
               <p className="text-[10px] text-muted-foreground">{card.sub}</p>
             </div>
           ))}
-          <div className="rounded-lg border bg-card p-4 border-l-4 border-l-emerald-500">
-            <p className="text-2xl font-bold text-emerald-600">
-              {validationScore}<span className="text-sm font-normal text-muted-foreground"> / 10</span>
-            </p>
-            <p className="text-xs font-medium text-foreground/80 mt-0.5">Validation Score</p>
-            <p className="text-[10px] text-muted-foreground">Requirements met</p>
-          </div>
         </div>
       )}
 
       {/* ── Summary sentence ── */}
       {!flagsLoading && (
         <p className="text-[13px] text-muted-foreground leading-relaxed">
-          This package contains {criticalCount} critical issue{criticalCount !== 1 ? "s" : ""} requiring resolution before closing, {warningCount} warning{warningCount !== 1 ? "s" : ""}, and passed {validationScore} of 10 standard validation requirements.
+          This package contains {criticalCount} critical issue{criticalCount !== 1 ? "s" : ""} requiring resolution before closing and {warningCount} warning{warningCount !== 1 ? "s" : ""} to address.
         </p>
       )}
 
@@ -419,7 +405,6 @@ export default function ResultsPage() {
                 flags={flags}
                 packId={packId}
                 onReview={handleReview}
-                onGetRecommendation={handleGetRecommendation}
                 onSaveNote={handleSaveNote}
                 submitting={submitting}
                 total={flagTotal}

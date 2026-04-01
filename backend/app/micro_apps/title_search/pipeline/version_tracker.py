@@ -84,6 +84,24 @@ def compute_chain_cache_key(parse_output_hash: str, version_info: dict[str, Any]
     return hashlib.sha256(parts.encode("utf-8")).hexdigest()
 
 
+def compute_research_cache_key(
+    address: str, county: str, state_code: str,
+    version_info: dict[str, Any],
+) -> str:
+    """Composite cache key for research agent output.
+
+    Combines property address + county + state with model, prompt, and schema
+    hashes so any change to inputs or AI config produces a cache miss.
+    """
+    parts = (
+        hash_string(f"{address}|{county}|{state_code}")
+        + version_info.get("ai_model", "")
+        + version_info.get("research_prompt_hash", "")
+        + version_info.get("research_schema_hash", "")
+    )
+    return hashlib.sha256(parts.encode("utf-8")).hexdigest()
+
+
 _cached_version_info: dict[str, Any] | None = None
 _cached_version_key: str | None = None
 
@@ -117,6 +135,18 @@ def collect_version_info(settings: Settings) -> dict[str, Any]:
     combined_prompt_hash = hash_string(CHAIN_ANALYSIS_SYSTEM_PROMPT)
     combined_schema_hash = hash_string(json.dumps(CHAIN_ANALYSIS_JSON_SCHEMA, sort_keys=True))
 
+    # Research agent hashes (only imported when grounded mode is configured)
+    research_prompt_hash = ""
+    research_schema_hash = ""
+    try:
+        from app.micro_apps.title_search.ai.title_research_agent import (
+            RESEARCH_PROMPT_HASH, RESEARCH_SCHEMA_HASH,
+        )
+        research_prompt_hash = RESEARCH_PROMPT_HASH
+        research_schema_hash = RESEARCH_SCHEMA_HASH
+    except ImportError:
+        pass
+
     _cached_version_info = {
         "ai_platform": platform,
         "ai_model": model,
@@ -126,12 +156,16 @@ def collect_version_info(settings: Settings) -> dict[str, Any]:
         "parser_tool_hash": hash_string(json.dumps(PARSER_TOOL, sort_keys=True)),
         "chain_tool_hash": combined_schema_hash,
         "anomaly_tool_hash": combined_schema_hash,
+        "research_prompt_hash": research_prompt_hash,
+        "research_schema_hash": research_schema_hash,
         "rules_version": RULES_VERSION,
         "pipeline_backend": settings.PIPELINE_BACKEND,
+        "tsa_research_mode": settings.TSA_RESEARCH_MODE,
         "version_metadata": {
             "ai_platform": platform,
             "ai_model": model,
             "rules_version": RULES_VERSION,
+            "tsa_research_mode": settings.TSA_RESEARCH_MODE,
         },
     }
     _cached_version_key = cache_key

@@ -10,6 +10,7 @@ import {
 } from "@/lib/title-search/api";
 import { PipelineProgress } from "@/components/title-search/pipeline-progress";
 import { OrderStatusBadge } from "@/components/title-search/order-status-badge";
+import { ResearchProgress } from "@/components/title-search/research-progress";
 import type { TSOrder, TSPipelineStatus } from "@/lib/title-search/types";
 import {
   Download,
@@ -19,6 +20,8 @@ import {
   User,
   Hash,
   FileSearch,
+  FileText,
+  Clock,
 } from "lucide-react";
 
 export default function OrderDetailPage() {
@@ -41,7 +44,6 @@ export default function OrderDetailPage() {
       setOrder(orderData);
       setPipeline(pipelineData);
 
-      // Stop polling when pipeline is complete or failed
       const done =
         orderData.status === "completed" ||
         orderData.status === "review_required" ||
@@ -69,8 +71,13 @@ export default function OrderDetailPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const orderLabel = order?.property_address || order?.order_reference || orderId.slice(0, 8);
-      const nameSlug = orderLabel.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 60);
+      const orderLabel =
+        order?.property_address || order?.order_reference || orderId.slice(0, 8);
+      const nameSlug = orderLabel
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_|_$/g, "")
+        .slice(0, 60);
       a.download = `${nameSlug}_title_search.pdf`;
       a.click();
       URL.revokeObjectURL(url);
@@ -106,15 +113,17 @@ export default function OrderDetailPage() {
   const isProcessing = order.status === "processing";
   const isDone =
     order.status === "completed" || order.status === "review_required";
+  const isResearching =
+    isProcessing && order.pipeline_stage === "research";
 
   return (
     <div className="space-y-6" data-testid="order-detail-page">
       {/* Property Details Card */}
-      <div className="section-card" data-testid="property-details-card">
+      <div className="card-warm p-5" data-testid="property-details-card">
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500/20 to-cyan-500/20 ring-1 ring-blue-500/10">
-              <MapPin className="h-5 w-5 text-blue-700" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[oklch(0.750_0.170_65/0.20)] to-[oklch(0.680_0.190_55/0.20)] ring-1 ring-[oklch(0.750_0.170_65/0.10)]">
+              <MapPin className="h-5 w-5 text-[oklch(0.750_0.170_65)]" />
             </div>
             <div>
               <h2
@@ -181,15 +190,15 @@ export default function OrderDetailPage() {
           )}
           {order.order_reference && (
             <div data-testid="field-order-ref">
-              <span className="text-muted-foreground text-xs mb-1 block">
-                Order / Loan #
+              <span className="flex items-center gap-1.5 text-muted-foreground text-xs mb-1">
+                <FileText className="h-3 w-3" /> Order / Loan #
               </span>
               <p className="font-medium">{order.order_reference}</p>
             </div>
           )}
           <div data-testid="field-created">
-            <span className="text-muted-foreground text-xs mb-1 block">
-              Created
+            <span className="flex items-center gap-1.5 text-muted-foreground text-xs mb-1">
+              <Clock className="h-3 w-3" /> Created
             </span>
             <p className="font-medium">
               {new Date(order.created_at).toLocaleDateString()}
@@ -202,15 +211,20 @@ export default function OrderDetailPage() {
             className="mt-4 pt-4 border-t text-sm"
             data-testid="field-legal-desc"
           >
-            <span className="text-muted-foreground text-xs mb-1 block">
-              Legal Description
+            <span className="flex items-center gap-1.5 text-muted-foreground text-xs mb-1">
+              <MapPin className="h-3 w-3" /> Legal Description
             </span>
-            <p className="font-medium text-xs leading-relaxed">
+            <p className="font-medium leading-relaxed">
               {order.legal_description}
             </p>
           </div>
         )}
       </div>
+
+      {/* Research Progress (grounded mode) */}
+      {isResearching && (
+        <ResearchProgress stage="research" isActive />
+      )}
 
       {/* Pipeline Progress */}
       {pipeline && (
@@ -220,10 +234,10 @@ export default function OrderDetailPage() {
         />
       )}
 
-      {/* Actions Bar — visible when pipeline is done */}
+      {/* Actions Bar */}
       {isDone && (
         <div
-          className="section-card flex items-center justify-between"
+          className="card-warm p-5 flex items-center justify-between"
           data-testid="actions-bar"
         >
           <div>

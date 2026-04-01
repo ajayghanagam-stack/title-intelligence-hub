@@ -9,6 +9,9 @@ FlagType = Literal[
     "chain_gap", "name_mismatch", "unreleased_mortgage", "unsatisfied_lien",
     "judgment_match", "easement_conflict", "missing_source", "low_confidence",
     "captcha_blocked",  # Added for CAPTCHA-blocked portals in nationwide pipeline
+    # v2 research-driven flags
+    "flood_zone_risk", "noc_open", "permit_violation", "tax_delinquent",
+    "hoa_violation", "lis_pendens", "missing_survey",
 ]
 FlagSeverity = Literal["critical", "high", "medium", "low"]
 FlagStatus = Literal["open", "resolved", "dismissed"]

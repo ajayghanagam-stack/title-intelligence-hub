@@ -14,7 +14,6 @@ from app.micro_apps.title_intelligence.models.flag import Flag
 from app.micro_apps.title_intelligence.models.text_chunk import TextChunk
 from app.micro_apps.title_intelligence.models.pipeline_run import PipelineRun
 from app.micro_apps.title_intelligence.services.storage import StorageProvider
-from app.micro_apps.title_intelligence.services.readiness_service import calculate_readiness
 from app.core.logging import get_logger
 
 # Minimum chars of embedded text to consider a page "text-based"
@@ -368,6 +367,17 @@ async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, 
     log.info(f"Created {global_page_num} page images. {text_pages} had embedded text (skip OCR)")
 
 
+_SENTINEL_VALUES = frozenset({
+    "not specified", "n/a", "na", "none", "unknown",
+    "not available", "not provided",
+})
+
+
+def _is_real_address(addr: str) -> bool:
+    """Return True if addr looks like a real property address (not a sentinel)."""
+    return bool(addr and addr.strip() and addr.strip().lower() not in _SENTINEL_VALUES)
+
+
 def _find_property_address(extractions: list[Any]) -> str:
     """Extract property address from extractions to use as pack name."""
     for ext_type in ("property_info", "property"):
@@ -375,12 +385,13 @@ def _find_property_address(extractions: list[Any]) -> str:
             for ext in extractions:
                 if ext.extraction_type == ext_type and label_pat in ext.label.lower():
                     val = ext.value
-                    if isinstance(val, str) and val.strip():
+                    if isinstance(val, str) and _is_real_address(val):
                         return val.strip()
                     if isinstance(val, dict):
                         for key in ("value", "address", "full_address"):
-                            if isinstance(val.get(key), str) and val[key].strip():
-                                return val[key].strip()
+                            v = val.get(key)
+                            if isinstance(v, str) and _is_real_address(v):
+                                return v.strip()
     return ""
 
 
@@ -1540,7 +1551,7 @@ async def _create_text_chunks_from_transcriptions(
 
 
 async def stage_complete(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, storage: StorageProvider):
-    """Calculate readiness score and generate summary.
+    """Generate executive summary and pre-cache PDF report.
 
     With SUMMARY_MODE=data_driven (default), generates the summary from
     structured data only — no LLM call, saving ~10-15s per run.
@@ -1550,14 +1561,9 @@ async def stage_complete(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession
 
     log = get_logger(__name__, org_id=org_id, pack_id=pack_id, stage="complete")
 
-    # Readiness score is deterministic (pure rules) — always recompute
-    readiness = await calculate_readiness(db, org_id, pack_id)
-
     pack = (await db.execute(
         select(Pack).where(Pack.id == pack_id, Pack.org_id == org_id)
     )).scalar_one()
-
-    pack.readiness_score = readiness.score
 
     # Load extractions and flags
     ext_result = await db.execute(select(Extraction).where(Extraction.pack_id == pack_id, Extraction.org_id == org_id))
@@ -1580,10 +1586,9 @@ async def stage_complete(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession
             pack_name=pack.name,
             extractions=extractions,
             flags=flags,
-            readiness_score=readiness.score,
         )
         await db.commit()
-        log.info(f"Data-driven summary — readiness score: {readiness.score}, {len(flags)} flags")
+        log.info(f"Data-driven summary — {len(flags)} flags")
     else:
         # LLM summary mode (fallback) — with cache
         from app.micro_apps.title_intelligence.ai.report_agent import ReportAgent
@@ -1603,7 +1608,7 @@ async def stage_complete(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession
             [{"extraction_type": e.extraction_type, "label": e.label, "value": e.value, "evidence_refs": e.evidence_refs or [], "confidence": e.confidence} for e in extractions],
         )
         risk_output_hash = _compute_flags_hash(flags)
-        cache_key = compute_summary_cache_key(ingestion_output_hash, risk_output_hash, readiness.score, version_info)
+        cache_key = compute_summary_cache_key(ingestion_output_hash, risk_output_hash, version_info)
         cache_path = storage.make_ai_cache_path(org_id, pack_id, "summary", cache_key)
 
         # Check cache
@@ -1611,7 +1616,7 @@ async def stage_complete(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession
             cached = json.loads(await storage.read(cache_path))
             pack.readiness_summary = cached["summary"]
             await db.commit()
-            log.info(f"AI cache hit — readiness score: {readiness.score}, summary replayed from cache")
+            log.info("AI cache hit — summary replayed from cache")
         else:
             # Cache miss — generate summary via LLM
             agent = ReportAgent(org_id)
@@ -1619,7 +1624,6 @@ async def stage_complete(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession
                 pack_name=pack.name,
                 extractions=extractions,
                 flags=flags,
-                readiness_score=readiness.score,
             )
             pack.readiness_summary = summary.strip()
 
@@ -1631,7 +1635,7 @@ async def stage_complete(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession
                 log.warning(f"Failed to write summary cache (non-fatal): {e}")
 
             await db.commit()
-            log.info(f"AI cache miss — readiness score: {readiness.score}, summary generated and cached")
+            log.info("AI cache miss — summary generated and cached")
 
     # Pre-generate PDF report so download is instant
     try:

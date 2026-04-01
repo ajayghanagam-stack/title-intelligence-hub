@@ -479,6 +479,39 @@ class BaseAIService:
         logger.warning(f"Hit max_steps ({max_steps}) in tool-calling loop")
         return {"text": "", "steps": max_steps}
 
+    async def call_with_web_search(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        result_tool_schema: dict[str, Any],
+        result_tool_name: str = "submit_research_results",
+        result_tool_description: str = "Submit structured research results",
+        max_web_searches: int = 15,
+        max_tokens: int = 16384,
+        temperature: float = 0.0,
+        timeout: int = 300,
+    ) -> tuple[dict[str, Any], list[dict[str, str]]]:
+        """Call Claude with web search + structured result tool.
+
+        Uses Anthropic SDK directly for server-side web_search tool.
+        Returns (structured_result, citations) tuple.
+        """
+        from app.ai.claude_provider import call_with_web_search_claude, configure_claude
+        settings = get_settings()
+        configure_claude(settings)
+
+        return await call_with_web_search_claude(
+            system_prompt=system_prompt,
+            messages=messages,
+            result_tool_schema=result_tool_schema,
+            result_tool_name=result_tool_name,
+            result_tool_description=result_tool_description,
+            max_web_searches=max_web_searches,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
+        )
+
     async def call_streaming(
         self,
         system_prompt: str,

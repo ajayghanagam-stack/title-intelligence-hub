@@ -29,24 +29,27 @@ async def list_flags(
     """
     base = select(Flag).where(Flag.pack_id == pack_id, Flag.org_id == org_id)
 
-    # --- unfiltered counts (always full severity breakdown) ---
+    # --- counts only include open (unreviewed) flags ---
     count_result = await db.execute(
         select(Flag.severity, func.count())
-        .where(Flag.pack_id == pack_id, Flag.org_id == org_id)
+        .where(Flag.pack_id == pack_id, Flag.org_id == org_id, Flag.status == "open")
         .group_by(Flag.severity)
     )
     counts = {row[0]: row[1] for row in count_result.all()}
 
     # --- apply filters ---
     filtered = base
+    # Default to open-only so reviewed flags disappear from severity tabs
+    if status:
+        filtered = filtered.where(Flag.status == status)
+    else:
+        filtered = filtered.where(Flag.status == "open")
     if severity == "warning":
         filtered = filtered.where(Flag.severity.in_(["high", "medium"]))
     elif severity == "review":
         filtered = filtered.where(Flag.severity == "low")
     elif severity:
         filtered = filtered.where(Flag.severity == severity)
-    if status:
-        filtered = filtered.where(Flag.status == status)
 
     # --- filtered total ---
     total_result = await db.execute(
@@ -118,7 +121,7 @@ async def create_review(
     flag_id: uuid.UUID,
     reviewer_id: uuid.UUID,
     decision: str,
-    reason_code: str = "",
+    reason_code: str | None = "",
     notes: str | None = None,
 ) -> Review:
     review = Review(
@@ -126,7 +129,7 @@ async def create_review(
         org_id=org_id,
         reviewer_id=reviewer_id,
         decision=decision,
-        reason_code=reason_code,
+        reason_code=reason_code or "",
         notes=notes,
     )
     db.add(review)
