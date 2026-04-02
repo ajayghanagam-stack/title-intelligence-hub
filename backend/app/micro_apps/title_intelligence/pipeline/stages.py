@@ -1097,28 +1097,34 @@ async def _stage_examine_native_pdf(
     # Track batch progress for progressive UI updates
     batches_completed = 0
     total_flags_found = 0
+    _progress_lock = asyncio.Lock()
 
     async def _on_batch_complete(batch_idx: int, batch_result: Any) -> None:
         nonlocal batches_completed, total_flags_found
 
-        batches_completed += 1
-        batch_flags = len(batch_result.flags)
-        total_flags_found += batch_flags
+        async with _progress_lock:
+            batches_completed += 1
+            batch_flags = len(batch_result.flags)
+            total_flags_found += batch_flags
 
-        # Update pack's examine_progress for SSE streaming
-        pack = (await db.execute(
-            select(Pack).where(Pack.id == pack_id, Pack.org_id == org_id)
-        )).scalar_one()
-        pack.examine_progress = f"{batches_completed}/{total_batches} batches, {total_flags_found} flags"
-        await db.commit()
+            # Update pack's examine_progress for SSE streaming
+            try:
+                pack = (await db.execute(
+                    select(Pack).where(Pack.id == pack_id, Pack.org_id == org_id)
+                )).scalar_one()
+                pack.examine_progress = f"{batches_completed}/{total_batches} batches, {total_flags_found} flags"
+                await db.commit()
+            except Exception as e:
+                log.warning(f"Failed to update examine_progress (non-fatal): {e}")
+                await db.rollback()
 
-        log.info(
-            f"PDF batch {batch_idx + 1} complete: "
-            f"{len(batch_result.sections)} sections, "
-            f"{len(batch_result.extractions)} extractions, "
-            f"{batch_flags} flags "
-            f"({batches_completed}/{total_batches} done)"
-        )
+            log.info(
+                f"PDF batch {batch_idx + 1} complete: "
+                f"{len(batch_result.sections)} sections, "
+                f"{len(batch_result.extractions)} extractions, "
+                f"{batch_flags} flags "
+                f"({batches_completed}/{total_batches} done)"
+            )
 
     # Determine if we can reuse the optimistic early batch result
     # Only applicable when no document grouping overrides and no content filtering
@@ -1485,29 +1491,35 @@ async def stage_examine(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession,
     batches_completed = 0
     total_batches = 0  # will be set once batches are built
     total_flags_found = 0
+    _progress_lock = asyncio.Lock()
 
     async def _on_batch_complete(batch_idx: int, batch_result: Any) -> None:
         """Callback fired as each batch completes — writes results to DB immediately."""
         nonlocal batches_completed, total_flags_found
 
-        batches_completed += 1
-        batch_flags = len(batch_result.flags)
-        total_flags_found += batch_flags
+        async with _progress_lock:
+            batches_completed += 1
+            batch_flags = len(batch_result.flags)
+            total_flags_found += batch_flags
 
-        # Update pack's examine_progress for SSE streaming
-        pack = (await db.execute(
-            select(Pack).where(Pack.id == pack_id, Pack.org_id == org_id)
-        )).scalar_one()
-        pack.examine_progress = f"{batches_completed}/{total_batches} batches, {total_flags_found} flags"
-        await db.commit()
+            # Update pack's examine_progress for SSE streaming
+            try:
+                pack = (await db.execute(
+                    select(Pack).where(Pack.id == pack_id, Pack.org_id == org_id)
+                )).scalar_one()
+                pack.examine_progress = f"{batches_completed}/{total_batches} batches, {total_flags_found} flags"
+                await db.commit()
+            except Exception as e:
+                log.warning(f"Failed to update examine_progress (non-fatal): {e}")
+                await db.rollback()
 
-        log.info(
-            f"Batch {batch_idx + 1} complete: "
-            f"{len(batch_result.sections)} sections, "
-            f"{len(batch_result.extractions)} extractions, "
-            f"{batch_flags} flags "
-            f"({batches_completed}/{total_batches} done)"
-        )
+            log.info(
+                f"Batch {batch_idx + 1} complete: "
+                f"{len(batch_result.sections)} sections, "
+                f"{len(batch_result.extractions)} extractions, "
+                f"{batch_flags} flags "
+                f"({batches_completed}/{total_batches} done)"
+            )
 
     # Count batches for progress tracking (agent will build them during examine_document)
     text_pages_count = sum(1 for p in pages if p.ocr_text and len(p.ocr_text) >= 50)
