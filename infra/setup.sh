@@ -11,7 +11,7 @@ PREFIX="ti-hub"
 REGION="us-east-1"
 DB_NAME="title_intelligence_hub"
 DB_USER="tihubadmin"
-DB_INSTANCE_CLASS="db.t4g.small"
+DB_INSTANCE_CLASS="db.t4g.medium"
 
 # Colors
 RED='\033[0;31m'

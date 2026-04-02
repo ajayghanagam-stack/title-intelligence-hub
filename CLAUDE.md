@@ -64,22 +64,34 @@ docker-compose up               # full stack via Docker (db:5436 on host, backen
 
 **Dev port mapping** (docker-compose): PostgreSQL is exposed on host port **5436** (not 5432), frontend on **3001** (not 3000). Use `psql -h localhost -p 5436` for local DB access. `start-dev.sh` runs frontend on `:3000` and Temporal UI on `http://localhost:8085`.
 
-### Production Deployment
+### Production Deployment (AWS ECS)
 ```bash
-git push origin main                              # triggers CI (tests + build) then CD (deploy to Hetzner)
-scripts/quick-deploy.sh "commit message"          # skip CI, rsync + restart on server (use sparingly)
-ssh deploy@37.27.210.85 "cd /opt/title-intelligence-hub && docker compose -f docker-compose.prod.yml down"   # stop prod
-ssh deploy@37.27.210.85 "cd /opt/title-intelligence-hub && docker compose -f docker-compose.prod.yml up -d"  # start prod
-scripts/factory-reset.sh                          # full production reset (destructive, prompts for confirm)
+git push origin main                              # triggers CI (tests + build) then CD (deploy to AWS ECS)
+./infra/deploy.sh                                 # manual deploy: build, push to ECR, migrate, redeploy ECS
+./infra/deploy.sh backend                         # deploy backend only
+./infra/deploy.sh frontend                        # deploy frontend only
+./infra/setup.sh                                  # one-time AWS infrastructure creation
+./infra/teardown.sh                               # remove all AWS resources (destructive, prompts for confirm)
 ```
 
-**Production URL**: `http://37.27.210.85` (Hetzner VPS, Caddy reverse proxy on :80)
+**Production URL**: `http://ti-hub-alb-482449147.us-east-1.elb.amazonaws.com` (AWS ALB, us-east-1)
 
 **CI/CD Pipeline** (GitHub Actions):
 - **CI** (`.github/workflows/ci.yml`): backend tests (Python 3.12) → frontend lint+build (Node 20) → Docker image build check. Runs on push to `main` and PRs.
-- **CD** (`.github/workflows/cd.yml`): builds backend+frontend Docker images in parallel → pushes to GHCR (`ghcr.io`) → SSHes into Hetzner and runs `scripts/deploy.sh` (pull → migrate → restart → health check). Runs on push to `main` only.
+- **CD** (`.github/workflows/deploy-aws.yml`): builds backend+frontend Docker images in parallel → pushes to ECR → forces new ECS deployment → waits for stability → health check. Runs on push to `main` only.
 
-**Production stack** (`docker-compose.prod.yml`): caddy (reverse proxy on :80/:443), db (PostgreSQL 16), backend, frontend, temporal + temporal-worker (optional profile — enable with `--profile temporal`).
+**Production stack** (AWS ECS Fargate): ALB (HTTP routing, /api/* → backend, /* → frontend), ECS backend (4 vCPU/8GB, Gemini AI), ECS frontend (0.5 vCPU/1GB, Next.js standalone), RDS PostgreSQL 16 (db.t4g.medium, encrypted, private), S3 (file storage). Secrets in SSM Parameter Store.
+
+**AWS Resources** (managed by `infra/setup.sh`):
+- ECR: `ti-hub-backend`, `ti-hub-frontend`
+- S3: `ti-hub-storage-{account_id}` (public access blocked)
+- RDS: `ti-hub-db` (PostgreSQL 16, db.t4g.medium, private)
+- ECS: `ti-hub-cluster` with `ti-hub-backend` (auto-scales 1→4) and `ti-hub-frontend` services
+- ALB: `ti-hub-alb` with path-based routing
+- SSM: `/ti-hub/database-url`, `/ti-hub/jwt-secret`, `/ti-hub/google-api-key`, `/ti-hub/anthropic-api-key`
+- CloudWatch: `/ecs/ti-hub-backend`, `/ecs/ti-hub-frontend`
+
+**GitHub repo secrets needed**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ACCOUNT_ID`.
 
 ---
 

@@ -2,8 +2,8 @@
   "family": "{{PREFIX}}-backend",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
-  "cpu": "2048",
-  "memory": "4096",
+  "cpu": "4096",
+  "memory": "8192",
   "executionRoleArn": "{{TASK_EXEC_ROLE_ARN}}",
   "taskRoleArn": "{{TASK_ROLE_ARN}}",
   "containerDefinitions": [
@@ -23,6 +23,9 @@
         {"name": "S3_REGION", "value": "{{REGION}}"},
         {"name": "PIPELINE_BACKEND", "value": "background_tasks"},
         {"name": "AI_PROVIDER", "value": "gemini"},
+        {"name": "NATIVE_PDF_CONCURRENCY", "value": "12"},
+        {"name": "NATIVE_PDF_BATCH_SIZE", "value": "20"},
+        {"name": "TRIAGE_CONCURRENCY", "value": "4"},
         {"name": "CORS_ORIGINS", "value": "[\"http://{{ALB_DNS}}\"]"},
         {"name": "DEBUG", "value": "false"}
       ],
