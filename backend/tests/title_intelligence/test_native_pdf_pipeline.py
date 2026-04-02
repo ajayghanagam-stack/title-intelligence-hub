@@ -356,12 +356,13 @@ class TestNativePdfExamineStage:
         assert "COMMITMENT" in pages[0].ocr_text
         assert "Schedule A" in pages[1].ocr_text
 
-        # Check sections
+        # Check sections (deterministic rebuild detects headings from page text)
         sections = (await db_session.execute(
-            select(Section).where(Section.pack_id == TEST_PACK_ID)
+            select(Section).where(Section.pack_id == TEST_PACK_ID).order_by(Section.start_page)
         )).scalars().all()
-        assert len(sections) == 1
+        assert len(sections) == 2
         assert sections[0].section_type == "schedule_a"
+        assert sections[1].section_type == "schedule_b1"
 
         # Check extractions
         extractions = (await db_session.execute(

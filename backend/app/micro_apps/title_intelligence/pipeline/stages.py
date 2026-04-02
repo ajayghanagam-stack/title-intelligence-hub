@@ -1,4 +1,5 @@
 import json
+import re
 import uuid
 import asyncio
 from typing import Any
@@ -27,6 +28,104 @@ HEURISTIC_BLANK_THRESHOLD = 20
 
 # Clone concurrency for file copies
 CLONE_BATCH_SIZE = 10
+
+# ── Deterministic section detection from page text headings ──────────────
+# Ordered by specificity: more specific patterns first (e.g., B-1 before B)
+# All patterns require the heading to appear at the start of a line (^\s*).
+_SECTION_HEADING_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("schedule_b1", re.compile(
+        r"^\s*SCHEDULE\s+B[\s\-–—]*(?:(?:SECTION|PART)\s*)?(?:1|I(?!\w))",
+        re.IGNORECASE | re.MULTILINE,
+    )),
+    ("schedule_b2", re.compile(
+        r"^\s*SCHEDULE\s+B[\s\-–—]*(?:(?:SECTION|PART)\s*)?(?:2|II(?!\w))",
+        re.IGNORECASE | re.MULTILINE,
+    )),
+    ("schedule_b", re.compile(
+        r"^\s*SCHEDULE\s+B(?!\s*[\-–—]\s*\d)(?!\s*[\-–—]\s*[IV])(?:\b|$)",
+        re.IGNORECASE | re.MULTILINE,
+    )),
+    ("schedule_a", re.compile(r"^\s*SCHEDULE\s+A\b", re.IGNORECASE | re.MULTILINE)),
+    ("schedule_c", re.compile(r"^\s*SCHEDULE\s+C\b", re.IGNORECASE | re.MULTILINE)),
+    ("schedule_d", re.compile(r"^\s*SCHEDULE\s+D\b", re.IGNORECASE | re.MULTILINE)),
+    ("endorsements", re.compile(r"^\s*ENDORSEMENT", re.IGNORECASE | re.MULTILINE)),
+    ("legal_description", re.compile(
+        r"^\s*(?:LEGAL\s+DESCRIPTION|EXHIBIT\s+A\b)",
+        re.IGNORECASE | re.MULTILINE,
+    )),
+]
+
+
+def _detect_section_type_from_text(text: str) -> str | None:
+    """Detect section type from the first ~500 chars of a page's text.
+
+    Looks for standard title commitment section headings at the start of a
+    line. Returns the section_type string if found, None otherwise.
+    """
+    # Only scan the top of the page where headings appear
+    header = text[:500]
+    for section_type, pattern in _SECTION_HEADING_PATTERNS:
+        if pattern.search(header):
+            return section_type
+    return None
+
+
+def _rebuild_sections_from_page_text(
+    pages: list[Any],
+    ai_sections: list[Any],
+) -> list[Any]:
+    """Rebuild section list using deterministic heading detection from page text.
+
+    Scans each page's OCR text for section headings (Schedule A, B-1, etc.)
+    and builds sections from those boundaries. Falls back to AI-detected
+    sections if no headings are found.
+
+    Args:
+        pages: Page model instances with page_number and ocr_text
+        ai_sections: Sections from the AI (ExaminerSection instances)
+
+    Returns:
+        List of ExaminerSection instances with corrected section_type values
+    """
+    from app.micro_apps.title_intelligence.schemas.examiner import ExaminerSection
+
+    if not pages:
+        return list(ai_sections)
+
+    # Sort pages by page_number
+    sorted_pages = sorted(pages, key=lambda p: p.page_number)
+
+    # Detect section boundaries from page headings
+    boundaries: list[tuple[int, str]] = []  # (page_number, section_type)
+    for page in sorted_pages:
+        text = getattr(page, "ocr_text", None) or ""
+        if not text:
+            continue
+        detected = _detect_section_type_from_text(text)
+        if detected:
+            boundaries.append((page.page_number, detected))
+
+    if not boundaries:
+        # No headings detected — return AI sections as-is
+        return list(ai_sections)
+
+    # Build sections from boundaries
+    max_page = max(p.page_number for p in sorted_pages)
+    rebuilt: list[ExaminerSection] = []
+    for i, (start_page, section_type) in enumerate(boundaries):
+        # End page is one before the next section starts, or max_page
+        if i + 1 < len(boundaries):
+            end_page = boundaries[i + 1][0] - 1
+        else:
+            end_page = max_page
+        rebuilt.append(ExaminerSection(
+            section_type=section_type,
+            start_page=start_page,
+            end_page=end_page,
+            confidence=1.0,
+        ))
+
+    return rebuilt
 
 
 def _sanitize_extracted_text(raw: str) -> str:
@@ -1123,6 +1222,9 @@ async def _stage_examine_native_pdf(
         if page:
             page.ocr_text = t.text
 
+    # Rebuild sections from page text headings (deterministic, overrides AI)
+    consolidated.sections = _rebuild_sections_from_page_text(pages, consolidated.sections)
+
     # Insert sections
     section_map: dict[tuple[str, int], uuid.UUID] = {}
     for s in consolidated.sections:
@@ -1439,6 +1541,9 @@ async def stage_examine(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession,
         if page:
             page.ocr_text = t.text
 
+    # Rebuild sections from page text headings (deterministic, overrides AI)
+    consolidated.sections = _rebuild_sections_from_page_text(pages, consolidated.sections)
+
     # Insert sections, building section_map for FK linking
     section_map: dict[tuple[str, int], uuid.UUID] = {}
     for s in consolidated.sections:
@@ -1582,26 +1687,39 @@ async def _replay_examiner_cache(
         if page:
             page.ocr_text = t["text"]
 
-    # Insert sections
-    section_map: dict[tuple[str, int], uuid.UUID] = {}
-    for s in cached_data.get("sections", []):
-        section_id = uuid.uuid4()
-        section_map[(s["section_type"], s["start_page"])] = section_id
-        db.add(Section(
-            id=section_id,
-            pack_id=pack_id,
-            org_id=org_id,
+    # Rebuild sections from page text headings (deterministic, overrides AI cache)
+    from app.micro_apps.title_intelligence.schemas.examiner import ExaminerSection as _ExSec
+    ai_sections_objs = [
+        _ExSec(
             section_type=s["section_type"],
             start_page=s["start_page"],
             end_page=s["end_page"],
             confidence=s.get("confidence", 0.0),
+        )
+        for s in cached_data.get("sections", [])
+    ]
+    rebuilt_sections = _rebuild_sections_from_page_text(pages, ai_sections_objs)
+
+    # Insert sections
+    section_map: dict[tuple[str, int], uuid.UUID] = {}
+    for s in rebuilt_sections:
+        section_id = uuid.uuid4()
+        section_map[(s.section_type, s.start_page)] = section_id
+        db.add(Section(
+            id=section_id,
+            pack_id=pack_id,
+            org_id=org_id,
+            section_type=s.section_type,
+            start_page=s.start_page,
+            end_page=s.end_page,
+            confidence=s.confidence,
         ))
 
     # Insert extractions
     for e in cached_data.get("extractions", []):
         section_id = _find_matching_section(
             e.get("evidence_refs", []),
-            cached_data.get("sections", []),
+            rebuilt_sections,
             section_map,
         )
         db.add(Extraction(
