@@ -173,70 +173,83 @@ class S3Storage(StorageProvider):
             kwargs["region_name"] = self.region
         return kwargs
 
+    async def _get_client(self):
+        """Get or create a persistent S3 client (reuses TCP connections)."""
+        if not hasattr(self, "_client_cm") or self._client is None:
+            session = self._get_session()
+            self._client_cm = session.create_client(**self._client_kwargs())
+            self._client = await self._client_cm.__aenter__()
+        return self._client
+
     async def get_object(self, key: str) -> bytes:
-        session = self._get_session()
-        async with session.create_client(**self._client_kwargs()) as client:
-            response = await client.get_object(Bucket=self.bucket, Key=key)
-            async with response["Body"] as stream:
-                return await stream.read()
+        client = await self._get_client()
+        response = await client.get_object(Bucket=self.bucket, Key=key)
+        async with response["Body"] as stream:
+            return await stream.read()
 
     async def put_object(self, key: str, data: bytes, content_type: str | None = None) -> None:
-        session = self._get_session()
         kwargs: dict[str, Any] = {"Bucket": self.bucket, "Key": key, "Body": data}
         if content_type:
             kwargs["ContentType"] = content_type
-        async with session.create_client(**self._client_kwargs()) as client:
-            await client.put_object(**kwargs)
+        client = await self._get_client()
+        await client.put_object(**kwargs)
 
     async def delete_object(self, key: str) -> None:
-        session = self._get_session()
-        async with session.create_client(**self._client_kwargs()) as client:
-            await client.delete_object(Bucket=self.bucket, Key=key)
+        client = await self._get_client()
+        await client.delete_object(Bucket=self.bucket, Key=key)
 
     async def exists(self, key: str) -> bool:
-        session = self._get_session()
-        async with session.create_client(**self._client_kwargs()) as client:
-            try:
-                await client.head_object(Bucket=self.bucket, Key=key)
-                return True
-            except client.exceptions.ClientError:
-                return False
-            except Exception:
-                return False
+        client = await self._get_client()
+        try:
+            await client.head_object(Bucket=self.bucket, Key=key)
+            return True
+        except client.exceptions.ClientError:
+            return False
+        except Exception:
+            return False
 
     async def presign_url(self, key: str, expires_in: int = 3600) -> str:
-        session = self._get_session()
-        async with session.create_client(**self._client_kwargs()) as client:
-            url = await client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": self.bucket, "Key": key},
-                ExpiresIn=expires_in,
-            )
-            return url
+        client = await self._get_client()
+        url = await client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self.bucket, "Key": key},
+            ExpiresIn=expires_in,
+        )
+        return url
 
     async def delete_dir(self, prefix: str) -> None:
         """Delete all objects with the given prefix."""
-        session = self._get_session()
-        async with session.create_client(**self._client_kwargs()) as client:
-            paginator = client.get_paginator("list_objects_v2")
-            async for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
-                objects = page.get("Contents", [])
-                if objects:
-                    delete_objs = [{"Key": obj["Key"]} for obj in objects]
-                    await client.delete_objects(
-                        Bucket=self.bucket,
-                        Delete={"Objects": delete_objs},
-                    )
+        client = await self._get_client()
+        paginator = client.get_paginator("list_objects_v2")
+        async for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            objects = page.get("Contents", [])
+            if objects:
+                delete_objs = [{"Key": obj["Key"]} for obj in objects]
+                await client.delete_objects(
+                    Bucket=self.bucket,
+                    Delete={"Objects": delete_objs},
+                )
+
+
+_storage_instance: StorageProvider | None = None
 
 
 def get_storage() -> StorageProvider:
-    """Factory function — selects storage provider based on STORAGE_PROVIDER setting."""
+    """Factory function — selects storage provider based on STORAGE_PROVIDER setting.
+
+    Returns a cached singleton so S3 TCP connections are reused across requests.
+    """
+    global _storage_instance
+    if _storage_instance is not None:
+        return _storage_instance
+
     settings = get_settings()
     provider = settings.STORAGE_PROVIDER.lower()
 
     if provider == "s3":
         logger.info(f"Using S3 storage (endpoint={settings.S3_ENDPOINT}, bucket={settings.S3_BUCKET})")
-        return S3Storage()
+        _storage_instance = S3Storage()
     else:
         logger.info(f"Using local storage (path={settings.STORAGE_PATH})")
-        return LocalStorage()
+        _storage_instance = LocalStorage()
+    return _storage_instance

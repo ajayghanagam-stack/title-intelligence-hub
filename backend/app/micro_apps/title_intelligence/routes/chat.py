@@ -1,5 +1,6 @@
 """Chat routes with SSE streaming support."""
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Query
@@ -19,6 +20,8 @@ from app.micro_apps.title_intelligence.services.chat_service import (
     clear_chat_history,
 )
 from app.services.audit_service import log_event
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -52,15 +55,11 @@ async def stream_chat(
     member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
 ):
-    """Streaming chat endpoint via Server-Sent Events."""
-    await log_event(
-        db, org_id,
-        action="chat_message_sent",
-        target_type="ti_pack",
-        target_id=pack_id,
-        actor_id=member.id,
-        metadata={"mode": "stream"},
-    )
+    """Streaming chat endpoint via Server-Sent Events.
+
+    Audit logging is deferred to the async generator so it doesn't block
+    the HTTP response — the client receives the SSE stream immediately.
+    """
     return StreamingResponse(
         stream_message(db, org_id, pack_id, member.id, body.message),
         media_type="text/event-stream",

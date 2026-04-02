@@ -104,9 +104,14 @@ async def stream_message(
     """Streaming message send via SSE.
 
     Yields SSE-formatted events:
+    - data: {"type": "thinking", "content": ""}   ← immediate, keeps connection alive
     - data: {"type": "chunk", "content": "..."}
     - data: {"type": "done", "content": ""}
     """
+    # Emit a thinking event immediately so the frontend knows the stream is alive.
+    # This prevents ALB/browser timeouts during the tool-calling loop.
+    yield f"data: {json.dumps({'type': 'thinking', 'content': ''})}\n\n"
+
     # Save user message
     user_msg = ChatMessage(
         pack_id=pack_id,
@@ -158,4 +163,7 @@ async def stream_message(
         citations=citations if citations else None,
     )
     db.add(assistant_msg)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        logger.error("Failed to save chat response for pack %s", pack_id, exc_info=True)

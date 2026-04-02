@@ -60,20 +60,22 @@ class _TIReportPDF(FPDF):
 # ── Logo finder ───────────────────────────────────────────────────────────────
 
 def _find_logikality_logo() -> str | None:
-    """Return path to the Logikality sidebar-footer logo."""
-    candidates = [
-        "logikality_with_tagline.png",
-        "logikality_logo.png",
-    ]
-    public_dirs = [
-        Path(__file__).resolve().parents[6] / "frontend" / "public",
-        Path(__file__).resolve().parents[5] / "frontend" / "public",
-    ]
-    for filename in candidates:
-        for pub in public_dirs:
-            p = pub / filename
-            if p.is_file():
-                return str(p)
+    """Return path to the Logikality logo (bundled in backend assets)."""
+    # Primary: bundled asset (works in Docker and local dev)
+    assets_dir = Path(__file__).resolve().parent.parent / "assets"
+    bundled = assets_dir / "logikality_with_tagline.png"
+    if bundled.is_file():
+        return str(bundled)
+    # Fallback: frontend/public (local dev only)
+    current = Path(__file__).resolve().parent
+    while current != current.parent:
+        pub = current / "frontend" / "public"
+        if pub.is_dir():
+            for name in ("logikality_with_tagline.png", "logikality_logo.png"):
+                p = pub / name
+                if p.is_file():
+                    return str(p)
+        current = current.parent
     return None
 
 

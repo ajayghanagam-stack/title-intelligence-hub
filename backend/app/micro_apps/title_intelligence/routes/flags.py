@@ -70,8 +70,16 @@ async def update_note(
     db: AsyncSession = Depends(get_db),
     member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
+    storage: StorageProvider = Depends(get_storage),
 ):
-    return await update_flag_note(db, org_id, pack_id, flag_id, body.note)
+    result = await update_flag_note(db, org_id, pack_id, flag_id, body.note)
+    # Invalidate cached report so next download includes updated notes
+    try:
+        cache_uri = storage.make_report_path(org_id, pack_id, "report.pdf")
+        await storage.delete_object(cache_uri)
+    except Exception:
+        pass
+    return result
 
 
 @router.post("/packs/{pack_id}/flags/{flag_id}/review", response_model=ReviewResponse)

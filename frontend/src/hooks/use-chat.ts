@@ -116,7 +116,16 @@ export function useChat(packId: string) {
             try {
               const data = JSON.parse(line.slice(6));
 
-              if (data.type === "chunk") {
+              if (data.type === "thinking") {
+                // Show thinking indicator while AI processes tools
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId && !fullText
+                      ? { ...m, content: "Thinking..." }
+                      : m
+                  )
+                );
+              } else if (data.type === "chunk") {
                 fullText += data.content;
                 setMessages((prev) =>
                   prev.map((m) =>
