@@ -189,8 +189,7 @@ async def _call_genai_direct(
             contents = _convert_genai_contents(messages)
 
             response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    client.models.generate_content,
+                client.aio.models.generate_content(
                     model=GENAI_MODEL,
                     contents=contents,
                     config=types.GenerateContentConfig(
@@ -272,8 +271,7 @@ async def create_context_cache_gemini(
 
         from google.genai import types
 
-        cache = await asyncio.to_thread(
-            client.caches.create,
+        cache = await client.aio.caches.create(
             model=GENAI_MODEL,
             config=types.CreateCachedContentConfig(
                 system_instruction=system_prompt,
@@ -358,8 +356,7 @@ async def _call_genai_cached(
 
     contents = _convert_genai_contents(messages)
 
-    response = await asyncio.to_thread(
-        client.models.generate_content,
+    response = await client.aio.models.generate_content(
         model=GENAI_MODEL,
         contents=contents,
         config=types.GenerateContentConfig(
