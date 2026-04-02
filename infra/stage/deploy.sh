@@ -102,8 +102,8 @@ $SSH_CMD "cd ${APP_DIR} && \
   NEXT_PUBLIC_API_URL=http://${EC2_HOST} \
   docker compose -f ${COMPOSE_FILE} up -d --build $SERVICES"
 
-# ── 4. Run migrations ────────────────────────────────────────────────────
-if [ "$TARGET" = "backend" ] || [ "$TARGET" = "both" ]; then
+# ── 4. Run migrations (skip with --no-migrate) ──────────────────────────
+if [ "${NO_MIGRATE:-}" != "1" ] && { [ "$TARGET" = "backend" ] || [ "$TARGET" = "both" ]; }; then
   log "Running database migrations..."
   $SSH_CMD "cd ${APP_DIR} && \
     docker compose -f ${COMPOSE_FILE} exec -T backend \
@@ -113,6 +113,8 @@ if [ "$TARGET" = "backend" ] || [ "$TARGET" = "both" ]; then
   $SSH_CMD "cd ${APP_DIR} && \
     docker compose -f ${COMPOSE_FILE} exec -T backend \
     python scripts/seed.py" || warn "Seed script returned non-zero (may be OK if already seeded)"
+else
+  log "Skipping migrations (NO_MIGRATE=1)"
 fi
 
 # ── 5. Health check ──────────────────────────────────────────────────────
