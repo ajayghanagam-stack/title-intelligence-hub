@@ -474,6 +474,7 @@ class BaseAIService:
         max_steps: int = 10,
         max_tokens: int = 8192,
         temperature: float = 0.0,
+        force_first_tool: bool = False,
     ) -> dict[str, Any]:
         """Iterative tool-calling loop matching V2's generateText + maxSteps pattern.
 
@@ -485,6 +486,8 @@ class BaseAIService:
             max_steps: Maximum number of tool-calling iterations
             max_tokens: Max tokens per response
             temperature: LLM temperature (0.0 for deterministic)
+            force_first_tool: If True, use tool_choice="required" on first step
+                to guarantee the model calls at least one tool before answering.
 
         Returns:
             Final response dict with "text" and/or "tool_results" keys
@@ -493,12 +496,16 @@ class BaseAIService:
         working_messages = [{"role": "system", "content": system_prompt}] + list(messages)
 
         for step in range(max_steps):
+            # Force tool usage on first step if requested; auto after that
+            tc = "required" if (force_first_tool and step == 0) else "auto"
+
             try:
                 response = await asyncio.wait_for(
                     litellm.acompletion(
                         model=self.model,
                         messages=working_messages,
                         tools=converted_tools,
+                        tool_choice=tc,
                         max_tokens=max_tokens,
                         temperature=temperature,
                     ),
