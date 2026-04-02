@@ -62,7 +62,7 @@ ANTHROPIC_API_KEY=$(aws ssm get-parameter --region "$REGION" \
 
 S3_BUCKET="${PREFIX}-storage-$(aws sts get-caller-identity --query Account --output text)"
 
-# Build .env.prod content
+# Build .env.stage content
 ENV_CONTENT="DATABASE_URL=${DATABASE_URL}
 JWT_SECRET=${JWT_SECRET}
 GOOGLE_API_KEY=${GOOGLE_API_KEY}
@@ -78,8 +78,8 @@ TRIAGE_CONCURRENCY=4
 CORS_ORIGINS=[\"http://${EC2_HOST}\"]
 DEBUG=false"
 
-log "Uploading .env.prod to EC2..."
-echo "$ENV_CONTENT" | $SSH_CMD "cat > ${APP_DIR}/infra/stage/.env.prod"
+log "Uploading .env.stage to EC2..."
+echo "$ENV_CONTENT" | $SSH_CMD "cat > ${APP_DIR}/infra/stage/.env.stage"
 
 # ── 2. Pull latest code ───────────────────────────────────────────────────
 log "Pulling latest code on EC2..."
