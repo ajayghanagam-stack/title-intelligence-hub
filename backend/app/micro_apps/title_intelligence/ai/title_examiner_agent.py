@@ -961,6 +961,9 @@ class TitleExaminerAgent(BaseAIService):
         - Extractions: deduplicate by (extraction_type, label), keep higher confidence
         - Flags: concatenate all (normalization happens later via flag_rules)
         """
+        # Filter out None entries from failed batches
+        batch_results = [br for br in batch_results if br is not None]
+
         # Page transcriptions — later batch wins for overlap pages
         transcription_map: dict[int, PageTranscription] = {}
         for br in batch_results:
@@ -1578,12 +1581,23 @@ class TitleExaminerAgent(BaseAIService):
             for i, (chunk_bytes, page_range) in enumerate(chunks)
         ]
         batch_results: list[ExaminerBatchResult] = [None] * total_batches  # type: ignore[list-item]
+        failed_batches = 0
 
         for coro in asyncio.as_completed(tasks):
-            batch_idx, result = await coro
-            batch_results[batch_idx] = result
-            if on_batch_complete:
-                await on_batch_complete(batch_idx, result)
+            try:
+                batch_idx, result = await coro
+                batch_results[batch_idx] = result
+                if on_batch_complete:
+                    await on_batch_complete(batch_idx, result)
+            except Exception as batch_err:
+                failed_batches += 1
+                logger.warning(f"PDF batch failed ({failed_batches} total failures): {batch_err}")
+
+        if failed_batches:
+            logger.warning(
+                f"Native PDF examine: {failed_batches}/{total_batches} batches failed, "
+                f"proceeding with {total_batches - failed_batches} successful batches"
+            )
 
         consolidated = self.consolidate(batch_results)
 
