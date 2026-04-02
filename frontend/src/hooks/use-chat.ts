@@ -103,56 +103,63 @@ export function useChat(packId: string) {
       }
 
       let fullText = "";
+      let sseBuffer = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const text = decoder.decode(value, { stream: true });
-        const lines = text.split("\n");
+        sseBuffer += decoder.decode(value, { stream: true });
 
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6));
+        // Process only complete SSE events (terminated by \n\n)
+        const parts = sseBuffer.split("\n\n");
+        // Keep the last part in the buffer (may be incomplete)
+        sseBuffer = parts.pop() || "";
 
-              if (data.type === "thinking") {
-                // Show thinking indicator while AI processes tools
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantId && !fullText
-                      ? { ...m, content: "Thinking..." }
-                      : m
-                  )
-                );
-              } else if (data.type === "chunk") {
-                fullText += data.content;
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantId ? { ...m, content: fullText } : m
-                  )
-                );
-              } else if (data.type === "done") {
-                // Extract citations from completed text
-                const citations = extractCitations(fullText);
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantId
-                      ? { ...m, content: fullText, citations }
-                      : m
-                  )
-                );
-              } else if (data.type === "error") {
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantId
-                      ? { ...m, content: `Error: ${data.content}` }
-                      : m
-                  )
-                );
+        for (const part of parts) {
+          for (const line of part.split("\n")) {
+            if (line.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(line.slice(6));
+
+                if (data.type === "thinking") {
+                  // Show thinking indicator while AI processes tools
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantId && !fullText
+                        ? { ...m, content: "Thinking..." }
+                        : m
+                    )
+                  );
+                } else if (data.type === "chunk") {
+                  fullText += data.content;
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantId ? { ...m, content: fullText } : m
+                    )
+                  );
+                } else if (data.type === "done") {
+                  // Extract citations from completed text
+                  const citations = extractCitations(fullText);
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantId
+                        ? { ...m, content: fullText, citations }
+                        : m
+                    )
+                  );
+                } else if (data.type === "error") {
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantId
+                        ? { ...m, content: `Error: ${data.content}` }
+                        : m
+                    )
+                  );
+                }
+              } catch {
+                // Skip malformed SSE data
               }
-            } catch {
-              // Skip malformed SSE data
             }
           }
         }

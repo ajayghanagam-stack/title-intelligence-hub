@@ -134,8 +134,11 @@ RULES:
             yield {"type": "error", "content": "An error occurred while processing your request"}
             return
 
-        if response_text:
-            yield {"type": "chunk", "content": response_text}
+        if not response_text:
+            logger.warning("Chat answer_with_tools returned empty response for pack %s", pack_id)
+            response_text = "I wasn't able to generate a response. Please try rephrasing your question."
+
+        yield {"type": "chunk", "content": response_text}
         yield {"type": "done", "content": ""}
 
     # Keep backward-compatible answer method
