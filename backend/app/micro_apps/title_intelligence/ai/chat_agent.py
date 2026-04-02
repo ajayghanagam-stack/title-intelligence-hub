@@ -138,8 +138,11 @@ RULES:
             logger.warning("Chat answer_with_tools returned empty response for pack %s", pack_id)
             response_text = "I wasn't able to generate a response. Please try rephrasing your question."
 
+        # Extract citations from the response text
+        citations = _extract_citations_from_text(response_text)
+
         yield {"type": "chunk", "content": response_text}
-        yield {"type": "done", "content": ""}
+        yield {"type": "done", "content": "", "citations": [c for c in citations]}
 
     # Keep backward-compatible answer method
     async def answer(

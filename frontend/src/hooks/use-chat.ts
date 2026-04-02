@@ -139,8 +139,11 @@ export function useChat(packId: string) {
                     )
                   );
                 } else if (data.type === "done") {
-                  // Extract citations from completed text
-                  const citations = extractCitations(fullText);
+                  // Use backend-provided citations, fall back to client extraction
+                  const citations =
+                    data.citations?.length > 0
+                      ? data.citations
+                      : extractCitations(fullText);
                   setMessages((prev) =>
                     prev.map((m) =>
                       m.id === assistantId
@@ -232,14 +235,15 @@ export function useChat(packId: string) {
 function extractCitations(
   text: string
 ): { page_number: number; text_snippet: string }[] | null {
-  const regex = /\[Page\s+(\d+)\]/g;
+  // Match [Page X], [page X], (Page X), or standalone "Page X" references
+  const regex = /\[page\s+(\d+)\]|\(page\s+(\d+)\)|(?:^|[\s,;])page\s+(\d+)(?=[\s,;.\])]|$)/gi;
   const citations: { page_number: number; text_snippet: string }[] = [];
   const seen = new Set<number>();
   let match;
 
   while ((match = regex.exec(text)) !== null) {
-    const pageNum = parseInt(match[1], 10);
-    if (!seen.has(pageNum)) {
+    const pageNum = parseInt(match[1] || match[2] || match[3], 10);
+    if (!seen.has(pageNum) && pageNum > 0) {
       seen.add(pageNum);
       citations.push({ page_number: pageNum, text_snippet: "" });
     }
