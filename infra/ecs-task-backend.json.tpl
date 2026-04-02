@@ -2,8 +2,8 @@
   "family": "{{PREFIX}}-backend",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
-  "cpu": "4096",
-  "memory": "8192",
+  "cpu": "8192",
+  "memory": "24576",
   "executionRoleArn": "{{TASK_EXEC_ROLE_ARN}}",
   "taskRoleArn": "{{TASK_ROLE_ARN}}",
   "containerDefinitions": [

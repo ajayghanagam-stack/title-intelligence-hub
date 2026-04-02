@@ -80,12 +80,12 @@ git push origin main                              # triggers CI (tests + build) 
 - **CI** (`.github/workflows/ci.yml`): backend tests (Python 3.12) → frontend lint+build (Node 20) → Docker image build check. Runs on push to `main` and PRs.
 - **CD** (`.github/workflows/deploy-aws.yml`): builds backend+frontend Docker images in parallel → pushes to ECR → forces new ECS deployment → waits for stability → health check. Runs on push to `main` only.
 
-**Production stack** (AWS ECS Fargate): ALB (HTTP routing, /api/* → backend, /* → frontend), ECS backend (4 vCPU/8GB, Gemini AI), ECS frontend (0.5 vCPU/1GB, Next.js standalone), RDS PostgreSQL 16 (db.t4g.medium, encrypted, private), S3 (file storage). Secrets in SSM Parameter Store.
+**Production stack** (AWS ECS Fargate): ALB (HTTP routing, /api/* → backend, /* → frontend), ECS backend (8 vCPU/24GB, Gemini AI), ECS frontend (0.5 vCPU/1GB, Next.js standalone), RDS PostgreSQL 16 (db.t4g.large, encrypted, private), S3 (file storage). Secrets in SSM Parameter Store.
 
 **AWS Resources** (managed by `infra/setup.sh`):
 - ECR: `ti-hub-backend`, `ti-hub-frontend`
 - S3: `ti-hub-storage-{account_id}` (public access blocked)
-- RDS: `ti-hub-db` (PostgreSQL 16, db.t4g.medium, private)
+- RDS: `ti-hub-db` (PostgreSQL 16, db.t4g.large, private)
 - ECS: `ti-hub-cluster` with `ti-hub-backend` (auto-scales 1→4) and `ti-hub-frontend` services
 - ALB: `ti-hub-alb` with path-based routing
 - SSM: `/ti-hub/database-url`, `/ti-hub/jwt-secret`, `/ti-hub/google-api-key`, `/ti-hub/anthropic-api-key`
