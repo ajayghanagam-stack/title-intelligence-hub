@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export AWS_PAGER=""
 
 # ============================================================================
 # Title Intelligence Hub — Fast Deploy
@@ -89,7 +90,32 @@ if [ "$TARGET" = "frontend" ] || [ "$TARGET" = "both" ]; then
   deploy_service "frontend"
 fi
 
-# ── 3. Wait for Stability ─────────────────────────────────────────────────
+# ── 3. Run Migrations (backend deploys only) ─────────────────────────────
+if [ "$TARGET" = "backend" ] || [ "$TARGET" = "both" ]; then
+  log "Running database migrations..."
+  SUBNETS=$(aws ec2 describe-subnets --region "$REGION" \
+    --filters "Name=default-for-az,Values=true" \
+    --query "Subnets[0:2].SubnetId" --output text | tr '\t' ',')
+  SG=$(aws ec2 describe-security-groups --region "$REGION" \
+    --filters "Name=group-name,Values=${PREFIX}-ecs-sg" \
+    --query "SecurityGroups[0].GroupId" --output text)
+  MIGRATE_TASK=$(aws ecs run-task --region "$REGION" \
+    --cluster "$CLUSTER" --task-definition "${PREFIX}-backend" --launch-type FARGATE \
+    --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SG}],assignPublicIp=ENABLED}" \
+    --overrides '{"containerOverrides":[{"name":"backend","command":["sh","-c","alembic upgrade head"]}]}' \
+    --query "tasks[0].taskArn" --output text)
+  aws ecs wait tasks-stopped --region "$REGION" --cluster "$CLUSTER" --tasks "$MIGRATE_TASK"
+  EXIT_CODE=$(aws ecs describe-tasks --region "$REGION" --cluster "$CLUSTER" --tasks "$MIGRATE_TASK" \
+    --query "tasks[0].containers[0].exitCode" --output text)
+  if [ "$EXIT_CODE" = "0" ]; then
+    log "Migrations complete"
+  else
+    err "Migration failed (exit code $EXIT_CODE). Check CloudWatch logs."
+    exit 1
+  fi
+fi
+
+# ── 4. Wait for Stability ─────────────────────────────────────────────────
 log "Waiting for service(s) to stabilize..."
 
 SERVICES_TO_WAIT=()

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export AWS_PAGER=""
 
 # ============================================================================
 # Title Intelligence Hub — AWS Infrastructure Setup
@@ -101,14 +102,14 @@ create_sg() {
     --filters "Name=group-name,Values=$name" "Name=vpc-id,Values=$VPC_ID" \
     --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
   if [ "$sg_id" != "None" ] && [ -n "$sg_id" ]; then
-    info "SG '$name' already exists: $sg_id"
+    info "SG '$name' already exists: $sg_id" >&2
     echo "$sg_id"
     return
   fi
   sg_id=$(aws ec2 create-security-group --region "$REGION" \
     --group-name "$name" --description "$desc" --vpc-id "$VPC_ID" \
     --query "GroupId" --output text)
-  log "Created SG: $name ($sg_id)"
+  log "Created SG: $name ($sg_id)" >&2
   echo "$sg_id"
 }
 
@@ -150,7 +151,7 @@ if aws rds describe-db-instances --region "$REGION" \
     --query "DBInstances[0].Endpoint.Address" --output text)
 else
   # Generate random password
-  DB_PASSWORD=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 32)
+  DB_PASSWORD=$(openssl rand -hex 16)
 
   # Create DB subnet group
   aws rds create-db-subnet-group --region "$REGION" \
@@ -214,7 +215,7 @@ fi
 if aws ssm get-parameter --region "$REGION" --name "/${PREFIX}/jwt-secret" >/dev/null 2>&1; then
   info "JWT secret already exists in SSM"
 else
-  JWT_SECRET=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 64)
+  JWT_SECRET=$(openssl rand -hex 32)
   aws ssm put-parameter --region "$REGION" \
     --name "/${PREFIX}/jwt-secret" \
     --type SecureString \
@@ -335,7 +336,7 @@ create_tg() {
   tg_arn=$(aws elbv2 describe-target-groups --region "$REGION" --names "$name" \
     --query "TargetGroups[0].TargetGroupArn" --output text 2>/dev/null)
   if [ "$tg_arn" != "None" ] && [ -n "$tg_arn" ]; then
-    info "Target group '$name' already exists"
+    info "Target group '$name' already exists" >&2
     echo "$tg_arn"
     return
   fi
@@ -349,8 +350,9 @@ create_tg() {
     --health-check-interval-seconds 30 \
     --healthy-threshold-count 2 \
     --unhealthy-threshold-count 3 \
+    --matcher "HttpCode=200-399" \
     --query "TargetGroups[0].TargetGroupArn" --output text)
-  log "Created target group: $name"
+  log "Created target group: $name" >&2
   echo "$tg_arn"
 }
 

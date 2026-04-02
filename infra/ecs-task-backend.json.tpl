@@ -22,7 +22,7 @@
         {"name": "S3_BUCKET", "value": "{{S3_BUCKET}}"},
         {"name": "S3_REGION", "value": "{{REGION}}"},
         {"name": "PIPELINE_BACKEND", "value": "background_tasks"},
-        {"name": "AI_PROVIDER", "value": "claude"},
+        {"name": "AI_PROVIDER", "value": "gemini"},
         {"name": "CORS_ORIGINS", "value": "[\"http://{{ALB_DNS}}\"]"},
         {"name": "DEBUG", "value": "false"}
       ],
