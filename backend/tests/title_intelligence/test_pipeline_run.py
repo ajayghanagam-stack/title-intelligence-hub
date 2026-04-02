@@ -139,6 +139,7 @@ def test_collect_version_info_returns_required_keys():
         JWT_SECRET="test-secret",
         PIPELINE_BACKEND="background_tasks",
         PIPELINE_MODE="legacy",
+        AI_PROVIDER="gemini",
         DEBUG=True,
     )
     info = collect_version_info(settings)

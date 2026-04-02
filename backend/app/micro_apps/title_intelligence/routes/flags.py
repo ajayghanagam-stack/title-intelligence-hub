@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends
@@ -21,6 +22,9 @@ from app.micro_apps.title_intelligence.services.flag_service import (
     update_flag_note,
     get_ai_recommendation,
 )
+from app.micro_apps.title_intelligence.services.storage import StorageProvider, get_storage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -78,6 +82,7 @@ async def submit_review(
     db: AsyncSession = Depends(get_db),
     member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
+    storage: StorageProvider = Depends(get_storage),
 ):
     await get_flag_for_pack_or_raise(db, org_id, pack_id, flag_id)
 
@@ -93,6 +98,15 @@ async def submit_review(
         metadata={"reason_code": body.reason_code, "pack_id": str(pack_id)},
     )
     await db.commit()
+
+    # Invalidate cached PDF report so next download reflects the review
+    try:
+        cache_uri = storage.make_report_path(org_id, pack_id, "report.pdf")
+        if await storage.exists(cache_uri):
+            await storage.delete(cache_uri)
+    except Exception:
+        logger.debug("Failed to invalidate report cache (non-fatal)", exc_info=True)
+
     return review
 
 

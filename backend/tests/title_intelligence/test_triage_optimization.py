@@ -582,7 +582,7 @@ class TestTriageConfig:
     def test_default_triage_skip_below(self):
         from app.config import Settings
         s = Settings(DEBUG=True, JWT_SECRET="test")
-        assert s.TRIAGE_SKIP_BELOW == 80
+        assert s.TRIAGE_SKIP_BELOW == 200
 
     def test_heuristic_blank_threshold_constant(self):
         assert HEURISTIC_BLANK_THRESHOLD == 20

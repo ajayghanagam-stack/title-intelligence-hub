@@ -10,3 +10,11 @@ venv/
 *.egg-info/
 .coverage
 htmlcov/
+.git
+.gitignore
+test.db
+docs/
+benchmarks/
+*.md
+.mypy_cache/
+.ruff_cache/

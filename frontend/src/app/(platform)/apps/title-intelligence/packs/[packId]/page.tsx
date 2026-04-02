@@ -71,31 +71,17 @@ export default function PackOverviewPage() {
 
   return (
     <div className="space-y-8">
-      {/* Title Company Header */}
-      {(pack.title_company || pack.property_address) && (
-        <div className="rounded-xl bg-gradient-to-r from-slate-50 to-slate-100/50 border border-slate-200/60 p-5">
-          <div className="flex flex-col gap-2">
-            {pack.title_company && (
-              <div className="flex items-center gap-2.5">
-                <Building2 className="h-5 w-5 text-slate-500" />
-                <span className="text-lg font-semibold text-slate-800">{pack.title_company}</span>
-              </div>
-            )}
-            {pack.property_address && (
-              <div className="flex items-center gap-2.5">
-                <MapPin className="h-4 w-4 text-slate-400" />
-                <span className="text-sm text-slate-600">{pack.property_address}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">
           {pack.property_address || pack.name}
         </h1>
+        {pack.title_company && (
+          <div className="flex items-center gap-2 mt-1.5">
+            <Building2 className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">{pack.title_company}</span>
+          </div>
+        )}
         <div className="flex items-center gap-3 mt-2">
           <PackStatusBadge status={pack.status} stage={pack.current_stage} />
           <span className="text-sm text-muted-foreground">
@@ -131,7 +117,7 @@ export default function PackOverviewPage() {
 
       {/* Action buttons */}
       <div className="flex items-center gap-3 flex-wrap">
-        {(isCompleted || isProcessing) && (
+        {isCompleted && (
           <Link
             href={`/apps/title-intelligence/packs/${packId}/documents`}
             className="btn-secondary gap-2"
@@ -209,6 +195,7 @@ export default function PackOverviewPage() {
           packId={packId}
           open={showChat}
           onClose={() => setShowChat(false)}
+          totalPages={totalPages}
         />
       )}
     </div>

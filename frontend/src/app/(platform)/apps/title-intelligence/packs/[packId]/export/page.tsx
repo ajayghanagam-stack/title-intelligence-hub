@@ -160,11 +160,13 @@ export default function ExportPage() {
         </h2>
         <ul className="space-y-2.5">
           {[
-            "Property information and commitment details",
-            "Executive summary with critical issue counts and validation score",
-            "Complete exceptions table sorted by severity",
-            "Recommended actions for each exception",
-            "Document references for all flagged items",
+            "Transaction summary with all parties and policy details",
+            "Risk summary with severity breakdown and flag table",
+            "Schedule B exceptions (standard and specific)",
+            "Schedule C requirements with satisfaction status",
+            "Key warnings and observations for critical issues",
+            "Pre-closing checklist",
+            "Legal disclaimer",
           ].map((item) => (
             <li key={item} className="flex items-start gap-2.5 text-sm text-muted-foreground">
               <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0 mt-0.5" />

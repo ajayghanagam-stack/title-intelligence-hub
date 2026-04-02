@@ -1,8 +1,35 @@
 export const SEVERITY_COLORS: Record<string, string> = {
-  critical: "bg-red-100 text-red-800 border-red-200",
-  high: "bg-orange-100 text-orange-800 border-orange-200",
-  medium: "bg-yellow-100 text-yellow-800 border-yellow-200",
-  low: "bg-blue-100 text-blue-800 border-blue-200",
+  critical: "bg-red-50 text-red-700 border border-red-200",
+  high: "bg-amber-50 text-amber-700 border border-amber-200",
+  medium: "bg-orange-50 text-orange-600 border border-orange-200",
+  low: "bg-indigo-50 text-indigo-600 border border-indigo-200",
+};
+
+export const SEVERITY_BG_COLORS: Record<string, string> = {
+  critical: "bg-red-50 border border-red-200",
+  high: "bg-amber-50 border border-amber-200",
+  medium: "bg-orange-50 border border-orange-200",
+  low: "bg-indigo-50 border border-indigo-200",
+};
+
+export const SEVERITY_TEXT_COLORS: Record<string, string> = {
+  critical: "text-red-700",
+  high: "text-amber-700",
+  medium: "text-orange-600",
+  low: "text-indigo-600",
+};
+
+export const SEVERITY_DISPLAY_NAMES: Record<string, string> = {
+  critical: "CRITICAL",
+  high: "HIGH",
+  medium: "MODERATE",
+  low: "STANDARD",
+};
+
+export const PRIORITY_COLORS: Record<string, string> = {
+  "MUST CLEAR": "bg-red-50 text-red-700 border border-red-200",
+  "REQUIRED": "bg-amber-50 text-amber-700 border border-amber-200",
+  "INFORMATIONAL": "bg-sky-50 text-sky-700 border border-sky-200",
 };
 
 export const STATUS_COLORS: Record<string, string> = {
@@ -25,6 +52,7 @@ export const SECTION_TYPE_LABELS: Record<string, string> = {
   schedule_b1: "Schedule B-I",
   schedule_b2: "Schedule B-II",
   schedule_c: "Schedule C",
+  schedule_d: "Schedule D",
   cover: "Cover Page",
   endorsements: "Endorsements",
   legal_description: "Legal Description",

@@ -9,6 +9,7 @@ Uses Sonnet 4 (role="strong") for higher-quality analysis.
 
 import asyncio
 import base64
+import io
 import json
 import logging
 import time
@@ -30,16 +31,20 @@ logger = logging.getLogger(__name__)
 
 
 class RateLimitController:
-    """Adaptive concurrency controller with staggered launch and rate limit handling.
+    """Adaptive concurrency controller with token bucket, staggered launch, and backoff.
 
-    Manages a semaphore that automatically reduces concurrency when 429 errors
-    are detected, then gradually recovers. Tracks metrics for observability.
+    Combines three layers of rate limit protection:
+    1. **Token bucket**: Proactively limits requests/minute to stay under API limits.
+       Tokens refill at a steady rate; callers wait if the bucket is empty.
+    2. **Semaphore**: Limits concurrent in-flight requests.
+    3. **Reactive backoff**: Global pause when 429 errors are detected, with gradual recovery.
     """
 
     def __init__(
         self,
         max_concurrency: int = 5,
         stagger_ms: int = 200,
+        requests_per_minute: int = 0,
     ):
         self._max_concurrency = max_concurrency
         self._stagger_seconds = stagger_ms / 1000.0
@@ -47,14 +52,59 @@ class RateLimitController:
         self._launch_lock = asyncio.Lock()
         self._launch_count = 0
 
+        # Token bucket for proactive RPM limiting
+        self._rpm_limit = requests_per_minute
+        if requests_per_minute > 0:
+            self._token_interval = 60.0 / requests_per_minute  # seconds between tokens
+            self._tokens = float(min(max_concurrency, requests_per_minute))
+            self._last_refill = time.monotonic()
+            self._bucket_lock = asyncio.Lock()
+        else:
+            self._token_interval = 0.0
+            self._tokens = 0.0
+            self._last_refill = 0.0
+            self._bucket_lock = asyncio.Lock()
+
         # Metrics
         self.rate_limit_hits = 0
         self.total_retries = 0
         self._backoff_until: float = 0.0  # monotonic time when backoff expires
         self._consecutive_successes: int = 0
+        self.token_waits: int = 0
+
+    async def _wait_for_token(self) -> None:
+        """Wait until a token is available in the bucket (proactive RPM limiting)."""
+        if self._rpm_limit <= 0:
+            return
+
+        async with self._bucket_lock:
+            now = time.monotonic()
+            elapsed = now - self._last_refill
+            # Refill tokens based on elapsed time
+            self._tokens = min(
+                float(self._rpm_limit),
+                self._tokens + elapsed / self._token_interval,
+            )
+            self._last_refill = now
+
+            if self._tokens >= 1.0:
+                self._tokens -= 1.0
+                return
+
+            # Need to wait for next token
+            wait_time = (1.0 - self._tokens) * self._token_interval
+            self._tokens = 0.0
+            self._last_refill = now + wait_time
+
+        self.token_waits += 1
+        logger.debug(f"Token bucket: waiting {wait_time:.2f}s for next request slot")
+        await asyncio.sleep(wait_time)
 
     async def acquire(self, batch_index: int) -> None:
-        """Acquire a concurrency slot with staggered launch delay."""
+        """Acquire a concurrency slot with token bucket + stagger + backoff."""
+        # Token bucket: proactive RPM limiting
+        await self._wait_for_token()
+
         # Stagger: wait for previous launches to space out
         async with self._launch_lock:
             if self._launch_count > 0 and self._stagger_seconds > 0:
@@ -78,8 +128,7 @@ class RateLimitController:
         """Record a rate limit hit. Returns the backoff duration in seconds.
 
         On each hit, doubles the global backoff (starting at 2s, max 30s).
-        The global backoff prevents all pending acquires from proceeding,
-        which effectively throttles concurrency without manipulating the semaphore.
+        Also reduces RPM by 20% to prevent future hits.
         """
         self.rate_limit_hits += 1
         self.total_retries += 1
@@ -88,6 +137,11 @@ class RateLimitController:
         # Calculate backoff: 2s * 2^(hits-1), capped at 30s
         backoff = min(2.0 * (2 ** (self.rate_limit_hits - 1)), 30.0)
         self._backoff_until = time.monotonic() + backoff
+
+        # Reduce effective RPM by 20% on each hit (makes token bucket slower)
+        if self._rpm_limit > 0:
+            self._token_interval *= 1.2
+            logger.info(f"Token bucket: reduced rate to ~{60 / self._token_interval:.0f} RPM")
 
         logger.warning(
             f"Rate limit hit #{self.rate_limit_hits}: "
@@ -103,6 +157,10 @@ class RateLimitController:
         if self._consecutive_successes >= 2 and self.rate_limit_hits > 0:
             self.rate_limit_hits -= 1
             self._consecutive_successes = 0
+            # Restore RPM slightly on recovery
+            if self._rpm_limit > 0:
+                original_interval = 60.0 / self._rpm_limit
+                self._token_interval = max(original_interval, self._token_interval / 1.1)
             logger.info(
                 f"Rate limit recovery: hits decremented to {self.rate_limit_hits}"
             )
@@ -116,6 +174,7 @@ class RateLimitController:
         return {
             "rate_limit_hits": self.rate_limit_hits,
             "total_retries": self.total_retries,
+            "token_waits": self.token_waits,
         }
 
 
@@ -125,11 +184,69 @@ def _is_rate_limit_error(e: Exception) -> bool:
     return "429" in err_str or "rate" in err_str or "resource_exhausted" in err_str
 
 
+def _is_content_policy_error(e: Exception) -> bool:
+    """Check if an exception is a content policy/filtering error.
+
+    Claude's content filtering blocks output on pages with notary seals,
+    signatures, and recording stamps — common in title commitment PDFs.
+    """
+    err_str = str(e).lower()
+    return (
+        "content_policy" in err_str
+        or "contentpolicyviolation" in err_str
+        or "content filtering" in err_str
+        or "output blocked" in err_str
+    )
+
+
+# Claude's image size limit is 5MB
+_CLAUDE_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+
+
+def _compress_image_for_claude(image_bytes: bytes) -> bytes:
+    """Compress a JPEG image to stay under Claude's 5MB limit.
+
+    Re-encodes with progressively lower quality until the image fits.
+    Returns original bytes if already under the limit.
+    """
+    if len(image_bytes) <= _CLAUDE_IMAGE_MAX_BYTES:
+        return image_bytes
+
+    try:
+        from PIL import Image
+    except ImportError:
+        logger.warning("Pillow not installed — cannot compress oversized image, sending as-is")
+        return image_bytes
+
+    img = Image.open(io.BytesIO(image_bytes))
+
+    # Try reducing quality first
+    for quality in (60, 40, 25, 15):
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        if buf.tell() <= _CLAUDE_IMAGE_MAX_BYTES:
+            logger.info(f"Compressed image from {len(image_bytes)} to {buf.tell()} bytes (quality={quality})")
+            return buf.getvalue()
+
+    # If still too large, resize
+    scale = 0.5
+    while scale > 0.1:
+        new_size = (int(img.width * scale), int(img.height * scale))
+        resized = img.resize(new_size, Image.LANCZOS)
+        buf = io.BytesIO()
+        resized.save(buf, format="JPEG", quality=40, optimize=True)
+        if buf.tell() <= _CLAUDE_IMAGE_MAX_BYTES:
+            logger.info(f"Resized+compressed image to {buf.tell()} bytes (scale={scale:.1f})")
+            return buf.getvalue()
+        scale -= 0.1
+
+    logger.warning(f"Could not compress image below 5MB ({len(image_bytes)} bytes)")
+    return image_bytes
+
+
 SYSTEM_PROMPT = """\
-You are an expert licensed title examiner with 20+ years of experience. You examine \
-title commitment packages (T-7 commitments, recorded instruments, deeds, DOTs, plats, \
-CC&Rs, easements, affidavits) with the thoroughness of a senior examiner preparing a \
-title opinion for a major transaction.
+Act as a Senior Title Examiner with 20+ years of experience. Examine the attached \
+title commitment file and find all warnings and exceptions.
 
 For every batch of pages, perform ALL of the following:
 
@@ -138,66 +255,64 @@ Transcribe ALL text faithfully. Preserve formatting, tables, recording stamps, n
 blocks, clerk stamps, and marginal notes exactly as they appear.
 
 ## 2. IDENTIFY DOCUMENT SECTIONS
-Valid types: schedule_a (commitment details/effective date/parties/property/policy amounts), \
-schedule_b1 (requirements before policy issuance), schedule_b2 (exceptions from coverage), \
-schedule_c (conditions/stipulations/additional requirements), legal_description (metes & \
-bounds/lot/block/subdivision), endorsements (title insurance endorsements).
+Match sections by the EXACT heading printed on the page, not by content type. \
+Valid types: schedule_a, schedule_b (general Schedule B), schedule_b1 (Schedule B-1/B-I), \
+schedule_b2 (Schedule B-2/B-II), schedule_c, schedule_d, legal_description, endorsements. \
+IMPORTANT: If the page heading says "SCHEDULE B", use schedule_b. If it says \
+"SCHEDULE C", use schedule_c. If it says "SCHEDULE D", use schedule_d. \
+Do NOT remap by content — use the literal schedule letter from the document.
 
 ## 3. EXTRACT STRUCTURED DATA
-Output extractions as typed arrays: parties[], properties[], requirements[], exceptions[], \
-endorsements[], policy_info_items[], compliance_items[], chain_of_title_items[].
-Each item has: label, value (with type-specific fields), evidence_refs, confidence.
+Output extractions as typed arrays. Each item has: label, value (with type-specific fields), \
+evidence_refs, confidence.
 
-Type-specific fields:
-- parties — name, role, entity_type, marital_status, deceased, date_of_death
-- properties — address, apn, county, state, legal_description, lot, block, subdivision
-- requirements — number, description, category, risk_level, is_standard_boilerplate
-- exceptions — number, description, category, risk_level, recording_reference
-- endorsements — number, endorsement_type, coverage_amount
-- policy_info_items — field_name, field_value
-- compliance_items — item, status, details
-- chain_of_title_items — document_type, grantor, grantee, recording_date, recording_reference, consideration
+### policy_info_items — Use these exact labels:
+- "GF Number" (commitment/file number, e.g. TX-26-1410)
+- "FAF File Number" (underwriter file number)
+- "Effective Date" (commitment effective date)
+- "Issued Date" (date commitment was issued)
+- "Owner's Policy" with field_value as the amount and policy_type (e.g. "T-1R")
+- "Lender's Policy" with field_value as the amount and policy_type (e.g. "T-2")
 
-Each extraction needs: descriptive label, structured value object, evidence_refs with \
-page_number and text_snippet.
+### parties — Extract ALL named parties with roles:
+- Roles: current_owner, proposed_buyer, seller, lender, underwriter, issuing_agent, \
+borrower, trustee, prior_owner, executor, beneficiary
+- Fields: name, role, entity_type, marital_status
+
+### properties — Extract with these fields:
+- address, county, state, legal_description, interest_type (e.g. "Fee Simple"), \
+lot, block, subdivision
+
+### requirements — Schedule B-1/C items:
+- number, description, category, risk_level, is_standard_boilerplate
+
+### exceptions — Schedule B-2 items:
+- number, description, category, risk_level, recording_reference
+
+### endorsements, compliance_items, chain_of_title_items
+- Extract as before with full detail.
 
 ## 4. DETECT RISK FLAGS
 Flag everything needing attention before closing.
 
 Valid flag types:
-- missing_endorsement — required endorsement not present
-- unacceptable_exception — exception jeopardizing insured's interest
-- unresolved_lien — active lien/judgment without satisfaction evidence
-- unreleased_mortgage — DOT/mortgage without recorded release/reconveyance
-- cross_section_mismatch — inconsistency between sections (names, legal desc, amounts)
-- requirement_missing_proof — requirement without satisfaction evidence
-- name_discrepancy — party name differs across documents or from chain
-- marital_status_issue — spousal joinder needed, community property concerns
-- incomplete_document — blank fields, missing signatures, unfilled forms
-- regulatory_compliance — FinCEN, foreign ownership, state-specific flags
-- chain_of_title_gap — missing link, grantor/grantee mismatch in chain
-- document_defect — recording defects, voided instruments, defective acknowledgments
-- mineral_rights — severed mineral estate, oil/gas leases, subsurface rights needing buyer acknowledgment
-- trust_issue — trust documentation gaps, successor trustee authority, trust not confirmed active
-- estate_issue — probate, inheritance tax, deceased party estate administration
-- vesting_issue — unauthorized vesting changes, capacity questions, entity formation gaps
-- tax_issue — delinquent property taxes, special assessments, tax sale certificates
+- missing_endorsement, unacceptable_exception, unresolved_lien, unreleased_mortgage
+- cross_section_mismatch, requirement_missing_proof, name_discrepancy, marital_status_issue
+- incomplete_document, regulatory_compliance, chain_of_title_gap, document_defect
+- mineral_rights, trust_issue, estate_issue, vesting_issue, tax_issue
 
 Severity: critical (blocks closing), high (must resolve before closing), \
 medium (should address), low (informational).
 
 Each flag needs: specific title, description, ai_explanation, evidence_refs with \
-page_number and text_snippet for every piece of evidence.
+page_number and text_snippet.
 
-### CRITICAL EXTRACTION RULES:
-- **Populate the value object**: Every extraction MUST have a fully populated value object. NEVER return empty value objects.
-- **Party roles**: seller, buyer, borrower, trustee, current_owner, prior_owner, executor, executrix, beneficiary, lender, title_company, underwriter, mineral_rights_holder, lessee, assignee
-- **Party entity types**: individual, trust, estate, corporation, llc, partnership, government
-- **Parties — be exhaustive**: Extract ALL named parties from the ENTIRE document, not just Schedule A. Include prior owners from the chain of title, deceased settlors/trustees with deceased=true and date_of_death, executors/executrices, mineral rights holders, lessees, and assignees.
-- **Chain of Title — extract every instrument**: Extract EVERY recorded instrument referenced anywhere (deeds, mortgages, satisfactions, oil/gas leases, assignments, mineral deeds, extensions). Each needs document_type, grantor, grantee, recording_date, recording_reference.
-- **Compliance — track status**: For each compliance item, set status: cleared (completed, no issues), pending (not yet done), paid (payment confirmed), waived, or required.
-- **Requirements — categorize**: Set category (financial, documentation, legal, regulatory, standard), risk_level, and is_standard_boilerplate=true for standard commitment language.
-- **Exceptions — categorize**: Set category (standard, survey, tax, easement, restriction, mineral_rights, regulatory, utility, environmental), risk_level, and recording_reference where available.
+### CRITICAL RULES:
+- Every extraction MUST have a fully populated value object. NEVER return empty values.
+- Extract ALL parties from the ENTIRE document, not just Schedule A.
+- Extract EVERY recorded instrument in the chain of title.
+- Set is_standard_boilerplate=true for standard commitment language in requirements.
+- Set category and recording_reference on exceptions where available.
 """
 
 # Shared sub-schemas for evidence_refs (with maxLength to limit output bloat)
@@ -219,8 +334,8 @@ _SECTIONS_SCHEMA = {
             "section_type": {
                 "type": "string",
                 "enum": [
-                    "schedule_a", "schedule_b1", "schedule_b2",
-                    "schedule_c", "legal_description", "endorsements",
+                    "schedule_a", "schedule_b", "schedule_b1", "schedule_b2",
+                    "schedule_c", "schedule_d", "legal_description", "endorsements",
                 ],
             },
             "start_page": {"type": "integer"},
@@ -280,6 +395,7 @@ _PROPERTIES_SCHEMA = _typed_extraction_schema({
     "county": {"type": "string"},
     "state": {"type": "string"},
     "legal_description": {"type": "string"},
+    "interest_type": {"type": "string"},
     "lot": {"type": "string"},
     "block": {"type": "string"},
     "subdivision": {"type": "string"},
@@ -310,6 +426,7 @@ _ENDORSEMENTS_SCHEMA = _typed_extraction_schema({
 _POLICY_INFO_SCHEMA = _typed_extraction_schema({
     "field_name": {"type": "string"},
     "field_value": {"type": "string"},
+    "policy_type": {"type": "string"},
 })
 
 _COMPLIANCE_SCHEMA = _typed_extraction_schema({
@@ -414,6 +531,22 @@ EXAMINATION_JSON_SCHEMA_TEXT_ONLY = {
     ],
 }
 
+# Transcription-only schema — used by hybrid mode's Gemini vision pass
+TRANSCRIPTION_ONLY_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "page_transcriptions": _PAGE_TRANSCRIPTIONS_SCHEMA,
+    },
+    "required": ["page_transcriptions"],
+}
+
+# Transcription-only system prompt — minimal, focused on faithful OCR
+TRANSCRIPTION_SYSTEM_PROMPT = """\
+Transcribe ALL text from the attached pages faithfully. Preserve formatting, \
+tables, recording stamps, notary blocks, clerk stamps, and marginal notes \
+exactly as they appear. Return each page's text separately with its page number.\
+"""
+
 # Legacy tool definition (kept for backward compatibility / tool-use mode)
 SUBMIT_EXAMINATION_RESULTS_TOOL = {
     "name": "submit_examination_results",
@@ -448,12 +581,15 @@ class TitleExaminerAgent(BaseAIService):
                 "batch_size_text": settings.CLAUDE_EXAMINER_BATCH_SIZE_TEXT,
                 "concurrency": settings.CLAUDE_EXAMINER_CONCURRENCY,
                 "stagger_ms": settings.CLAUDE_EXAMINER_STAGGER_MS,
+                "rpm": getattr(settings, "CLAUDE_EXAMINER_RPM", 0),
             }
+        # Both "gemini" and "hybrid" use Gemini batch sizes (Gemini handles vision)
         return {
             "batch_size_image": settings.EXAMINER_BATCH_SIZE,
             "batch_size_text": settings.EXAMINER_BATCH_SIZE_TEXT,
             "concurrency": getattr(settings, "NATIVE_PDF_CONCURRENCY", 5),
             "stagger_ms": int(settings.EXAMINER_BATCH_COOLDOWN * 1000),
+            "rpm": 0,
         }
 
     async def _ensure_context_cache(self, schema: dict[str, Any]) -> str | None:
@@ -481,6 +617,121 @@ class TitleExaminerAgent(BaseAIService):
                 logger.warning(f"Context cache creation failed (will use uncached): {e}")
                 return None
 
+    async def _examine_batch_hybrid(
+        self,
+        page_images: list[tuple[int, bytes | None, str | None]],
+        batch_context: dict[str, Any] | None = None,
+    ) -> ExaminerBatchResult:
+        """Two-pass hybrid examination for legacy image batches.
+
+        Pass 1 (Gemini): Read images and transcribe all text.
+        Pass 2 (Claude): Analyze transcribed text for structured output.
+        """
+        settings = get_settings()
+        call_timeout = getattr(settings, "EXAMINER_CALL_TIMEOUT", 300)
+
+        page_numbers = [pn for pn, _, _ in page_images]
+        batch_page_count = len(page_images)
+        configured_max_tokens = max(8192, min(batch_page_count * 2000, 65536))
+        t0 = time.monotonic()
+        total_usage: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0}
+
+        # --- Pass 1: Gemini transcription ---
+        # Separate text pages (already have text) from image pages (need Gemini OCR)
+        text_pages = [(pn, text) for pn, _, text in page_images if text]
+        image_pages = [(pn, img) for pn, img, _ in page_images if img]
+
+        all_transcriptions: list[dict[str, Any]] = []
+
+        # Text pages don't need Gemini — use existing text
+        for pn, text in text_pages:
+            all_transcriptions.append({"page_number": pn, "text": text})
+
+        # Image pages → Gemini vision
+        if image_pages:
+            vision_content: list[dict[str, Any]] = []
+            vision_content.append({
+                "type": "text",
+                "text": (
+                    f"Transcribe the following {len(image_pages)} page images. "
+                    f"Page numbers: {', '.join(str(pn) for pn, _ in image_pages)}."
+                ),
+            })
+            for pn, img_bytes in image_pages:
+                vision_content.append({"type": "text", "text": f"--- Page {pn} ---"})
+                b64 = base64.b64encode(img_bytes).decode("utf-8")
+                vision_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                })
+
+            vision_messages = [{"role": "user", "content": vision_content}]
+            t_result, t_usage = await self.call_json_structured(
+                system_prompt=TRANSCRIPTION_SYSTEM_PROMPT,
+                messages=vision_messages,
+                json_schema=TRANSCRIPTION_ONLY_JSON_SCHEMA,
+                max_tokens=configured_max_tokens,
+                temperature=0.0,
+                timeout=call_timeout,
+                return_usage=True,
+            )
+            total_usage["input_tokens"] += t_usage.get("input_tokens", 0)
+            total_usage["output_tokens"] += t_usage.get("output_tokens", 0)
+            all_transcriptions.extend(t_result.get("page_transcriptions", []))
+
+        # Sort by page number
+        all_transcriptions.sort(key=lambda t: t.get("page_number", 0))
+
+        logger.info(
+            f"Hybrid batch (legacy): Gemini transcribed {len(image_pages)} image pages, "
+            f"{len(text_pages)} text pages already had text"
+        )
+
+        # --- Pass 2: Claude extraction ---
+        extraction_content: list[dict[str, Any]] = []
+        if batch_context:
+            extraction_content.append({"type": "text", "text": self._format_static_context(batch_context)})
+
+        extraction_content.append({
+            "type": "text",
+            "text": (
+                f"Analyze the following {len(all_transcriptions)} transcribed pages "
+                f"(pages {page_numbers[0]}-{page_numbers[-1]}) from a title commitment. "
+                f"Identify sections, extract structured data, and flag issues."
+            ),
+        })
+        for t in all_transcriptions:
+            extraction_content.append({
+                "type": "text",
+                "text": f"--- Page {t['page_number']} ---\n{t.get('text', '')}",
+            })
+
+        extraction_messages = [{"role": "user", "content": extraction_content}]
+        max_output_tokens = min(configured_max_tokens, 64000)
+        e_result, e_usage = await self.call_json_structured_claude(
+            system_prompt=self.SYSTEM_PROMPT,
+            messages=extraction_messages,
+            json_schema=self.JSON_SCHEMA_TEXT_ONLY,
+            max_tokens=max_output_tokens,
+            temperature=0.0,
+            timeout=call_timeout,
+            return_usage=True,
+        )
+        total_usage["input_tokens"] += e_usage.get("input_tokens", 0)
+        total_usage["output_tokens"] += e_usage.get("output_tokens", 0)
+
+        elapsed = time.monotonic() - t0
+
+        batch_result = self._parse_batch_result(e_result)
+        batch_result.page_transcriptions = [
+            PageTranscription(page_number=t["page_number"], text=t.get("text", ""))
+            for t in all_transcriptions
+        ]
+        batch_result.llm_elapsed_seconds = round(elapsed, 3)
+        batch_result.input_tokens = total_usage["input_tokens"]
+        batch_result.output_tokens = total_usage["output_tokens"]
+        return batch_result
+
     async def examine_batch(
         self,
         page_images: list[tuple[int, bytes | None, str | None]],
@@ -499,11 +750,20 @@ class TitleExaminerAgent(BaseAIService):
         Returns:
             ExaminerBatchResult with transcriptions, sections, extractions, flags.
         """
+        # Hybrid mode: two-pass (Gemini vision → Claude extraction)
+        if self._provider == "hybrid":
+            return await self._examine_batch_hybrid(page_images, batch_context)
+
         settings = get_settings()
-        configured_max_tokens = getattr(settings, "EXAMINER_MAX_OUTPUT_TOKENS", 16384)
         call_timeout = getattr(settings, "EXAMINER_CALL_TIMEOUT", 300)
 
-        max_output_tokens = configured_max_tokens
+        # Adaptive max_output_tokens: scale with batch page count
+        batch_page_count = len(page_images)
+        adaptive_tokens = max(8192, batch_page_count * 2000)
+        if self._provider == "claude":
+            max_output_tokens = min(adaptive_tokens, 64000)
+        else:
+            max_output_tokens = min(adaptive_tokens, 65536)
 
         # Build multimodal message content
         content: list[dict[str, Any]] = []
@@ -547,7 +807,9 @@ class TitleExaminerAgent(BaseAIService):
             if text:
                 content.append({"type": "text", "text": text})
             else:
-                b64 = base64.b64encode(image_bytes).decode("utf-8")
+                # Compress oversized images for Claude's 5MB limit
+                img_data = _compress_image_for_claude(image_bytes) if self._provider == "claude" else image_bytes
+                b64 = base64.b64encode(img_data).decode("utf-8")
                 content.append({
                     "type": "image_url",
                     "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
@@ -726,6 +988,9 @@ class TitleExaminerAgent(BaseAIService):
                         break
                 if not merged:
                     all_sections.append(s.model_copy())
+        # Sort sections by start_page so downstream code and API responses
+        # always have a consistent, correct page order.
+        all_sections.sort(key=lambda s: s.start_page)
 
         # Extractions — deduplicate by (extraction_type, label), keep higher confidence
         # Sort by key so downstream flag generation (chain building, discrepancy detection)
@@ -799,6 +1064,7 @@ class TitleExaminerAgent(BaseAIService):
         pages: list[Any],
         storage: Any,
         on_batch_complete: Any | None = None,
+        image_cache: dict[int, bytes] | None = None,
     ) -> ExaminerConsolidatedResult:
         """Orchestrate batch examination of an entire document.
 
@@ -824,6 +1090,7 @@ class TitleExaminerAgent(BaseAIService):
         batch_size_text = batch_config["batch_size_text"]
         concurrency = batch_config["concurrency"]
         stagger_ms = batch_config["stagger_ms"]
+        rpm = batch_config.get("rpm", 0)
         overlap = getattr(settings, "EXAMINER_BATCH_OVERLAP", 1)
 
         # Sort pages by page_number
@@ -833,9 +1100,15 @@ class TitleExaminerAgent(BaseAIService):
         async def _load_page(page: Any) -> tuple[int, bytes | None, str | None]:
             if page.ocr_text and len(page.ocr_text) >= 50:
                 return (page.page_number, None, page.ocr_text)
-            else:
+            # Try in-memory cache first (populated by render stage), then storage
+            if image_cache and page.page_number in image_cache:
+                return (page.page_number, image_cache[page.page_number], None)
+            elif page.image_uri:
                 image_bytes = await storage.read(page.image_uri)
                 return (page.page_number, image_bytes, None)
+            else:
+                # Text-only page with short text (render was skipped) — send what we have
+                return (page.page_number, None, page.ocr_text or "")
 
         page_data = await asyncio.gather(*[_load_page(p) for p in sorted_pages])
         page_data = sorted(page_data, key=lambda x: x[0])
@@ -855,16 +1128,18 @@ class TitleExaminerAgent(BaseAIService):
 
         total_pages = len(page_data)
 
-        # Set up adaptive rate limit controller
+        # Set up adaptive rate limit controller with token bucket
         rate_controller = RateLimitController(
             max_concurrency=concurrency,
             stagger_ms=stagger_ms,
+            requests_per_minute=rpm,
         )
 
         logger.info(
             f"Examining {total_pages} pages in {len(batches)} batches "
             f"(text_batch={batch_size_text}, image_batch={batch_size_image}, "
-            f"overlap={overlap}, concurrency={concurrency}, stagger={stagger_ms}ms)"
+            f"overlap={overlap}, concurrency={concurrency}, stagger={stagger_ms}ms, "
+            f"rpm={rpm or 'unlimited'})"
         )
 
         # Launch all batches concurrently, yield results progressively
@@ -914,6 +1189,158 @@ class TitleExaminerAgent(BaseAIService):
 
         return consolidated
 
+    async def _examine_pdf_batch_hybrid(
+        self,
+        pdf_bytes: bytes,
+        page_range: tuple[int, int],
+        total_pages: int,
+        batch_index: int,
+        total_batches: int,
+    ) -> ExaminerBatchResult:
+        """Two-pass hybrid examination: Gemini vision → Claude extraction.
+
+        Pass 1 (Gemini): Read PDF pages and transcribe all text.
+        Pass 2 (Claude): Analyze transcribed text for sections, extractions, flags.
+
+        This eliminates content policy issues because Claude never sees images.
+        """
+        settings = get_settings()
+        call_timeout = getattr(settings, "EXAMINER_CALL_TIMEOUT", 300)
+
+        start_page, end_page = page_range
+        batch_page_count = end_page - start_page + 1
+        configured_max_tokens = max(8192, min(batch_page_count * 2000, 65536))
+
+        t0 = time.monotonic()
+        total_usage: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0}
+
+        # --- Pass 1: Gemini transcription (PDF → text) ---
+        transcription_content: list[dict[str, Any]] = []
+        transcription_content.append({
+            "type": "text",
+            "text": (
+                f"Transcribe pages {start_page}-{end_page} "
+                f"(of {total_pages} total). "
+                f"Page numbers in your output should be absolute "
+                f"(starting from {start_page})."
+            ),
+        })
+        transcription_content.append({"type": "pdf", "pdf": {"data": pdf_bytes}})
+        transcription_messages = [{"role": "user", "content": transcription_content}]
+
+        # Use Gemini for transcription (via base class call_json_structured which routes to Gemini)
+        transcription_cache = await self._ensure_context_cache(TRANSCRIPTION_ONLY_JSON_SCHEMA)
+        if transcription_cache:
+            try:
+                transcription_result, t_usage = await self.call_json_structured_cached(
+                    cache_name=transcription_cache,
+                    messages=transcription_messages,
+                    json_schema=TRANSCRIPTION_ONLY_JSON_SCHEMA,
+                    max_tokens=configured_max_tokens,
+                    temperature=0.0,
+                    timeout=call_timeout,
+                    return_usage=True,
+                )
+            except Exception as e:
+                logger.warning(f"Cached transcription call failed, falling back to uncached: {e}")
+                transcription_result, t_usage = await self.call_json_structured(
+                    system_prompt=TRANSCRIPTION_SYSTEM_PROMPT,
+                    messages=transcription_messages,
+                    json_schema=TRANSCRIPTION_ONLY_JSON_SCHEMA,
+                    max_tokens=configured_max_tokens,
+                    temperature=0.0,
+                    timeout=call_timeout,
+                    return_usage=True,
+                )
+        else:
+            transcription_result, t_usage = await self.call_json_structured(
+                system_prompt=TRANSCRIPTION_SYSTEM_PROMPT,
+                messages=transcription_messages,
+                json_schema=TRANSCRIPTION_ONLY_JSON_SCHEMA,
+                max_tokens=configured_max_tokens,
+                temperature=0.0,
+                timeout=call_timeout,
+                return_usage=True,
+            )
+
+        total_usage["input_tokens"] += t_usage.get("input_tokens", 0)
+        total_usage["output_tokens"] += t_usage.get("output_tokens", 0)
+
+        # Extract transcriptions
+        page_transcriptions = transcription_result.get("page_transcriptions", [])
+        if not page_transcriptions:
+            logger.warning(
+                f"Hybrid batch {batch_index + 1}: Gemini returned 0 transcriptions "
+                f"for pages {start_page}-{end_page}"
+            )
+
+        logger.info(
+            f"Hybrid batch {batch_index + 1}/{total_batches}: "
+            f"Gemini transcribed {len(page_transcriptions)} pages "
+            f"({t_usage.get('input_tokens', 0)} in / {t_usage.get('output_tokens', 0)} out tokens)"
+        )
+
+        # --- Pass 2: Claude extraction (text → structured data) ---
+        extraction_content: list[dict[str, Any]] = []
+
+        # Add batch context
+        context = self._build_static_batch_context(batch_index, total_batches, total_pages)
+        if context:
+            extraction_content.append({"type": "text", "text": self._format_static_context(context)})
+
+        extraction_content.append({
+            "type": "text",
+            "text": (
+                f"Analyze the following transcribed pages ({start_page}-{end_page}) "
+                f"from a title commitment document. "
+                f"Identify sections, extract structured data, and flag any issues. "
+                f"All pages have text already provided — focus on sections, extractions, and flags."
+            ),
+        })
+
+        # Format transcriptions as text pages for Claude
+        for t in page_transcriptions:
+            pn = t.get("page_number", 0)
+            text = t.get("text", "")
+            extraction_content.append({"type": "text", "text": f"--- Page {pn} ---\n{text}"})
+
+        extraction_messages = [{"role": "user", "content": extraction_content}]
+
+        # Claude extraction — text-only schema (no page_transcriptions needed)
+        max_output_tokens = min(configured_max_tokens, 64000)  # Claude cap
+        extraction_result, e_usage = await self.call_json_structured_claude(
+            system_prompt=self.SYSTEM_PROMPT,
+            messages=extraction_messages,
+            json_schema=self.JSON_SCHEMA_TEXT_ONLY,
+            max_tokens=max_output_tokens,
+            temperature=0.0,
+            timeout=call_timeout,
+            return_usage=True,
+        )
+
+        total_usage["input_tokens"] += e_usage.get("input_tokens", 0)
+        total_usage["output_tokens"] += e_usage.get("output_tokens", 0)
+
+        logger.info(
+            f"Hybrid batch {batch_index + 1}/{total_batches}: "
+            f"Claude extracted from {len(page_transcriptions)} pages "
+            f"({e_usage.get('input_tokens', 0)} in / {e_usage.get('output_tokens', 0)} out tokens)"
+        )
+
+        elapsed = time.monotonic() - t0
+
+        # Merge: transcriptions from Gemini + structured data from Claude
+        batch_result = self._parse_batch_result(extraction_result)
+        # Add Gemini's transcriptions (Claude's text-only schema doesn't produce them)
+        batch_result.page_transcriptions = [
+            PageTranscription(page_number=t["page_number"], text=t.get("text", ""))
+            for t in page_transcriptions
+        ]
+        batch_result.llm_elapsed_seconds = round(elapsed, 3)
+        batch_result.input_tokens = total_usage["input_tokens"]
+        batch_result.output_tokens = total_usage["output_tokens"]
+        return batch_result
+
     async def examine_pdf_batch(
         self,
         pdf_bytes: bytes,
@@ -938,11 +1365,27 @@ class TitleExaminerAgent(BaseAIService):
         Returns:
             ExaminerBatchResult with transcriptions, sections, extractions, flags.
         """
+        # Hybrid mode: two-pass (Gemini vision → Claude extraction)
+        # Skip hybrid for specialized extraction overrides (they use single-pass Gemini)
+        if self._provider == "hybrid" and not system_prompt_override:
+            return await self._examine_pdf_batch_hybrid(
+                pdf_bytes, page_range, total_pages, batch_index, total_batches,
+            )
+
         settings = get_settings()
         configured_max_tokens = getattr(settings, "EXAMINER_MAX_OUTPUT_TOKENS", 16384)
         call_timeout = getattr(settings, "EXAMINER_CALL_TIMEOUT", 300)
 
-        max_output_tokens = configured_max_tokens
+        # Adaptive max_output_tokens: scale with batch page count to prevent
+        # truncation on large batches. ~2000 tokens/page covers transcription +
+        # sections + extractions + flags. Floor at 8192, cap at provider limit.
+        start_page, end_page = page_range
+        batch_page_count = end_page - start_page + 1
+        adaptive_tokens = max(8192, batch_page_count * 2000)
+        if self._provider == "claude":
+            max_output_tokens = min(adaptive_tokens, 64000)
+        else:
+            max_output_tokens = min(adaptive_tokens, 65536)
 
         content: list[dict[str, Any]] = []
 
@@ -952,7 +1395,6 @@ class TitleExaminerAgent(BaseAIService):
             content.append({"type": "text", "text": self._format_static_context(context)})
 
         # Instruction text
-        start_page, end_page = page_range
         instruction = (
             f"Examine the following pages {start_page}-{end_page} "
             f"(of {total_pages} total). "
@@ -1157,6 +1599,65 @@ class TitleExaminerAgent(BaseAIService):
 
         return consolidated
 
+    async def _fallback_gemini_only_pdf(
+        self,
+        pdf_bytes: bytes,
+        page_range: tuple[int, int],
+        total_pages: int,
+        batch_index: int,
+        total_batches: int,
+    ) -> ExaminerBatchResult:
+        """Fallback: single-pass Gemini-only examination (full schema).
+
+        Used when Claude's extraction pass hits a content policy error in hybrid mode.
+        Gemini handles the full pipeline (transcription + extraction) in one call.
+        """
+        settings = get_settings()
+        call_timeout = getattr(settings, "EXAMINER_CALL_TIMEOUT", 300)
+
+        start_page, end_page = page_range
+        # Adaptive max_output_tokens
+        batch_page_count = end_page - start_page + 1
+        max_output_tokens = max(8192, min(batch_page_count * 2000, 65536))
+
+        content: list[dict[str, Any]] = []
+
+        context = self._build_static_batch_context(batch_index, total_batches, total_pages)
+        if context:
+            content.append({"type": "text", "text": self._format_static_context(context)})
+
+        content.append({
+            "type": "text",
+            "text": (
+                f"Examine the following pages {start_page}-{end_page} "
+                f"(of {total_pages} total). "
+                f"Transcribe all text, identify sections, extract structured data, "
+                f"and flag any issues. Page numbers in your output should be absolute "
+                f"(starting from {start_page})."
+            ),
+        })
+        content.append({"type": "pdf", "pdf": {"data": pdf_bytes}})
+        messages = [{"role": "user", "content": content}]
+
+        t0 = time.monotonic()
+        # Use Gemini directly (call_json_structured routes to Gemini for hybrid)
+        result, usage = await self.call_json_structured(
+            system_prompt=self.SYSTEM_PROMPT,
+            messages=messages,
+            json_schema=self.JSON_SCHEMA,
+            max_tokens=max_output_tokens,
+            temperature=0.0,
+            timeout=call_timeout,
+            return_usage=True,
+        )
+        elapsed = time.monotonic() - t0
+
+        batch_result = self._parse_batch_result(result)
+        batch_result.llm_elapsed_seconds = round(elapsed, 3)
+        batch_result.input_tokens = usage.get("input_tokens")
+        batch_result.output_tokens = usage.get("output_tokens")
+        return batch_result
+
     async def _call_pdf_with_rate_limit_retry(
         self,
         pdf_bytes: bytes,
@@ -1169,7 +1670,11 @@ class TitleExaminerAgent(BaseAIService):
         system_prompt_override: str | None = None,
         json_schema_override: dict[str, Any] | None = None,
     ) -> ExaminerBatchResult:
-        """Call examine_pdf_batch with exponential backoff on rate limit errors."""
+        """Call examine_pdf_batch with exponential backoff on rate limit errors.
+
+        For hybrid mode: if Claude's extraction pass hits a content policy error,
+        falls back to Gemini-only (full schema, single pass) for that batch.
+        """
         backoff = 5.0
         for attempt in range(max_retries + 1):
             try:
@@ -1179,6 +1684,16 @@ class TitleExaminerAgent(BaseAIService):
                     json_schema_override=json_schema_override,
                 )
             except Exception as e:
+                # Content policy error → fall back to Gemini-only for this batch
+                if _is_content_policy_error(e) and self._provider == "hybrid":
+                    logger.warning(
+                        f"Content policy error on hybrid batch {batch_index + 1} "
+                        f"(pages {page_range[0]}-{page_range[1]}), "
+                        f"falling back to Gemini-only for this batch"
+                    )
+                    return await self._fallback_gemini_only_pdf(
+                        pdf_bytes, page_range, total_pages, batch_index, total_batches,
+                    )
                 if _is_rate_limit_error(e) and attempt < max_retries:
                     if rate_controller:
                         backoff = rate_controller.record_rate_limit()
@@ -1208,12 +1723,29 @@ class TitleExaminerAgent(BaseAIService):
         max_retries: int = 3,
         rate_controller: RateLimitController | None = None,
     ) -> ExaminerBatchResult:
-        """Call examine_batch with exponential backoff on rate limit (429) errors."""
+        """Call examine_batch with exponential backoff on rate limit (429) errors.
+
+        For hybrid mode: if Claude's extraction pass hits a content policy error,
+        falls back to Gemini-only for that batch.
+        """
         backoff = 5.0
         for attempt in range(max_retries + 1):
             try:
                 return await self.examine_batch(batch, batch_context)
             except Exception as e:
+                # Content policy error in hybrid → fall back to single-pass Gemini
+                if _is_content_policy_error(e) and self._provider == "hybrid":
+                    logger.warning(
+                        f"Content policy error on hybrid legacy batch, "
+                        f"falling back to Gemini-only"
+                    )
+                    # Temporarily pretend we're Gemini for a single-pass call
+                    saved_provider = self._provider
+                    self._provider = "gemini"
+                    try:
+                        return await self.examine_batch(batch, batch_context)
+                    finally:
+                        self._provider = saved_provider
                 if _is_rate_limit_error(e) and attempt < max_retries:
                     if rate_controller:
                         backoff = rate_controller.record_rate_limit()

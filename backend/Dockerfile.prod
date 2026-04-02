@@ -27,11 +27,17 @@ WORKDIR /app
 
 ENV PYTHONPATH=/app
 
-COPY . .
-
 RUN useradd --create-home --shell /bin/bash appuser \
     && mkdir -p /app/storage \
     && chown -R appuser:appuser /app
+
+# Copy only app code (not tests/docs/storage) for better layer caching
+COPY alembic.ini .
+COPY alembic/ alembic/
+COPY scripts/ scripts/
+COPY app/ app/
+
+RUN chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000

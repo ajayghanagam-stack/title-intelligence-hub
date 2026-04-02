@@ -51,25 +51,28 @@ async def pack_with_many_flags(db_session: AsyncSession, sample_pack):
 class TestFlagPagination:
     @pytest.mark.asyncio
     async def test_list_flags_default(self, db_session: AsyncSession, pack_with_many_flags):
+        # Default filter is status="open" — only 4 of 8 flags are open
         flags, counts, total = await flag_service.list_flags(db_session, TEST_ORG_ID, TEST_PACK_ID)
-        assert total == 8
-        assert len(flags) == 8
-        assert counts["critical"] == 2
-        assert counts["high"] == 2
-        assert counts["medium"] == 2
-        assert counts["low"] == 2
+        assert total == 4
+        assert len(flags) == 4
+        # counts reflect open flags only
+        assert counts["critical"] == 1
+        assert counts["high"] == 1
+        assert counts["medium"] == 1
+        assert counts["low"] == 1
 
     @pytest.mark.asyncio
     async def test_severity_filter(self, db_session: AsyncSession, pack_with_many_flags):
         flags, counts, total = await flag_service.list_flags(
             db_session, TEST_ORG_ID, TEST_PACK_ID, severity="critical"
         )
-        assert total == 2
-        assert len(flags) == 2
+        # Only 1 critical flag is open (the other is approved)
+        assert total == 1
+        assert len(flags) == 1
         assert all(f.severity == "critical" for f in flags)
-        # counts remain unfiltered
-        assert counts["critical"] == 2
-        assert counts["high"] == 2
+        # counts reflect open flags only
+        assert counts["critical"] == 1
+        assert counts["high"] == 1
 
     @pytest.mark.asyncio
     async def test_status_filter(self, db_session: AsyncSession, pack_with_many_flags):
@@ -79,8 +82,8 @@ class TestFlagPagination:
         assert total == 4
         assert len(flags) == 4
         assert all(f.status == "open" for f in flags)
-        # counts remain unfiltered
-        assert sum(counts.values()) == 8
+        # counts reflect open flags only
+        assert sum(counts.values()) == 4
 
     @pytest.mark.asyncio
     async def test_combined_filters(self, db_session: AsyncSession, pack_with_many_flags):
@@ -94,28 +97,22 @@ class TestFlagPagination:
 
     @pytest.mark.asyncio
     async def test_limit_offset(self, db_session: AsyncSession, pack_with_many_flags):
+        # Default filter is status="open" — 4 flags total
         flags_p1, counts, total = await flag_service.list_flags(
             db_session, TEST_ORG_ID, TEST_PACK_ID, limit=3, offset=0
         )
-        assert total == 8
+        assert total == 4
         assert len(flags_p1) == 3
 
         flags_p2, _, _ = await flag_service.list_flags(
             db_session, TEST_ORG_ID, TEST_PACK_ID, limit=3, offset=3
         )
-        assert len(flags_p2) == 3
-
-        flags_p3, _, _ = await flag_service.list_flags(
-            db_session, TEST_ORG_ID, TEST_PACK_ID, limit=3, offset=6
-        )
-        assert len(flags_p3) == 2
+        assert len(flags_p2) == 1
 
         # No overlap between pages
         ids_p1 = {f.id for f in flags_p1}
         ids_p2 = {f.id for f in flags_p2}
-        ids_p3 = {f.id for f in flags_p3}
         assert ids_p1.isdisjoint(ids_p2)
-        assert ids_p2.isdisjoint(ids_p3)
 
     @pytest.mark.asyncio
     async def test_sort_by_severity(self, db_session: AsyncSession, pack_with_many_flags):

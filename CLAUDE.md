@@ -20,7 +20,8 @@ Copy `.env.example` and update (note: `.env.example` has stale Supabase referenc
 ```
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/title_intelligence_hub
 JWT_SECRET=<any-strong-secret>
-GOOGLE_API_KEY=<your-google-api-key>
+GOOGLE_API_KEY=<your-google-api-key>        # required if AI_PROVIDER=gemini
+ANTHROPIC_API_KEY=<your-anthropic-api-key>  # required if AI_PROVIDER=claude (default)
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
@@ -410,7 +411,14 @@ The second micro app. Automates county record searches, document parsing, chain-
 - `call_with_tools()` — iterative tool-calling loop for multi-step agent workflows
 - `call_streaming()` — SSE streaming for real-time chat responses
 
-**Gemini-only**: Uses `litellm` under the hood with `gemini/gemini-2.5-flash` as the single model for all roles. `google-genai` SDK used separately for context caching (direct SDK, not through litellm). Set `GOOGLE_API_KEY` in `.env`. Tool definitions use Anthropic format (auto-converted to OpenAI format by `_convert_tools` — Gemini uses the same format via litellm).
+**Tri-provider**: `AI_PROVIDER` setting selects `claude` (default), `gemini`, or `hybrid`. Uses `litellm` under the hood.
+- **Claude** (default): `claude-sonnet-4-20250514` via Anthropic API. Forces `PIPELINE_MODE=legacy` (image-based). Uses `cache_control` prompt caching. Set `ANTHROPIC_API_KEY`.
+- **Gemini**: `gemini/gemini-2.5-flash` via Google AI. Supports `native_pdf` mode (sends PDF chunks directly). Uses `google-genai` SDK for context caching (TTL 10 min). Set `GOOGLE_API_KEY`.
+- **Hybrid** (Gemini vision + Claude extraction): Two-pass pipeline — Gemini reads PDF/images into transcriptions (no content filtering issues), then Claude analyzes text for sections/extractions/flags (excels at schema-following). Falls back to Gemini-only if Claude hits content policy errors. Requires both `GOOGLE_API_KEY` and `ANTHROPIC_API_KEY`. Forces `PIPELINE_MODE=native_pdf`. Uses `TRANSCRIPTION_ONLY_JSON_SCHEMA` + `TRANSCRIPTION_SYSTEM_PROMPT` for minimal Gemini pass, then `call_json_structured_claude()` for extraction.
+
+**Per-agent overrides**: `TI_CHAT_PROVIDER` and `TA_AI_PROVIDER` (empty string = use global `AI_PROVIDER`) allow overriding the provider for specific agents without changing the whole app.
+
+Tool definitions use Anthropic format (auto-converted to OpenAI format by `_convert_tools`). Provider modules: `ai/gemini_provider.py`, `ai/claude_provider.py`. `base_service.py` dispatches to the correct provider.
 
 ### Frontend ↔ Backend Connection
 
@@ -485,22 +493,41 @@ All storage paths are tenant-scoped by org_id at the top level.
 | `DATABASE_URL` | `postgresql+asyncpg://...` | Database connection |
 | `JWT_SECRET` | `change-me-in-production` | HS256 signing key (fails startup if default + `DEBUG=false`) |
 | `JWT_EXPIRATION_MINUTES` | `1440` | Token lifetime (24h) |
-| `GOOGLE_API_KEY` | `""` | Google AI API key for Gemini 2.5 Flash |
+| `AI_PROVIDER` | `claude` | AI provider: `claude`, `gemini`, or `hybrid`. Claude/hybrid auto-coerces pipeline mode |
+| `GOOGLE_API_KEY` | `""` | Google AI API key (required if `AI_PROVIDER=gemini`) |
+| `ANTHROPIC_API_KEY` | `""` | Anthropic API key (required if `AI_PROVIDER=claude` or `hybrid`) |
+| `TI_CHAT_PROVIDER` | `""` | Override AI provider for TI chat agent (empty = use `AI_PROVIDER`) |
+| `TA_AI_PROVIDER` | `""` | Override AI provider for TSA agents (empty = use `AI_PROVIDER`) |
 | `STORAGE_PROVIDER` | `local` | Storage backend: local/s3 |
 | `STORAGE_PATH` | `./storage` | Local storage base path |
 | `PIPELINE_BACKEND` | `temporal` | Pipeline executor: background_tasks/temporal (TI only; TSA uses background_tasks) |
+| `PIPELINE_MODE` | `native_pdf` | `native_pdf` (Gemini only, sends PDF directly) or `legacy` (renders to JPEG) |
 | `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address |
 | `TEMPORAL_TASK_QUEUE` | `title-intelligence` | Temporal task queue name |
 | `TESSERACT_PATH` | (system default) | Custom Tesseract binary path |
 | `FILE_UPLOAD_MAX_SIZE` | `104857600` (100MB) | Max upload size |
 | `CORS_ORIGINS` | `["http://localhost:3000"]` | Allowed origins |
 | `DEBUG` | `false` | Allows insecure JWT_SECRET default for development |
-| `EXAMINER_BATCH_SIZE` | `10` | Max pages per image batch in TitleExaminerAgent |
-| `EXAMINER_BATCH_SIZE_TEXT` | `25` | Max pages per text-only batch in TitleExaminerAgent |
+| `NATIVE_PDF_BATCH_SIZE` | `20` | Pages per PDF chunk sent to Gemini (native_pdf mode) |
+| `NATIVE_PDF_CONCURRENCY` | `12` | Max parallel Gemini calls in native_pdf mode |
+| `TRIAGE_ENABLED` | `true` | Set false to skip triage (all pages → examine) |
+| `TRIAGE_SKIP_BELOW` | `200` | Skip LLM triage for docs under this page count |
+| `TRIAGE_CHUNK_SIZE` | `50` | Pages per triage chunk for parallel splitting |
+| `TRIAGE_CONCURRENCY` | `4` | Max parallel triage LLM calls |
+| `GROUPING_ENABLED` | `true` | Document-aligned chunking before extraction |
+| `ADAPTIVE_CHUNK_SIZING` | `true` | Adjust batch size by text complexity |
+| `SPECIALIZED_EXTRACTION_ENABLED` | `true` | Type-specific extractors per document group |
+| `SUMMARY_MODE` | `data_driven` | `data_driven` (fast, deterministic) or `llm` (narrative, 10-15s) |
+| `TSA_RESEARCH_MODE` | `grounded` | `grounded` (Claude web search) or `scraper` (legacy portal scraping) |
+| `EXAMINER_BATCH_SIZE` | `10` | Max pages per image batch (legacy mode) |
+| `EXAMINER_BATCH_SIZE_TEXT` | `25` | Max pages per text-only batch (legacy mode) |
 | `EXAMINER_BATCH_OVERLAP` | `1` | Page overlap between adjacent batches for context continuity |
 | `EXAMINER_BATCH_COOLDOWN` | `0.0` | Seconds between batch launches (rate limit protection) |
-| `EXAMINER_RENDER_DPI` | `72` | DPI for page image rendering |
+| `EXAMINER_RENDER_DPI` | `72` | DPI for page image rendering (auto-set to 100 for Claude) |
 | `EXAMINER_MAX_OUTPUT_TOKENS` | `16384` | Max output tokens per examiner batch call |
+| `CLAUDE_EXAMINER_BATCH_SIZE` | `8` | Image pages per batch when using Claude |
+| `CLAUDE_EXAMINER_CONCURRENCY` | `8` | Parallel batch calls when using Claude |
+| `CLAUDE_EXAMINER_RPM` | `50` | Proactive requests/minute limit for Claude (0 = disabled) |
 
 ---
 

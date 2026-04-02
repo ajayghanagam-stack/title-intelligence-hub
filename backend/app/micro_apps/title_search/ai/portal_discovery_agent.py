@@ -7,6 +7,7 @@ the TACountySource registry for future use.
 """
 
 import logging
+import uuid
 
 from app.ai.base_service import BaseAIService
 
@@ -101,6 +102,12 @@ If you truly cannot identify any portal for the county, set county_has_digital_r
 
 class PortalDiscoveryAgent(BaseAIService):
     """Discovers county property record portal URLs using AI."""
+
+    def __init__(self, org_id: uuid.UUID):
+        from app.config import get_settings
+        settings = get_settings()
+        provider_override = settings.TA_AI_PROVIDER or None
+        super().__init__(org_id, provider_override=provider_override)
 
     async def discover(self, county: str, state_code: str) -> dict:
         """Ask LLM to identify property record portals for a county.

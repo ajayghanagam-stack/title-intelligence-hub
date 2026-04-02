@@ -396,7 +396,10 @@ class TitleResearchAgent(BaseAIService):
     """Autonomous title researcher using Claude web search."""
 
     def __init__(self, org_id: uuid.UUID):
-        super().__init__(org_id, role="title_researcher")
+        from app.config import get_settings
+        settings = get_settings()
+        provider_override = settings.TA_AI_PROVIDER or None
+        super().__init__(org_id, role="title_researcher", provider_override=provider_override)
 
     async def research(
         self,

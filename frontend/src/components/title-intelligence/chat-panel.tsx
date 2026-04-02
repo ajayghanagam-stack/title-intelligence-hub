@@ -14,12 +14,14 @@ export function ChatPanel({
   onSend,
   onCancel,
   packId,
+  totalPages,
 }: {
   messages: ChatMessage[];
   sending: boolean;
   onSend: (message: string) => void;
   onCancel?: () => void;
   packId?: string;
+  totalPages?: number;
 }) {
   const [input, setInput] = useState("");
 
@@ -42,7 +44,7 @@ export function ChatPanel({
           <SuggestedQuestions onSelect={handleSuggestion} />
         )}
         {messages.map((msg) => (
-          <ChatMessageBubble key={msg.id} message={msg} packId={packId} />
+          <ChatMessageBubble key={msg.id} message={msg} packId={packId} totalPages={totalPages} />
         ))}
       </div>
 

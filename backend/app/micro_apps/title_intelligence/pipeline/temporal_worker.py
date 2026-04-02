@@ -75,9 +75,10 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     # Silence noisy third-party loggers that dump full request/response payloads
     # (including raw PDF binary bytes from Gemini API calls)
-    for _noisy in ("httpx", "httpcore", "litellm", "LiteLLM", "google.genai",
-                   "google.auth", "google.api_core", "googleapis", "urllib3",
-                   "asyncpg", "grpc", "hpack"):
+    for _noisy in ("httpx", "httpcore", "litellm", "LiteLLM", "LiteLLM Proxy",
+                   "LiteLLM Router", "google.genai", "google.auth", "google.api_core",
+                   "googleapis", "urllib3", "asyncpg", "grpc", "hpack", "anthropic",
+                   "watchfiles"):
         _logger = logging.getLogger(_noisy)
         _logger.setLevel(logging.WARNING)
         _logger.handlers = [h for h in _logger.handlers if h.level > logging.INFO]

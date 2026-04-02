@@ -15,6 +15,7 @@ import {
   ZoomOut,
   Maximize2,
   FileSearch,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/components/ui/toast";
@@ -99,6 +100,8 @@ export default function DocumentsPage() {
   const [zoomIndex, setZoomIndex] = useState(DEFAULT_ZOOM_INDEX);
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [highlightSnippet, setHighlightSnippet] = useState<string | null>(null);
+  const searchParamsRef = useRef(searchParams);
+  searchParamsRef.current = searchParams;
 
   const { showToast } = useToast();
   const thumbsRef = useRef<HTMLDivElement>(null);
@@ -106,37 +109,46 @@ export default function DocumentsPage() {
 
   const zoom = ZOOM_LEVELS[zoomIndex];
 
-  // Fetch pages and trigger pre-rendering
+  // Fetch pages once on mount and apply URL search params from the latest searchParams ref.
   useEffect(() => {
     orgFetch<PageData[]>(`/api/v1/apps/title-intelligence/packs/${packId}/pages`)
       .then((data) => {
         setPages(data);
-        const pageParam = searchParams.get("page");
-        if (pageParam) {
-          const num = parseInt(pageParam, 10);
-          if (num >= 1 && num <= data.length) {
-            setSelectedPage(num);
-          }
-        } else if (data.length > 0) {
-          setSelectedPage(data[0].page_number);
-        }
-
-        const snippet = searchParams.get("highlight");
-        if (snippet) {
-          setHighlightSnippet(snippet);
-          setShowOcr(true);
-        }
-        
-        // Trigger pre-rendering of first 20 pages in background
         if (data.length > 0) {
+          // Apply URL params — read from ref to get latest value (avoids stale closure)
+          const sp = searchParamsRef.current;
+          const pageParam = sp.get("page");
+          if (pageParam) {
+            const num = parseInt(pageParam, 10);
+            const maxPn = Math.max(...data.map((p) => p.page_number));
+            if (num >= 1) {
+              setSelectedPage(Math.min(num, maxPn));
+            }
+          } else {
+            setSelectedPage(data[0].page_number);
+          }
+          if (sp.get("ocr") === "true") {
+            setShowOcr(true);
+          }
+          const highlight = sp.get("highlight");
+          if (highlight) {
+            setHighlightSnippet(highlight);
+            setShowOcr(true);
+          }
+          // Trigger pre-rendering of first 20 pages in background
           orgFetch(`/api/v1/apps/title-intelligence/packs/${packId}/pages/prerender?start_page=1&count=20`, {
             method: 'POST'
-          }).catch(() => {}); // Silently fail if pre-render doesn't work
+          }).catch(() => {});
         }
       })
       .catch(() => { setPages([]); showToast("error", "Failed to load pages"); })
       .finally(() => setLoading(false));
-  }, [orgFetch, packId, searchParams]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgFetch, packId]);
+
+  const maxPageNumber = pages.length > 0
+    ? Math.max(...pages.map((p) => p.page_number))
+    : 0;
 
   // Scroll to highlighted text once OCR panel renders it
   useEffect(() => {
@@ -145,10 +157,13 @@ export default function DocumentsPage() {
     }
   }, [highlightSnippet, showOcr, selectedPage]);
 
-  // Fetch sections
+  // Fetch sections (sort by start_page so panel order matches document order)
   useEffect(() => {
     orgFetch<Section[]>(`/api/v1/apps/title-intelligence/packs/${packId}/sections`)
-      .then((data) => setSections(data))
+      .then((data) => {
+        const sorted = [...data].sort((a, b) => a.start_page - b.start_page);
+        setSections(sorted);
+      })
       .catch(() => { setSections([]); });
   }, [orgFetch, packId]);
 
@@ -158,13 +173,13 @@ export default function DocumentsPage() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.key === "ArrowLeft" && selectedPage > 1) {
         setSelectedPage((p) => p - 1);
-      } else if (e.key === "ArrowRight" && selectedPage < pages.length) {
+      } else if (e.key === "ArrowRight" && selectedPage < maxPageNumber) {
         setSelectedPage((p) => p + 1);
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [selectedPage, pages.length]);
+  }, [selectedPage, maxPageNumber]);
 
   // Scroll thumbnail into view
   useEffect(() => {
@@ -180,24 +195,16 @@ export default function DocumentsPage() {
     (num: number) => {
       setSelectedPage(num);
       setActiveSectionId(null);
-      router.replace(
-        `/apps/title-intelligence/packs/${packId}/documents?page=${num}`,
-        { scroll: false }
-      );
     },
-    [router, packId]
+    []
   );
 
   const goToSection = useCallback(
     (section: Section) => {
       setSelectedPage(section.start_page);
       setActiveSectionId(section.id);
-      router.replace(
-        `/apps/title-intelligence/packs/${packId}/documents?page=${section.start_page}`,
-        { scroll: false }
-      );
     },
-    [router, packId]
+    []
   );
 
   // Section for the current page — prefer the explicitly clicked section,
@@ -208,16 +215,44 @@ export default function DocumentsPage() {
         .filter((s) => selectedPage >= s.start_page && selectedPage <= s.end_page)
         .sort((a, b) => b.start_page - a.start_page)[0] || null;
 
-  // Split OCR text around the highlight snippet for rendering
+  // Split OCR text around the highlight snippet for rendering.
+  // Uses whitespace-normalized matching to handle OCR line breaks and extra spaces.
   const ocrParts = useMemo(() => {
     const text = pages.find((p) => p.page_number === selectedPage)?.ocr_text ?? "";
     if (!highlightSnippet || !text) return null;
-    const idx = text.indexOf(highlightSnippet);
+
+    // Try exact match first
+    let idx = text.indexOf(highlightSnippet);
+    let matchLen = highlightSnippet.length;
+
+    // Fallback: case-insensitive exact match
+    if (idx === -1) {
+      idx = text.toLowerCase().indexOf(highlightSnippet.toLowerCase());
+    }
+
+    // Fallback: whitespace-normalized match.
+    // Build a regex from the snippet that treats any whitespace sequence as flexible.
+    if (idx === -1) {
+      const escaped = highlightSnippet
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")  // escape regex chars
+        .replace(/\s+/g, "\\s+");                  // any whitespace run → flexible
+      try {
+        const re = new RegExp(escaped, "i");
+        const m = re.exec(text);
+        if (m) {
+          idx = m.index;
+          matchLen = m[0].length;  // actual matched length in OCR text (may differ)
+        }
+      } catch {
+        // invalid regex — skip
+      }
+    }
+
     if (idx === -1) return null;
     return {
       before: text.slice(0, idx),
-      match: text.slice(idx, idx + highlightSnippet.length),
-      after: text.slice(idx + highlightSnippet.length),
+      match: text.slice(idx, idx + matchLen),
+      after: text.slice(idx + matchLen),
     };
   }, [pages, selectedPage, highlightSnippet]);
 
@@ -402,11 +437,11 @@ export default function DocumentsPage() {
             </button>
             <div className="flex items-center gap-1.5 px-2 min-w-[120px] justify-center">
               <span className="text-sm font-semibold text-foreground">{selectedPage}</span>
-              <span className="text-xs text-muted-foreground">of {pages.length}</span>
+              <span className="text-xs text-muted-foreground">of {maxPageNumber}</span>
             </div>
             <button
               onClick={() => goToPage(selectedPage + 1)}
-              disabled={selectedPage >= pages.length}
+              disabled={selectedPage >= maxPageNumber}
               className="inline-flex items-center justify-center h-8 w-8 rounded-md border bg-card text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-30 disabled:pointer-events-none"
             >
               <ChevronRight className="h-4 w-4" />
@@ -446,6 +481,13 @@ export default function DocumentsPage() {
                 <Maximize2 className="h-3 w-3" />
               </button>
             </div>
+            <button
+              onClick={() => router.back()}
+              className="inline-flex items-center justify-center h-8 w-8 rounded-md border bg-card text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              title="Close viewer"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         </div>
 
@@ -508,7 +550,9 @@ export default function DocumentsPage() {
                   <div className="flex flex-col items-center justify-center py-12 text-center">
                     <FileText className="h-6 w-6 text-muted-foreground/30 mb-2" />
                     <p className="text-xs text-muted-foreground">
-                      No OCR text available for this page.
+                      {currentPage.page_type === "blank"
+                        ? "This page is blank."
+                        : "No OCR text available for this page. Try refreshing after processing completes."}
                     </p>
                   </div>
                 )}

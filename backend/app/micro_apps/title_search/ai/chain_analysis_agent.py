@@ -4,6 +4,8 @@ Replaces separate ChainBuilderAgent + AnomalyDetectorAgent with a single
 `call_json_structured()` call (native JSON schema — faster than tool-use).
 """
 
+import uuid
+
 from app.ai.base_service import BaseAIService
 
 # --- Prompt version: chain_analysis_v1 ---
@@ -109,6 +111,12 @@ CHAIN_ANALYSIS_JSON_SCHEMA = {
 
 
 class ChainAnalysisAgent(BaseAIService):
+    def __init__(self, org_id: uuid.UUID):
+        from app.config import get_settings
+        settings = get_settings()
+        provider_override = settings.TA_AI_PROVIDER or None
+        super().__init__(org_id, provider_override=provider_override)
+
     async def analyze(self, documents: list[dict]) -> dict:
         """Build chain of title and detect anomalies in a single LLM call.
 

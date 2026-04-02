@@ -19,14 +19,34 @@ from app.core.logging import get_logger
 # Minimum chars of embedded text to consider a page "text-based"
 MIN_EMBEDDED_TEXT_LEN = 50
 
+# Pages with this much text skip JPEG rendering entirely (text sent directly to LLM)
+TEXT_SKIP_RENDER_THRESHOLD = 200
+
 # Pages with fewer chars than this are heuristically classified as "blank"
 HEURISTIC_BLANK_THRESHOLD = 20
 
 # Clone concurrency for file copies
 CLONE_BATCH_SIZE = 10
 
+
+def _sanitize_extracted_text(raw: str) -> str:
+    """Remove null bytes and non-UTF-8 sequences from PyMuPDF extracted text.
+
+    Some PDFs (scanned, encrypted, or with binary font encodings) produce raw
+    byte garbage from ``fitz.Page.get_text()``.  PostgreSQL rejects ``\\x00``
+    in text columns, so we strip those and any remaining non-decodable bytes.
+    """
+    # Fast path – most pages are clean
+    if "\x00" not in raw:
+        return raw
+    return raw.replace("\x00", "")
+
 # Parallel page rendering concurrency (CPU-bound work offloaded to threads)
 RENDER_CONCURRENCY = 8
+
+# In-memory page image cache: render stage populates, examine stage consumes.
+# Keyed by pack_id → {page_number → jpeg_bytes}. Cleared after examine completes.
+_page_image_cache: dict[uuid.UUID, dict[int, bytes]] = {}
 
 
 async def stage_ingest(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, storage: StorageProvider):
@@ -197,16 +217,23 @@ async def _stage_render_native_pdf(
         for page_idx in range(len(doc)):
             global_page_num += 1
             fitz_page = doc.load_page(page_idx)
-            embedded_text = fitz_page.get_text("text").strip()
+            embedded_text = _sanitize_extracted_text(fitz_page.get_text("text").strip())
 
-            # Determine page_type and ocr_text from embedded text
+            # Determine page_type and ocr_text from embedded text.
+            # Pages with images but no text are scanned pages — classify as
+            # "content" so the LLM examiner processes them via vision.
             page_type = None
             ocr_text = None
             if len(embedded_text) >= MIN_EMBEDDED_TEXT_LEN:
                 ocr_text = embedded_text
             elif len(embedded_text) < HEURISTIC_BLANK_THRESHOLD:
-                page_type = "blank"
-                heuristic_blanks += 1
+                has_images = len(fitz_page.get_images()) > 0
+                if has_images:
+                    # Scanned page — no extractable text but has image content
+                    page_type = None  # treated as content by examiner
+                else:
+                    page_type = "blank"
+                    heuristic_blanks += 1
 
             db.add(Page(
                 pack_id=pack_id,
@@ -283,6 +310,9 @@ async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, 
     text_pages = 0
     sem = asyncio.Semaphore(RENDER_CONCURRENCY)
 
+    # Initialize in-memory image cache for this pack
+    _page_image_cache[pack_id] = {}
+
     for pack_file in files:
         pdf_data = await storage.read(pack_file.storage_path)
         doc = fitz.open(stream=pdf_data, filetype="pdf")
@@ -300,12 +330,17 @@ async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, 
         from app.config import get_settings as _get_settings
         render_dpi = _get_settings().EXAMINER_RENDER_DPI
 
-        def _render_page(page_idx: int, doc_ref: Any) -> tuple[bytes, bytes, str]:
-            """CPU-bound work: extract text + render images. Runs in a thread."""
+        def _render_page(page_idx: int, doc_ref: Any) -> tuple[bytes | None, bytes | None, str]:
+            """CPU-bound work: extract text + render images. Runs in a thread.
+
+            Returns (img_data, thumb_data, embedded_text).
+            img_data and thumb_data are None when the page has enough text
+            to skip rendering (TEXT_SKIP_RENDER_THRESHOLD chars).
+            """
             page = doc_ref.load_page(page_idx)
 
             # Extract embedded text
-            embedded_text = page.get_text("text").strip()
+            embedded_text = _sanitize_extracted_text(page.get_text("text").strip())
             if len(embedded_text) < MIN_EMBEDDED_TEXT_LEN:
                 blocks = page.get_text("dict").get("blocks", [])
                 texts = []
@@ -314,9 +349,13 @@ async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, 
                         for line in block.get("lines", []):
                             for span in line.get("spans", []):
                                 texts.append(span.get("text", ""))
-                alt_text = " ".join(texts).strip()
+                alt_text = _sanitize_extracted_text(" ".join(texts).strip())
                 if len(alt_text) >= MIN_EMBEDDED_TEXT_LEN:
                     embedded_text = alt_text
+
+            # Skip rendering for text-heavy pages — text goes directly to LLM
+            if len(embedded_text) >= TEXT_SKIP_RENDER_THRESHOLD:
+                return None, None, embedded_text
 
             # Render page image at configurable DPI (default 120)
             pix = page.get_pixmap(dpi=render_dpi)
@@ -335,16 +374,32 @@ async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, 
                     _render_page, page_idx, doc
                 )
 
+            has_text = len(embedded_text) >= MIN_EMBEDDED_TEXT_LEN
+            if has_text:
+                text_pages += 1
+
+            # Text-heavy pages skip JPEG rendering — empty URIs signal "text-only"
+            if img_data is None:
+                db.add(Page(
+                    pack_id=pack_id,
+                    file_id=pack_file.id,
+                    org_id=org_id,
+                    page_number=gpn,
+                    image_uri="",
+                    thumb_uri="",
+                    ocr_text=embedded_text,
+                ))
+                return
+
+            # Store image in memory for examine stage (avoids storage round-trip)
+            _page_image_cache[pack_id][gpn] = img_data
+
             image_path = storage.make_page_path(org_id, pack_id, gpn)
             thumb_path = storage.make_thumb_path(org_id, pack_id, gpn)
             await asyncio.gather(
                 storage.save(image_path, img_data),
                 storage.save(thumb_path, thumb_data),
             )
-
-            has_text = len(embedded_text) >= MIN_EMBEDDED_TEXT_LEN
-            if has_text:
-                text_pages += 1
 
             db.add(Page(
                 pack_id=pack_id,
@@ -364,7 +419,10 @@ async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, 
         doc.close()
 
     await db.commit()
-    log.info(f"Created {global_page_num} page images. {text_pages} had embedded text (skip OCR)")
+    log.info(
+        f"Processed {global_page_num} pages: {text_pages} text-only (skipped JPEG), "
+        f"{global_page_num - text_pages} rendered as images"
+    )
 
 
 _SENTINEL_VALUES = frozenset({
@@ -1265,6 +1323,55 @@ async def stage_examine(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession,
     # Cache miss — run examiner agent with progressive batch streaming
     agent = TitleExaminerAgent(org_id)
 
+    # Filter out heuristic blank pages (classified during render stage)
+    all_pages = pages
+    content_pages = [p for p in pages if p.page_type != "blank"]
+    blank_count = len(all_pages) - len(content_pages)
+    if blank_count > 0:
+        log.info(f"Filtered {blank_count} blank pages, examining {len(content_pages)} content pages")
+        pages = content_pages
+
+    # For large documents, run LLM triage to filter non-content pages further.
+    # Triage and examiner cache pre-warming run concurrently for overlap.
+    triage_enabled = getattr(settings, "TRIAGE_ENABLED", True)
+    triage_skip_below = getattr(settings, "TRIAGE_SKIP_BELOW", 200)
+    total_pages = len(all_pages)
+
+    if triage_enabled and total_pages >= triage_skip_below:
+        # Load PDF for triage
+        pdf_data_list = []
+        for pf in pack_files:
+            pdf_data_list.append(await storage.read(pf.storage_path))
+        if len(pdf_data_list) == 1:
+            triage_pdf = pdf_data_list[0]
+        else:
+            import fitz
+            merged = fitz.open()
+            for data in pdf_data_list:
+                src = fitz.open(stream=data, filetype="pdf")
+                merged.insert_pdf(src)
+                src.close()
+            triage_pdf = merged.tobytes()
+            merged.close()
+
+        # Run triage + cache pre-warm concurrently (overlap)
+        triage_task = asyncio.create_task(_run_triage(
+            triage_pdf, total_pages, org_id, pack_id, all_pages, db,
+        ))
+        cache_task = asyncio.create_task(agent._ensure_context_cache(agent.JSON_SCHEMA))
+
+        content_page_numbers, _doc_type_hints = await triage_task
+        try:
+            await cache_task
+        except Exception as e:
+            log.warning(f"Examiner cache pre-warm failed (non-fatal): {e}")
+
+        # Re-filter pages based on triage results
+        content_set = set(content_page_numbers)
+        pages = [p for p in all_pages if p.page_number in content_set]
+        triage_filtered = total_pages - len(pages)
+        log.info(f"Triage filtered: examining {len(pages)}/{total_pages} pages")
+
     # Clear existing data for idempotent retry
     await db.execute(delete(Extraction).where(Extraction.pack_id == pack_id, Extraction.org_id == org_id))
     await db.execute(delete(Section).where(Section.pack_id == pack_id, Section.org_id == org_id))
@@ -1301,18 +1408,22 @@ async def stage_examine(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession,
         )
 
     # Count batches for progress tracking (agent will build them during examine_document)
-    # We patch total_batches via a pre-count
     text_pages_count = sum(1 for p in pages if p.ocr_text and len(p.ocr_text) >= 50)
     image_pages_count = len(pages) - text_pages_count
-    batch_size_text = getattr(settings, "EXAMINER_BATCH_SIZE_TEXT", 25)
-    batch_size_image = getattr(settings, "EXAMINER_BATCH_SIZE", 10)
+    batch_config = agent._get_batch_config()
     import math
     total_batches = max(1,
-        (math.ceil(text_pages_count / batch_size_text) if text_pages_count else 0) +
-        (math.ceil(image_pages_count / batch_size_image) if image_pages_count else 0)
+        (math.ceil(text_pages_count / batch_config["batch_size_text"]) if text_pages_count else 0) +
+        (math.ceil(image_pages_count / batch_config["batch_size_image"]) if image_pages_count else 0)
     )
 
-    consolidated = await agent.examine_document(pages, storage, on_batch_complete=_on_batch_complete)
+    # Pass in-memory image cache to avoid re-reading from storage
+    image_cache = _page_image_cache.pop(pack_id, None)
+    consolidated = await agent.examine_document(
+        pages, storage, on_batch_complete=_on_batch_complete, image_cache=image_cache,
+    )
+    # Release memory
+    image_cache = None
 
     # Now write the consolidated (deduplicated) results
     # Clear any interim data and write final consolidated output
@@ -1636,6 +1747,15 @@ async def stage_complete(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession
 
             await db.commit()
             log.info("AI cache miss — summary generated and cached")
+
+    # Clear any stale chat history so the chat starts fresh for the newly processed document
+    try:
+        from app.micro_apps.title_intelligence.services.chat_service import clear_chat_history
+        deleted = await clear_chat_history(db, org_id, pack_id)
+        if deleted:
+            log.info(f"Cleared {deleted} stale chat messages")
+    except Exception:
+        log.warning("Failed to clear chat history (non-fatal)", exc_info=True)
 
     # Pre-generate PDF report so download is instant
     try:

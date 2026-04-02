@@ -523,6 +523,7 @@ class TestVersionTrackerNativePdf:
             JWT_SECRET="test-secret",
             PIPELINE_BACKEND="background_tasks",
             PIPELINE_MODE="native_pdf",
+            AI_PROVIDER="gemini",
             DEBUG=True,
         )
         info = collect_version_info(settings)
@@ -538,6 +539,7 @@ class TestVersionTrackerNativePdf:
             JWT_SECRET="test-secret",
             PIPELINE_BACKEND="background_tasks",
             PIPELINE_MODE="legacy",
+            AI_PROVIDER="gemini",
             DEBUG=True,
         )
         info = collect_version_info(settings)

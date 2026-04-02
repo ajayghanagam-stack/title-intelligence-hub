@@ -110,6 +110,71 @@ export interface FlagListResponse {
   offset: number;
 }
 
+export interface ReportException {
+  number: number | string;
+  title: string;
+  description: string;
+  severity: string;
+  status?: string;
+  page_ref: string;
+  note?: string | null;
+}
+
+export interface ReportRequirement {
+  number: number | string;
+  title: string;
+  description: string;
+  priority: string;
+  status: string;
+  page_ref: string;
+  note?: string | null;
+}
+
+export interface ReportWarning {
+  title: string;
+  explanation: string;
+  flag_type: string;
+  severity: string;
+}
+
+export interface ReportChecklistItem {
+  number: number;
+  action: string;
+  priority: string;
+  checked: boolean;
+  note?: string | null;
+}
+
+export interface ReportData {
+  subtitle: string;
+  property_address: string;
+  county: string;
+  state: string;
+  legal_description: string;
+  interest_type: string;
+  commitment_number: string;
+  faf_file_number: string;
+  effective_date: string;
+  issued_date: string;
+  owners_policy: string;
+  lenders_policy: string;
+  policy_amount: string;
+  buyer_borrower: string;
+  seller: string;
+  lender: string;
+  title_company: string;
+  underwriter: string;
+  generated_at: string;
+  flags_by_severity: Record<string, unknown[]>;
+  total_open: number;
+  risk_assessment: string;
+  standard_exceptions: ReportException[];
+  specific_exceptions: ReportException[];
+  requirements: ReportRequirement[];
+  warnings: ReportWarning[];
+  checklist_items: ReportChecklistItem[];
+}
+
 export interface Recommendation {
   decision: string;
   reasoning: string;

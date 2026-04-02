@@ -421,7 +421,7 @@ class TestSystemPromptAndTool:
             assert st in SYSTEM_PROMPT
 
     def test_system_prompt_mentions_extraction_types(self):
-        for et in ["party", "property", "requirement", "exception", "endorsement", "policy_info"]:
+        for et in ["parties", "properties", "requirement", "exception", "endorsement", "policy_info"]:
             assert et in SYSTEM_PROMPT
 
     def test_system_prompt_mentions_flag_types(self):
@@ -652,6 +652,9 @@ class TestMaxOutputTokens:
 
         pdf_bytes = b"%PDF-fake"
 
+        # Force Claude provider to test the 64000 cap
+        agent._provider = "claude"
+
         with patch.object(agent, "_ensure_context_cache", new_callable=AsyncMock, return_value=None):
             with patch.object(agent, "call_json_structured", new_callable=AsyncMock) as mock_call:
                 mock_call.return_value = (
@@ -663,10 +666,11 @@ class TestMaxOutputTokens:
                         EXAMINER_MAX_OUTPUT_TOKENS=65536,
                         EXAMINER_CALL_TIMEOUT=300,
                     )
-                    # Small batch — should still use full configured max
+                    # Small batch — should use configured max, capped at 64000 for Claude
                     await agent.examine_pdf_batch(pdf_bytes, (1, 5), 100, 0, 5)
                     call_kwargs = mock_call.call_args.kwargs
-                    assert call_kwargs["max_tokens"] == 65536
+                    # Claude caps at 64000; Gemini would pass 65536 through
+                    assert call_kwargs["max_tokens"] == 64000
 
     @pytest.mark.asyncio
     async def test_pdf_batch_respects_custom_max_tokens(self, agent):

@@ -20,25 +20,40 @@ from app.micro_apps.title_search.pipeline.orchestrator import (
     _replay_parse_cache,
     _replay_chain_cache,
 )
-from app.micro_apps.title_search.services.county_data_fetcher import FetchResult
+from app.micro_apps.title_search.services.real_data_fetcher import PropertyData
 from tests.conftest import TEST_ORG_ID, TEST_USER_ID, test_session_factory
 
 
 def _cache_test_mocks():
     """Return patchers for fetch + AI agents used in cache tests."""
-    fetch_result = FetchResult(
-        content="<html>Cache test data</html>",
-        content_format="html",
-        source_url="https://test.example.com",
-        success=True,
+    prop_data = PropertyData(
+        parcel_number="C-001",
+        address="100 Cache St",
+        county="Cache",
+        state="IL",
+        owner_name="Cache Owner",
+        assessed_value=180000.0,
+        tax_status="Paid",
+        sales_history=[{
+            "recording_date": "2020-01-15",
+            "instrument_number": "C-001234",
+            "book_page": "100/200",
+            "grantor": "Seller",
+            "grantee": "Buyer",
+            "consideration": 200000.0,
+            "deed_type": "Warranty Deed",
+        }],
+        recorded_documents=[{
+            "doc_type": "mortgage",
+            "record_date": "2020-02-01",
+            "instrument_number": "C-001235",
+            "book_page": "100/201",
+            "grantor": "Buyer",
+            "grantee": "Bank",
+            "consideration": 160000.0,
+        }],
+        sources_used=[{"type": "tax", "url": "https://test.example.com"}],
     )
-    mock_fetcher_cls = MagicMock()
-    mock_fetcher_inst = MagicMock()
-    mock_fetcher_inst.fetch = AsyncMock(return_value=fetch_result)
-    mock_fetcher_inst.close = AsyncMock()
-    mock_fetcher_inst.__aenter__ = AsyncMock(return_value=mock_fetcher_inst)
-    mock_fetcher_inst.__aexit__ = AsyncMock(return_value=False)
-    mock_fetcher_cls.return_value = mock_fetcher_inst
 
     mock_extractor_cls = MagicMock()
     mock_extractor_inst = AsyncMock()
@@ -71,10 +86,29 @@ def _cache_test_mocks():
     mock_analysis_inst.analyze = AsyncMock(side_effect=_analysis_analyze)
     mock_analysis_cls.return_value = mock_analysis_inst
 
+    mock_discovery_cls = MagicMock()
+    mock_discovery_inst = AsyncMock()
+    mock_discovery_inst.discover = AsyncMock(return_value={"portals": [], "county_has_digital_records": False})
+    mock_discovery_cls.return_value = mock_discovery_inst
+
     return [
-        patch("app.micro_apps.title_search.services.county_data_fetcher.CountyDataFetcher", mock_fetcher_cls),
-        patch("app.micro_apps.title_search.ai.property_data_extractor.PropertyDataExtractorAgent", mock_extractor_cls),
-        patch("app.micro_apps.title_search.ai.chain_analysis_agent.ChainAnalysisAgent", mock_analysis_cls),
+        patch(
+            "app.micro_apps.title_search.services.real_data_fetcher.fetch_property_data",
+            new_callable=AsyncMock,
+            return_value=prop_data,
+        ),
+        patch(
+            "app.micro_apps.title_search.ai.property_data_extractor.PropertyDataExtractorAgent",
+            mock_extractor_cls,
+        ),
+        patch(
+            "app.micro_apps.title_search.ai.chain_analysis_agent.ChainAnalysisAgent",
+            mock_analysis_cls,
+        ),
+        patch(
+            "app.micro_apps.title_search.ai.portal_discovery_agent.PortalDiscoveryAgent",
+            mock_discovery_cls,
+        ),
     ]
 
 

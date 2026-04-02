@@ -454,51 +454,44 @@ async def golden_pipeline_order(db_session: AsyncSession, seed_data):
 def _golden_pipeline_mocks():
     """Return patchers for fetch + AI agents used in golden pipeline test."""
     from unittest.mock import patch, MagicMock, AsyncMock
-    from app.micro_apps.title_search.services.county_data_fetcher import FetchResult
+    from app.micro_apps.title_search.services.real_data_fetcher import PropertyData
 
-    # Mock county fetch
-    fetch_result = FetchResult(
-        content="<html>Golden county data</html>",
-        content_format="html",
-        source_url="https://beacon.schneidercorp.com/test",
-        success=True,
-    )
-    mock_fetcher_cls = MagicMock()
-    mock_fetcher_inst = MagicMock()
-    mock_fetcher_inst.fetch = AsyncMock(return_value=fetch_result)
-    mock_fetcher_inst.close = AsyncMock()
-    mock_fetcher_inst.__aenter__ = AsyncMock(return_value=mock_fetcher_inst)
-    mock_fetcher_inst.__aexit__ = AsyncMock(return_value=False)
-    mock_fetcher_cls.return_value = mock_fetcher_inst
-
-    # Mock AI extractor
-    mock_extractor_cls = MagicMock()
-    mock_extractor_inst = AsyncMock()
-    mock_extractor_inst.extract_all = AsyncMock(return_value={
-        "property_info": {
-            "owner_name": "Golden Owner",
-            "address": "999 Golden St",
-            "parcel_number": "G-001",
-        },
-        "deeds": [{
-            "doc_type": "deed",
+    # Mock fetch_property_data (returns PropertyData directly)
+    mock_property_data = PropertyData(
+        parcel_number="G-001",
+        address="999 Golden St",
+        county="Golden",
+        state="IL",
+        owner_name="Golden Owner",
+        assessed_value=100000.0,
+        tax_status="Paid",
+        sales_history=[{
             "recording_date": "2020-01-15",
             "instrument_number": "2020-001234",
+            "book_page": "100/200",
             "grantor": "John Smith",
             "grantee": "Jane Doe",
             "consideration": 250000.0,
+            "deed_type": "Warranty Deed",
         }],
-        "mortgages": [{
-            "borrower": "Jane Doe",
-            "lender": "First National Bank",
-            "recording_date": "2020-02-01",
+        recorded_documents=[{
+            "doc_type": "mortgage",
+            "record_date": "2020-02-01",
             "instrument_number": "2020-001235",
-            "loan_amount": 200000.0,
+            "book_page": "100/201",
+            "grantor": "Jane Doe",
+            "grantee": "First National Bank",
+            "consideration": 200000.0,
         }],
-        "liens": [],
-        "confidence": 0.92,
-    })
-    mock_extractor_cls.return_value = mock_extractor_inst
+        sources_used=[{"type": "tax", "url": "https://test.example.com"}],
+    )
+    mock_fetch = AsyncMock(return_value=mock_property_data)
+
+    # Mock PortalDiscoveryAgent (returns empty portals)
+    mock_discovery_cls = MagicMock()
+    mock_discovery_inst = AsyncMock()
+    mock_discovery_inst.discover = AsyncMock(return_value={"portals": [], "county_has_digital_records": False})
+    mock_discovery_cls.return_value = mock_discovery_inst
 
     # Mock combined chain analysis agent
     mock_analysis_cls = MagicMock()
@@ -520,8 +513,8 @@ def _golden_pipeline_mocks():
     mock_analysis_cls.return_value = mock_analysis_inst
 
     return [
-        patch("app.micro_apps.title_search.services.county_data_fetcher.CountyDataFetcher", mock_fetcher_cls),
-        patch("app.micro_apps.title_search.ai.property_data_extractor.PropertyDataExtractorAgent", mock_extractor_cls),
+        patch("app.micro_apps.title_search.services.real_data_fetcher.fetch_property_data", mock_fetch),
+        patch("app.micro_apps.title_search.ai.portal_discovery_agent.PortalDiscoveryAgent", mock_discovery_cls),
         patch("app.micro_apps.title_search.ai.chain_analysis_agent.ChainAnalysisAgent", mock_analysis_cls),
     ]
 
@@ -595,4 +588,4 @@ def test_rules_version_matches_between_modules():
     from app.micro_apps.title_search.pipeline.version_tracker import RULES_VERSION as vt_version
     from app.micro_apps.title_search.services.flag_rules import RULES_VERSION as fr_version
     assert vt_version == fr_version
-    assert vt_version == "ta_flag_rules_v1"
+    assert vt_version == "ta_flag_rules_v2"

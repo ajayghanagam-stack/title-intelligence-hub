@@ -28,18 +28,32 @@ MODEL = "gemini/gemini-2.5-flash"
 # Suppress litellm debug output (including raw PDF bytes in request payloads)
 litellm.set_verbose = False
 litellm.suppress_debug_info = True
-for _ll_name in ("LiteLLM", "litellm", "litellm.llms"):
+for _ll_name in ("LiteLLM", "LiteLLM Proxy", "LiteLLM Router", "litellm", "litellm.llms"):
     _ll = logging.getLogger(_ll_name)
     _ll.setLevel(logging.WARNING)
     _ll.handlers = [h for h in _ll.handlers if h.level > logging.INFO]
 
 
 def _get_model_for_provider(provider: str) -> str:
-    """Return the litellm model string for the given provider."""
+    """Return the litellm model string for the given provider.
+
+    For hybrid mode, returns the Gemini model (used as the default/vision model).
+    Claude model is accessed via _get_claude_model() for the extraction pass.
+    """
     if provider == "claude":
         from app.ai.claude_provider import CLAUDE_MODEL
         return CLAUDE_MODEL
+    # Both "gemini" and "hybrid" use Gemini as the primary/vision model
     return "gemini/gemini-2.5-flash"
+
+
+def _get_claude_model() -> str:
+    """Return the Claude model string regardless of provider setting.
+
+    Used by hybrid mode for the extraction pass.
+    """
+    from app.ai.claude_provider import CLAUDE_MODEL
+    return CLAUDE_MODEL
 
 
 def _extract_json_text(raw: str | None) -> str:
@@ -162,21 +176,45 @@ def _parse_json_robust(text: str) -> dict | list:
     return json.loads(text)
 
 
-_configured = False
+_configured_providers: set[str] = set()
 
 
-def _ensure_configured():
-    """Configure the active AI provider's API keys."""
-    global _configured
-    if not _configured:
-        settings = get_settings()
-        if settings.AI_PROVIDER == "claude":
+def _ensure_configured(provider: str | None = None):
+    """Configure the active AI provider's API keys.
+
+    Args:
+        provider: Optional specific provider to configure on demand
+                  (e.g. "claude" for a chat agent override while main provider is gemini).
+                  When None, configures the main AI_PROVIDER from settings.
+    """
+    global _configured_providers
+    settings = get_settings()
+
+    # Determine which providers need configuring
+    providers_needed: set[str] = set()
+    main = settings.AI_PROVIDER
+
+    if not _configured_providers:
+        # First call — configure the main provider(s)
+        if main == "hybrid":
+            providers_needed.update({"gemini", "claude"})
+        else:
+            providers_needed.add(main)
+
+    # Additionally configure an explicit override provider
+    if provider and provider not in _configured_providers:
+        providers_needed.add(provider)
+
+    for p in providers_needed:
+        if p in _configured_providers:
+            continue
+        if p == "claude":
             from app.ai.claude_provider import configure_claude
             configure_claude(settings)
-        else:
+        elif p == "gemini":
             from app.ai.gemini_provider import configure_gemini
             configure_gemini(settings)
-        _configured = True
+        _configured_providers.add(p)
 
 
 class BaseAIService:
@@ -187,11 +225,11 @@ class BaseAIService:
     call_with_tools, call_streaming) work with both providers via litellm.
     """
 
-    def __init__(self, org_id: uuid.UUID, role: str = "default"):
-        _ensure_configured()
+    def __init__(self, org_id: uuid.UUID, role: str = "default", provider_override: str | None = None):
+        _ensure_configured(provider_override)
         self.org_id = org_id
         settings = get_settings()
-        self._provider = settings.AI_PROVIDER
+        self._provider = provider_override or settings.AI_PROVIDER
         self.model = _get_model_for_provider(self._provider)
 
     async def call_haiku(
@@ -310,9 +348,40 @@ class BaseAIService:
                 return_usage=return_usage,
             )
 
+        # Both "gemini" and "hybrid" use Gemini for the default structured call
         from app.ai.gemini_provider import call_json_structured_gemini
         return await call_json_structured_gemini(
             model=self.model,
+            system_prompt=system_prompt,
+            messages=messages,
+            json_schema=json_schema,
+            max_tokens=max_tokens,
+            retries=retries,
+            temperature=temperature,
+            timeout=timeout,
+            return_usage=return_usage,
+        )
+
+    async def call_json_structured_claude(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        json_schema: dict[str, Any],
+        max_tokens: int = 1024,
+        retries: int = 3,
+        temperature: float = 0.0,
+        timeout: int | None = None,
+        return_usage: bool = False,
+    ) -> dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]:
+        """Call Claude specifically for structured JSON output.
+
+        Used by hybrid mode's extraction pass. Always routes to Claude
+        regardless of the AI_PROVIDER setting.
+        """
+        from app.ai.claude_provider import call_json_structured_claude as _claude_call
+        claude_model = _get_claude_model()
+        return await _claude_call(
+            model=claude_model,
             system_prompt=system_prompt,
             messages=messages,
             json_schema=json_schema,
@@ -339,6 +408,7 @@ class BaseAIService:
             # in call_json_structured_claude — no explicit cache creation needed
             return None
 
+        # Both "gemini" and "hybrid" use Gemini context caching for the vision pass
         from app.ai.gemini_provider import create_context_cache_gemini
         return await create_context_cache_gemini(
             system_prompt=system_prompt,
@@ -382,6 +452,7 @@ class BaseAIService:
                 return_usage=return_usage,
             )
 
+        # Both "gemini" and "hybrid" use Gemini cached context for the vision pass
         from app.ai.gemini_provider import call_json_structured_cached_gemini
         return await call_json_structured_cached_gemini(
             cache_name=cache_name,

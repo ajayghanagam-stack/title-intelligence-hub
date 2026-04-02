@@ -31,7 +31,7 @@ class TestRateLimitController:
         assert ctrl.rate_limit_hits == 0
         assert ctrl.total_retries == 0
         metrics = ctrl.get_metrics()
-        assert metrics == {"rate_limit_hits": 0, "total_retries": 0}
+        assert metrics == {"rate_limit_hits": 0, "total_retries": 0, "token_waits": 0}
 
     @pytest.mark.asyncio
     async def test_acquire_release_basic(self):

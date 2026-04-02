@@ -1,13 +1,42 @@
 "use client";
 
 import { useEffect } from "react";
-import { X, FileText } from "lucide-react";
+import { X, FileText, Sparkles } from "lucide-react";
 import { SeverityBadge } from "./severity-badge";
-import { ReviewForm } from "./review-form";
-import { FlagNoteInput } from "./flag-note-input";
-import { STATUS_COLORS } from "@/lib/ti-constants";
+import { STATUS_COLORS, SEVERITY_DISPLAY_NAMES } from "@/lib/ti-constants";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import type { Flag, ReviewDecision } from "@/lib/ti-types";
+
+const CATEGORY_LABELS: Record<string, string> = {
+  missing_endorsement: "Missing Endorsement",
+  unacceptable_exception: "Unacceptable Exception",
+  unresolved_lien: "Unresolved Lien",
+  unreleased_mortgage: "Unreleased Mortgage",
+  cross_section_mismatch: "Cross-Section Mismatch",
+  requirement_missing_proof: "Requirement Missing Proof",
+  name_discrepancy: "Name Discrepancy",
+  marital_status_issue: "Marital Status Issue",
+  incomplete_document: "Incomplete Document",
+  regulatory_compliance: "Regulatory Compliance",
+  chain_of_title_gap: "Chain of Title Gap",
+  document_defect: "Document Defect",
+  mineral_rights: "Mineral Rights",
+  trust_issue: "Trust Issue",
+  estate_issue: "Estate Issue",
+  vesting_issue: "Vesting Issue",
+  tax_issue: "Tax Issue",
+};
+
+function getCategoryLabel(flagType: string): string {
+  return CATEGORY_LABELS[flagType] || flagType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+const SEVERITY_HEADER_COLORS: Record<string, string> = {
+  critical: "text-red-700",
+  high: "text-amber-700",
+  medium: "text-amber-800",
+  low: "text-gray-600",
+};
 
 export function FlagDetailDialog({
   flag,
@@ -23,8 +52,9 @@ export function FlagDetailDialog({
   submitting?: boolean;
 }) {
   const trapRef = useFocusTrap(true);
+  const sevDisplay = SEVERITY_DISPLAY_NAMES[flag.severity] || flag.severity.toUpperCase();
+  const sevColor = SEVERITY_HEADER_COLORS[flag.severity] || "text-gray-600";
 
-  // Close on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -35,49 +65,58 @@ export function FlagDetailDialog({
 
   return (
     <div role="dialog" aria-modal="true" aria-label={`Flag details: ${flag.title}`} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div ref={trapRef} className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-background p-6 shadow-2xl mx-4">
-        {/* Header */}
-        <div className="flex items-start justify-between mb-5">
-          <div className="flex-1 mr-4">
-            <h2 className="text-lg font-semibold">{flag.title}</h2>
-            <div className="flex items-center gap-2 mt-2">
-              <SeverityBadge severity={flag.severity} />
-              <span className="text-xs text-muted-foreground capitalize">{flag.flag_type.replace(/_/g, " ")}</span>
-              <span
-                className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold capitalize ${
-                  STATUS_COLORS[flag.status] || ""
-                }`}
-              >
-                {flag.status}
-              </span>
+      <div ref={trapRef} className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-background shadow-2xl mx-4">
+        {/* Header with severity accent */}
+        <div className="px-6 pt-5 pb-4 border-b">
+          <div className="flex items-start justify-between">
+            <div className="flex-1 mr-4">
+              {/* Severity prefix + title matching PDF warning style */}
+              <p className={`text-[11px] font-bold uppercase tracking-wider ${sevColor} mb-1`}>
+                ! {sevDisplay} -- {getCategoryLabel(flag.flag_type)}
+              </p>
+              <h2 className="text-lg font-bold text-brand-charcoal">{flag.title}</h2>
+              <div className="flex items-center gap-2 mt-2">
+                <SeverityBadge severity={flag.severity} />
+                <span
+                  className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                    STATUS_COLORS[flag.status] || ""
+                  }`}
+                >
+                  {flag.status}
+                </span>
+              </div>
             </div>
+            <button
+              onClick={onClose}
+              aria-label="Close dialog"
+              className="rounded-full p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            aria-label="Close dialog"
-            className="rounded-full p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-          >
-            <X className="h-4 w-4" />
-          </button>
         </div>
 
-        <div className="space-y-5">
+        <div className="px-6 py-5 space-y-5">
           {/* Description */}
           <div>
-            <h4 className="text-sm font-medium mb-1.5">Description</h4>
+            <h4 className="text-sm font-bold text-brand-charcoal mb-1.5">Description</h4>
             <p className="text-sm text-muted-foreground leading-relaxed">{flag.description}</p>
           </div>
 
           {/* Executive Summary */}
-          <div className="rounded-lg bg-primary/5 border border-primary/20 p-4">
-            <h4 className="text-sm font-medium mb-1.5">Executive Summary</h4>
-            <p className="text-sm text-muted-foreground leading-relaxed">{flag.ai_explanation}</p>
-          </div>
+          {flag.ai_explanation && (
+            <div className="rounded-lg bg-amber-50/70 border border-amber-200/50 p-4">
+              <p className="flex items-center gap-1.5 text-[11px] font-bold text-amber-800 mb-1.5 uppercase tracking-wider">
+                <Sparkles className="h-3 w-3" />Examiner&apos;s Note
+              </p>
+              <p className="text-sm text-amber-900/80 leading-relaxed">{flag.ai_explanation}</p>
+            </div>
+          )}
 
           {/* Evidence */}
           {flag.evidence_refs.length > 0 && (
             <div>
-              <h4 className="text-sm font-medium mb-1.5">Evidence</h4>
+              <h4 className="text-sm font-bold text-brand-charcoal mb-1.5">Evidence</h4>
               <div className="space-y-1.5">
                 {flag.evidence_refs.map((ref, i) => (
                   <div
@@ -92,20 +131,6 @@ export function FlagDetailDialog({
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-
-          {/* Notes */}
-          <div>
-            <h4 className="text-sm font-medium mb-1.5">Notes</h4>
-            <FlagNoteInput flagId={flag.id} initialNote={flag.note} onSave={onSaveNote} />
-          </div>
-
-          {/* Review Form */}
-          {flag.status === "open" && (
-            <div>
-              <h4 className="text-sm font-medium mb-3">Submit Review</h4>
-              <ReviewForm onSubmit={onReview} submitting={submitting} />
             </div>
           )}
         </div>

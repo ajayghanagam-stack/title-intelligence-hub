@@ -108,20 +108,29 @@ def collect_version_info(settings: Settings) -> dict[str, Any]:
     )
 
     provider = getattr(settings, "AI_PROVIDER", "gemini")
-    platform = "anthropic" if provider == "claude" else "gemini"
-    model = _get_model_for_provider(provider)
     pipeline_mode = getattr(settings, "PIPELINE_MODE", "legacy")
     triage_enabled = getattr(settings, "TRIAGE_ENABLED", True)
     grouping_enabled = getattr(settings, "GROUPING_ENABLED", True)
     specialized_extraction = getattr(settings, "SPECIALIZED_EXTRACTION_ENABLED", True)
 
-    # Determine OCR engine based on provider and pipeline mode
-    if provider == "claude":
+    # Determine platform, model, and OCR engine based on provider
+    if provider == "hybrid":
+        platform = "hybrid"
+        # Include both model identifiers for cache key isolation
+        from app.ai.claude_provider import CLAUDE_MODEL
+        model = f"gemini/gemini-2.5-flash+{CLAUDE_MODEL}"
+        ocr_engine = "gemini_native_pdf"  # Gemini handles the vision pass
+    elif provider == "claude":
+        platform = "anthropic"
+        model = _get_model_for_provider(provider)
         ocr_engine = "claude_vision"
-    elif pipeline_mode == "native_pdf":
-        ocr_engine = "gemini_native_pdf"
     else:
-        ocr_engine = "gemini_vision"
+        platform = "gemini"
+        model = _get_model_for_provider(provider)
+        if pipeline_mode == "native_pdf":
+            ocr_engine = "gemini_native_pdf"
+        else:
+            ocr_engine = "gemini_vision"
 
     prompt_hash = hash_string(TitleExaminerAgent.SYSTEM_PROMPT)
     tool_hash = hash_string(

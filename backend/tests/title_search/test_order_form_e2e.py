@@ -14,7 +14,7 @@ from app.micro_apps.title_search.models.document import TADocument
 from app.micro_apps.title_search.models.package import TAPackage
 from app.micro_apps.title_search.pipeline.orchestrator import run_pipeline
 from app.micro_apps.title_search.services.package_service import generate_package_pdf
-from app.micro_apps.title_search.services.county_data_fetcher import FetchResult
+from app.micro_apps.title_search.services.real_data_fetcher import PropertyData
 from tests.conftest import TEST_ORG_ID, TEST_USER_ID, test_session_factory
 
 
@@ -121,42 +121,66 @@ def _mock_analysis_return(documents: list[dict]) -> dict:
 
 
 def _setup_mocks():
-    mock_extractor_cls = MagicMock()
-    mock_extractor_instance = AsyncMock()
-    mock_extractor_instance.extract_all = AsyncMock(return_value=SAMPLE_EXTRACTION_RESULT)
-    mock_extractor_cls.return_value = mock_extractor_instance
-
     mock_analysis_cls = MagicMock()
     mock_analysis_instance = AsyncMock()
     mock_analysis_instance.analyze = AsyncMock(side_effect=_mock_analysis_return)
     mock_analysis_cls.return_value = mock_analysis_instance
 
-    fetch_result = FetchResult(
-        content=SAMPLE_HTML,
-        content_format="html",
-        source_url="https://beacon.schneidercorp.com/test",
-        success=True,
+    # PropertyData mock matching the real_data_fetcher return type
+    mock_prop_data = PropertyData(
+        parcel_number="012875-1145",
+        address="870 Friendship Cir, Jacksonville, FL 32210",
+        county="Hendry",
+        state="FL",
+        owner_name="Derrick R. Pitts",
+        assessed_value=225000.0,
+        land_value=50000.0,
+        improvement_value=175000.0,
+        total_value=225000.0,
+        tax_amount=3200.50,
+        assessment_year="2025",
+        tax_status="Paid",
+        homestead_exemption=True,
+        sales_history=[{
+            "recording_date": "2020-01-15",
+            "instrument_number": "2020001234",
+            "book_page": "1234/567",
+            "grantor": "D.R. Horton, Inc - Jacksonville",
+            "grantee": "Derrick R. Pitts",
+            "consideration": 250000.0,
+            "deed_type": "Warranty Deed",
+        }],
+        recorded_documents=[{
+            "doc_type": "mortgage",
+            "record_date": "2020-02-01",
+            "instrument_number": "2020001235",
+            "book_page": "1234/568",
+            "grantor": "Derrick R. Pitts",
+            "grantee": "First National Bank",
+            "consideration": 200000.0,
+        }],
+        sources_used=[{"type": "tax", "url": "https://test.example.com"}],
     )
-    mock_fetcher_cls = MagicMock()
-    mock_fetcher_instance = MagicMock()
-    mock_fetcher_instance.fetch = AsyncMock(return_value=fetch_result)
-    mock_fetcher_instance.close = AsyncMock()
-    mock_fetcher_instance.__aenter__ = AsyncMock(return_value=mock_fetcher_instance)
-    mock_fetcher_instance.__aexit__ = AsyncMock(return_value=False)
-    mock_fetcher_cls.return_value = mock_fetcher_instance
+    mock_fetch_property_data = AsyncMock(return_value=mock_prop_data)
+
+    # PortalDiscoveryAgent mock (returns empty portals)
+    mock_portal_cls = MagicMock()
+    mock_portal_instance = AsyncMock()
+    mock_portal_instance.discover = AsyncMock(return_value={"portals": [], "county_has_digital_records": False})
+    mock_portal_cls.return_value = mock_portal_instance
 
     patchers = [
         patch(
-            "app.micro_apps.title_search.ai.property_data_extractor.PropertyDataExtractorAgent",
-            mock_extractor_cls,
+            "app.micro_apps.title_search.services.real_data_fetcher.fetch_property_data",
+            mock_fetch_property_data,
+        ),
+        patch(
+            "app.micro_apps.title_search.ai.portal_discovery_agent.PortalDiscoveryAgent",
+            mock_portal_cls,
         ),
         patch(
             "app.micro_apps.title_search.ai.chain_analysis_agent.ChainAnalysisAgent",
             mock_analysis_cls,
-        ),
-        patch(
-            "app.micro_apps.title_search.services.county_data_fetcher.CountyDataFetcher",
-            mock_fetcher_cls,
         ),
     ]
     return patchers

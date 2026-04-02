@@ -8,6 +8,7 @@ from a single TARawDocument because a county portal page contains all property d
 """
 
 import logging
+import uuid
 from typing import Any
 
 from app.ai.base_service import BaseAIService
@@ -150,6 +151,12 @@ EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
 
 class PropertyDataExtractorAgent(BaseAIService):
     """Extract structured property data from county portal HTML."""
+
+    def __init__(self, org_id: uuid.UUID):
+        from app.config import get_settings
+        settings = get_settings()
+        provider_override = settings.TA_AI_PROVIDER or None
+        super().__init__(org_id, provider_override=provider_override)
 
     async def extract_all(
         self,

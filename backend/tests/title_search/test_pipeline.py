@@ -16,7 +16,7 @@ from app.micro_apps.title_search.models.flag import TAFlag
 from app.micro_apps.title_search.models.package import TAPackage
 from app.micro_apps.title_search.models.county_source import TACountySource
 from app.micro_apps.title_search.pipeline.orchestrator import run_pipeline
-from app.micro_apps.title_search.services.county_data_fetcher import FetchResult
+from app.micro_apps.title_search.services.real_data_fetcher import PropertyData
 from tests.conftest import TEST_ORG_ID, TEST_USER_ID, test_session_factory
 from tests.title_search.conftest import TEST_ORDER_ID
 
@@ -134,33 +134,66 @@ def _setup_ai_mocks():
     return patchers
 
 
-def _setup_fetch_mock(success: bool = True):
-    """Create a patcher for CountyDataFetcher.fetch() and fetch_url()."""
-    if success:
-        result = FetchResult(
-            content=SAMPLE_HTML,
-            content_format="html",
-            source_url="https://beacon.schneidercorp.com/test",
-            success=True,
+def _make_sample_property_data(success: bool = True, county: str = "Hendry") -> PropertyData:
+    """Create a PropertyData matching SAMPLE_EXTRACTION_RESULT shape."""
+    if not success:
+        return PropertyData(
+            county=county,
+            sources_used=[],
+            sources_failed=[{"type": "tax", "error": "Connection timeout"}],
         )
-    else:
-        result = FetchResult(
-            success=False,
-            error="Connection timeout",
-        )
+    return PropertyData(
+        parcel_number="1-29-43-01-010-0000-001.0",
+        address="123 Main St",
+        city="LaBelle",
+        state="FL",
+        county=county,
+        subdivision="Palm Village",
+        owner_name="Jane Doe",
+        legal_description="Lot 1, Block 2, Palm Village Subdivision",
+        assessed_value=225000.0,
+        land_value=50000.0,
+        improvement_value=175000.0,
+        total_value=225000.0,
+        tax_amount=3200.50,
+        assessment_year="2025",
+        tax_status="Paid",
+        homestead_exemption=True,
+        sales_history=[
+            {
+                "recording_date": "2020-01-15",
+                "consideration": 250000.0,
+                "instrument_number": "2020001234",
+                "book_page": "1234/567",
+                "grantor": "John Smith",
+                "grantee": "Jane Doe",
+                "deed_type": "Warranty Deed",
+            },
+        ],
+        recorded_documents=[
+            {
+                "doc_type": "mortgage",
+                "record_date": "2020-02-01",
+                "instrument_number": "2020001235",
+                "book_page": "1234/568",
+                "grantor": "Jane Doe",
+                "grantee": "First National Bank",
+                "consideration": 200000.0,
+            },
+        ],
+        sources_used=[
+            {"type": "tax", "url": "https://beacon.schneidercorp.com/test"},
+        ],
+    )
 
-    mock_fetcher_cls = MagicMock()
-    mock_fetcher_instance = MagicMock()
-    mock_fetcher_instance.fetch = AsyncMock(return_value=result)
-    mock_fetcher_instance.fetch_url = AsyncMock(return_value=result)
-    mock_fetcher_instance.close = AsyncMock()
-    mock_fetcher_instance.__aenter__ = AsyncMock(return_value=mock_fetcher_instance)
-    mock_fetcher_instance.__aexit__ = AsyncMock(return_value=False)
-    mock_fetcher_cls.return_value = mock_fetcher_instance
 
+def _setup_fetch_mock(success: bool = True, county: str = "Hendry"):
+    """Create a patcher for real_data_fetcher.fetch_property_data()."""
+    prop_data = _make_sample_property_data(success=success, county=county)
     return patch(
-        "app.micro_apps.title_search.services.county_data_fetcher.CountyDataFetcher",
-        mock_fetcher_cls,
+        "app.micro_apps.title_search.services.real_data_fetcher.fetch_property_data",
+        new_callable=AsyncMock,
+        return_value=prop_data,
     )
 
 
@@ -168,10 +201,15 @@ def _setup_discovery_mock(portals=None):
     """Create a patcher for PortalDiscoveryAgent.discover()."""
     if portals is None:
         portals = []
-    return patch(
-        "app.micro_apps.title_search.ai.portal_discovery_agent.PortalDiscoveryAgent.discover",
-        new_callable=AsyncMock,
+    mock_agent_cls = MagicMock()
+    mock_agent_inst = AsyncMock()
+    mock_agent_inst.discover = AsyncMock(
         return_value={"portals": portals, "county_has_digital_records": len(portals) > 0},
+    )
+    mock_agent_cls.return_value = mock_agent_inst
+    return patch(
+        "app.micro_apps.title_search.ai.portal_discovery_agent.PortalDiscoveryAgent",
+        mock_agent_cls,
     )
 
 
@@ -232,44 +270,41 @@ async def test_full_pipeline(pipeline_order):
         assert order.status in ("completed", "review_required")
         assert order.pipeline_stage is None
 
-        # Legal description should be populated from extraction
-        # (set during parse stage from property_info.legal_description)
+        # Legal description should be populated from fetch data
         assert order.legal_description is None or order.legal_description == "Lot 1, Block 2, Palm Village Subdivision"
 
-        # Source assignments should exist with portal_config_id
+        # Source assignments should exist
         sources = (await db.execute(
             select(TASourceAssignment).where(TASourceAssignment.order_id == TEST_ORDER_ID)
         )).scalars().all()
         assert len(sources) >= 1
-        assert sources[0].portal_config_id is not None
 
-        # Raw documents should exist with HTML content format
+        # Raw documents should exist with JSON content format (from fetch_property_data)
         raw_docs = (await db.execute(
             select(TARawDocument).where(TARawDocument.order_id == TEST_ORDER_ID)
         )).scalars().all()
         assert len(raw_docs) >= 1
-        assert raw_docs[0].content_format == "html"
-        assert raw_docs[0].source_url is not None
+        assert raw_docs[0].content_format == "json"
 
-        # Parsed documents should exist (deed + mortgage + tax from extraction)
+        # Parsed documents should exist (deed + mortgage + tax from JSON parsing)
         docs = (await db.execute(
             select(TADocument).where(TADocument.order_id == TEST_ORDER_ID)
         )).scalars().all()
         assert len(docs) >= 2  # At least deed + mortgage
 
-        # Verify deed has metadata
+        # Verify deed has metadata (from JSON parse path)
         deed_docs = [d for d in docs if d.doc_type == "deed"]
         assert len(deed_docs) >= 1
         assert deed_docs[0].doc_metadata is not None
         assert deed_docs[0].doc_metadata.get("book_page") == "1234/567"
         assert deed_docs[0].doc_metadata.get("instrument_number") == "2020001234"
 
-        # Verify mortgage has doc_metadata
+        # Verify mortgage has doc_metadata (from JSON parse path)
         mtg_docs = [d for d in docs if d.doc_type == "mortgage"]
         assert len(mtg_docs) >= 1
         assert mtg_docs[0].doc_metadata is not None
-        assert mtg_docs[0].doc_metadata.get("trustee") == "ABC Trustee Co"
-        assert mtg_docs[0].doc_metadata.get("maturity_date") == "2050-02-01"
+        assert mtg_docs[0].doc_metadata.get("book_page") == "1234/568"
+        assert mtg_docs[0].doc_metadata.get("instrument_number") == "2020001235"
 
         # Chain links should exist
         chain = (await db.execute(
@@ -287,7 +322,7 @@ async def test_full_pipeline(pipeline_order):
 
 @pytest.mark.asyncio
 async def test_pipeline_with_non_digital_source(db_session: AsyncSession, seed_data):
-    """Pipeline pauses at retrieve when non-digital source exists."""
+    """Pipeline proceeds with minimal report for counties with no digital data."""
     cs = TACountySource(
         county="Rural",
         state_code="FL",
@@ -310,19 +345,34 @@ async def test_pipeline_with_non_digital_source(db_session: AsyncSession, seed_d
     db_session.add(order)
     await db_session.commit()
 
-    # Non-digital source pauses at retrieve — no AI agents called
-    await run_pipeline(order_id, TEST_ORG_ID, test_session_factory)
+    # Fetch returns no data for rural county
+    fetch_patcher = _setup_fetch_mock(success=False, county="Rural")
+    discovery_mock = _setup_discovery_mock(portals=[])
+    ai_patchers = _setup_ai_mocks()
+
+    for p in ai_patchers:
+        p.start()
+    fetch_patcher.start()
+    discovery_mock.start()
+    try:
+        await run_pipeline(order_id, TEST_ORG_ID, test_session_factory)
+    finally:
+        for p in ai_patchers:
+            p.stop()
+        fetch_patcher.stop()
+        discovery_mock.stop()
 
     async with test_session_factory() as db:
         order = (await db.execute(
             select(TAOrder).where(TAOrder.id == order_id)
         )).scalar_one()
-        assert order.status == "awaiting_abstractor"
+        # Pipeline produces minimal report with missing_source flag
+        assert order.status == "review_required"
 
 
 @pytest.mark.asyncio
 async def test_pipeline_no_county_source_fails_gracefully(db_session: AsyncSession, seed_data):
-    """Pipeline fails gracefully when no portal can be found for the county."""
+    """Pipeline proceeds with minimal report when no portal can be found."""
     order_id = uuid.uuid4()
     order = TAOrder(
         id=order_id,
@@ -336,29 +386,39 @@ async def test_pipeline_no_county_source_fails_gracefully(db_session: AsyncSessi
     db_session.add(order)
     await db_session.commit()
 
-    # Mock the portal discovery agent to return no portals
-    discovery_mock = patch(
-        "app.micro_apps.title_search.ai.portal_discovery_agent.PortalDiscoveryAgent.discover",
-        new_callable=AsyncMock,
-        return_value={"portals": [], "county_has_digital_records": False},
-    )
+    # Mock discovery + fetch returning no data
+    discovery_mock = _setup_discovery_mock(portals=[])
+    fetch_mock = _setup_fetch_mock(success=False, county="NoCounty")
+    ai_patchers = _setup_ai_mocks()
+
+    for p in ai_patchers:
+        p.start()
     discovery_mock.start()
+    fetch_mock.start()
     try:
         await run_pipeline(order_id, TEST_ORG_ID, test_session_factory)
     finally:
+        for p in ai_patchers:
+            p.stop()
         discovery_mock.stop()
+        fetch_mock.stop()
 
     async with test_session_factory() as db:
         order = (await db.execute(
             select(TAOrder).where(TAOrder.id == order_id)
         )).scalar_one()
-        assert order.status == "failed"
-        assert "No accessible portal found" in (order.pipeline_error or "")
+        # Pipeline now produces a minimal report with missing_source flag
+        assert order.status == "review_required"
+        flags = (await db.execute(
+            select(TAFlag).where(TAFlag.order_id == order_id)
+        )).scalars().all()
+        flag_types = [f.flag_type for f in flags]
+        assert "missing_source" in flag_types
 
 
 @pytest.mark.asyncio
 async def test_pipeline_fetch_failure_tries_discovery(db_session: AsyncSession, seed_data):
-    """Pipeline tries AI portal discovery when all registered fetches fail."""
+    """Pipeline tries AI portal discovery when fetch fails, proceeds with minimal report."""
     cs = TACountySource(
         county="Broken",
         state_code="FL",
@@ -384,18 +444,19 @@ async def test_pipeline_fetch_failure_tries_discovery(db_session: AsyncSession, 
     db_session.add(order)
     await db_session.commit()
 
-    fetch_patcher = _setup_fetch_mock(success=False)
-    # Mock discovery to also return no portals → graceful failure
-    discovery_mock = patch(
-        "app.micro_apps.title_search.ai.portal_discovery_agent.PortalDiscoveryAgent.discover",
-        new_callable=AsyncMock,
-        return_value={"portals": [], "county_has_digital_records": False},
-    )
+    fetch_patcher = _setup_fetch_mock(success=False, county="Broken")
+    discovery_mock = _setup_discovery_mock(portals=[])
+    ai_patchers = _setup_ai_mocks()
+
+    for p in ai_patchers:
+        p.start()
     fetch_patcher.start()
     discovery_mock.start()
     try:
         await run_pipeline(order_id, TEST_ORG_ID, test_session_factory)
     finally:
+        for p in ai_patchers:
+            p.stop()
         fetch_patcher.stop()
         discovery_mock.stop()
 
@@ -403,8 +464,13 @@ async def test_pipeline_fetch_failure_tries_discovery(db_session: AsyncSession, 
         order = (await db.execute(
             select(TAOrder).where(TAOrder.id == order_id)
         )).scalar_one()
-        assert order.status == "failed"
-        assert "No accessible portal found" in (order.pipeline_error or "")
+        # Pipeline now produces a minimal report with missing_source flag
+        assert order.status == "review_required"
+        flags = (await db.execute(
+            select(TAFlag).where(TAFlag.order_id == order_id)
+        )).scalars().all()
+        flag_types = [f.flag_type for f in flags]
+        assert "missing_source" in flag_types
 
 
 @pytest.mark.asyncio
@@ -455,20 +521,8 @@ async def test_pipeline_idempotent_retry(pipeline_order):
 
 
 @pytest.mark.asyncio
-async def test_pipeline_discovery_wins_race(db_session: AsyncSession, seed_data):
-    """Registered portals fail, AI discovery finds a working portal — verify registry save."""
-    cs = TACountySource(
-        county="Slow",
-        state_code="FL",
-        source_type="recorder",
-        availability="digital",
-        portal_type="beacon",
-        portal_url="https://slow.example.com",
-        search_config={"app_id": "111"},
-        is_active=True,
-    )
-    db_session.add(cs)
-
+async def test_pipeline_discovery_saves_portal(db_session: AsyncSession, seed_data):
+    """AI discovery finds portals and saves them to TACountySource registry."""
     order_id = uuid.uuid4()
     order = TAOrder(
         id=order_id,
@@ -483,41 +537,19 @@ async def test_pipeline_discovery_wins_race(db_session: AsyncSession, seed_data)
     db_session.add(order)
     await db_session.commit()
 
-    # Registered portal always fails
-    fail_result = FetchResult(success=False, error="Connection timeout")
-    # Discovered portal succeeds
-    ok_result = FetchResult(
-        content=SAMPLE_HTML, content_format="html",
-        source_url="https://discovered.example.com/property", success=True,
-    )
-
-    mock_fetcher_cls = MagicMock()
-    mock_fetcher_instance = MagicMock()
-    mock_fetcher_instance.fetch = AsyncMock(return_value=fail_result)
-    mock_fetcher_instance.fetch_url = AsyncMock(return_value=ok_result)
-    mock_fetcher_instance.close = AsyncMock()
-    mock_fetcher_instance.__aenter__ = AsyncMock(return_value=mock_fetcher_instance)
-    mock_fetcher_instance.__aexit__ = AsyncMock(return_value=False)
-    mock_fetcher_cls.return_value = mock_fetcher_instance
-
-    fetch_patcher = patch(
-        "app.micro_apps.title_search.services.county_data_fetcher.CountyDataFetcher",
-        mock_fetcher_cls,
-    )
+    # Discovery finds a portal, fetch returns data using it
     discovery_patcher = _setup_discovery_mock(portals=[{
-        "url": "https://discovered.example.com/property?addr={address}",
-        "source_name": "Discovered Portal",
+        "url": "https://discovered.example.com/property",
+        "source_type": "property_appraiser",
         "portal_type": "generic_web",
     }])
-    # Mock DNS so the fake discovered domain passes the DNS check
-    dns_patcher = patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))])
+    fetch_patcher = _setup_fetch_mock(success=True, county="Slow")
     ai_patchers = _setup_ai_mocks()
 
     for p in ai_patchers:
         p.start()
     fetch_patcher.start()
     discovery_patcher.start()
-    dns_patcher.start()
     try:
         await run_pipeline(order_id, TEST_ORG_ID, test_session_factory)
     finally:
@@ -525,7 +557,6 @@ async def test_pipeline_discovery_wins_race(db_session: AsyncSession, seed_data)
             p.stop()
         fetch_patcher.stop()
         discovery_patcher.stop()
-        dns_patcher.stop()
 
     async with test_session_factory() as db:
         order = (await db.execute(
@@ -544,80 +575,17 @@ async def test_pipeline_discovery_wins_race(db_session: AsyncSession, seed_data)
         assert new_cs is not None
         assert "discovered.example.com" in (new_cs.portal_url or "")
 
-        # Raw document should exist from discovered portal
+        # Raw document should exist
         raw_docs = (await db.execute(
             select(TARawDocument).where(TARawDocument.order_id == order_id)
         )).scalars().all()
         assert len(raw_docs) >= 1
-        assert raw_docs[0].document_ref == "SLOW-DISCOVERED"
 
 
 @pytest.mark.asyncio
-async def test_pipeline_first_success_wins(pipeline_order):
-    """Two registered portals — first returns immediately, pipeline completes fast."""
-    import asyncio
-
-    # Add a second county source for the same county
-    async with test_session_factory() as db:
-        cs2 = TACountySource(
-            county="Hendry",
-            state_code="FL",
-            source_type="tax_collector",
-            availability="digital",
-            portal_type="generic_web",
-            portal_url="https://slow-portal.example.com",
-            search_config={},
-            is_active=True,
-        )
-        db.add(cs2)
-        await db.flush()
-
-        # Add a second assignment pointing to this source
-        sa2 = TASourceAssignment(
-            org_id=TEST_ORG_ID,
-            order_id=TEST_ORDER_ID,
-            source_type="tax_collector",
-            availability="digital",
-            portal_config_id=cs2.id,
-            status="pending",
-        )
-        db.add(sa2)
-        await db.commit()
-
-    fast_result = FetchResult(
-        content=SAMPLE_HTML, content_format="html",
-        source_url="https://beacon.schneidercorp.com/test", success=True,
-    )
-    slow_result = FetchResult(
-        content=SAMPLE_HTML, content_format="html",
-        source_url="https://slow-portal.example.com/test", success=True,
-    )
-
-    call_count = 0
-
-    async def _side_effect_fetch(**kwargs):
-        nonlocal call_count
-        call_count += 1
-        cs = kwargs.get("county_source")
-        if cs and cs.portal_type == "generic_web":
-            # Slow portal — simulate delay
-            await asyncio.sleep(5)
-            return slow_result
-        return fast_result
-
-    mock_fetcher_cls = MagicMock()
-    mock_fetcher_instance = MagicMock()
-    mock_fetcher_instance.fetch = AsyncMock(side_effect=_side_effect_fetch)
-    mock_fetcher_instance.fetch_url = AsyncMock(return_value=fast_result)
-    mock_fetcher_instance.close = AsyncMock()
-    mock_fetcher_instance.__aenter__ = AsyncMock(return_value=mock_fetcher_instance)
-    mock_fetcher_instance.__aexit__ = AsyncMock(return_value=False)
-    mock_fetcher_cls.return_value = mock_fetcher_instance
-
-    fetch_patcher = patch(
-        "app.micro_apps.title_search.services.county_data_fetcher.CountyDataFetcher",
-        mock_fetcher_cls,
-    )
+async def test_pipeline_completes_with_fetch_data(pipeline_order):
+    """Pipeline completes successfully with fetch_property_data mock."""
+    fetch_patcher = _setup_fetch_mock(success=True)
     discovery_patcher = _setup_discovery_mock()
     ai_patchers = _setup_ai_mocks()
 
@@ -626,18 +594,12 @@ async def test_pipeline_first_success_wins(pipeline_order):
     fetch_patcher.start()
     discovery_patcher.start()
     try:
-        import time
-        start = time.monotonic()
         await run_pipeline(TEST_ORDER_ID, TEST_ORG_ID, test_session_factory)
-        elapsed = time.monotonic() - start
     finally:
         for p in ai_patchers:
             p.stop()
         fetch_patcher.stop()
         discovery_patcher.stop()
-
-    # Pipeline should complete in well under 5s (the slow portal's delay)
-    assert elapsed < 4.0, f"Pipeline took {elapsed:.1f}s — slow portal was not cancelled"
 
     async with test_session_factory() as db:
         order = (await db.execute(
@@ -645,8 +607,8 @@ async def test_pipeline_first_success_wins(pipeline_order):
         )).scalar_one()
         assert order.status in ("completed", "review_required")
 
-        # Exactly one raw document — the fast winner
+        # Raw document should exist
         raw_docs = (await db.execute(
             select(TARawDocument).where(TARawDocument.order_id == TEST_ORDER_ID)
         )).scalars().all()
-        assert len(raw_docs) == 1
+        assert len(raw_docs) >= 1

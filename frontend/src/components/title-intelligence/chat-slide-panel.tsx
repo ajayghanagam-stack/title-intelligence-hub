@@ -11,11 +11,13 @@ export function ChatSlidePanel({
   open,
   onClose,
   initialQuestion,
+  totalPages,
 }: {
   packId: string;
   open: boolean;
   onClose: () => void;
   initialQuestion?: string;
+  totalPages?: number;
 }) {
   const { messages, sending, sendMessage, cancelStream, clearChat } = useChat(packId);
 
@@ -91,6 +93,7 @@ export function ChatSlidePanel({
             onSend={sendMessage}
             onCancel={cancelStream}
             packId={packId}
+            totalPages={totalPages}
           />
         </div>
       </div>

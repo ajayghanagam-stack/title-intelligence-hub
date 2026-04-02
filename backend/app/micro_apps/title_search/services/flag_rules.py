@@ -247,7 +247,12 @@ def detect_tax_delinquent(property_summary: dict[str, Any] | None) -> list[dict]
     if not tax:
         return []
 
-    status = (tax.get("tax_status") or "").lower()
+    # Handle both formats: string (from PropertyData) and dict (from research data)
+    if isinstance(tax, str):
+        status = tax.lower()
+        tax = {"tax_status": tax}
+    else:
+        status = (tax.get("tax_status") or "").lower()
     if status in ("delinquent", "unpaid", "past_due"):
         severity = _clamp_severity("tax_delinquent", "high")
         delinquent_amt = tax.get("delinquent_amount")

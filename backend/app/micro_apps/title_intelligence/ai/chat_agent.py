@@ -9,11 +9,12 @@ import re
 import uuid
 import json
 import logging
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator  # noqa: F401 — Any used in stream_answer
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.base_service import BaseAIService
+from app.config import get_settings
 from app.micro_apps.title_intelligence.ai.tools.database import (
     GET_EXTRACTIONS_BY_TYPE_TOOL, GET_FLAGS_TOOL,
     create_db_tool_handlers,
@@ -32,18 +33,28 @@ logger = logging.getLogger(__name__)
 class ChatAgent(BaseAIService):
     """Answer questions about a title document with citations using tools."""
 
-    SYSTEM_PROMPT = """You are a title insurance expert assistant.
-You have tools to search the document, read specific pages, get extractions, and check flags.
+    def __init__(self, org_id: uuid.UUID):
+        settings = get_settings()
+        provider_override = settings.TI_CHAT_PROVIDER or None
+        super().__init__(org_id, provider_override=provider_override)
 
-When answering questions:
-1. Use search_text to find relevant passages
-2. Use read_page_ocr to read specific pages for detailed context
-3. Use get_extractions_by_type to get structured data
-4. Use get_flags to check risk flags
+    SYSTEM_PROMPT = """You are a title insurance expert assistant. Your ONLY purpose is to answer questions about the specific title commitment document that has been uploaded and processed in this pack.
 
-Always cite your sources by referencing page numbers in [Page X] format.
-If the answer isn't in the available data, say so clearly.
-Be concise and professional."""
+You have tools available to look up information from this document:
+- search_text: Search the document text for relevant passages
+- read_page_ocr: Read the full text of a specific page
+- get_extractions_by_type: Get structured data (parties, property details, etc.)
+- get_flags: Get risk flags identified during analysis
+
+**When to use tools**: Use tools when the user asks about specific document content, parties, property details, dates, amounts, exceptions, requirements, or flags. Always search before answering document-specific questions.
+
+**When NOT to use tools**: For greetings or clarifications about your previous answers — just respond directly.
+
+**IMPORTANT RULES**:
+- ONLY answer questions about this specific document. Do NOT answer questions about other documents, outside topics, or general knowledge.
+- If asked about something not covered in this document, politely decline and explain that you can only assist with questions about the uploaded title commitment.
+- When citing document information, reference page numbers in [Page X] format. Only cite page numbers that actually exist in this document.
+- Be concise and professional."""
 
     async def answer_with_tools(
         self,
@@ -77,7 +88,7 @@ Be concise and professional."""
 
         messages.append({
             "role": "user",
-            "content": f"{question}\n\nUse tools to search for relevant information, then answer. Cite page numbers in [Page X] format.",
+            "content": question,
         })
 
         result = await self.call_with_tools(
@@ -102,105 +113,26 @@ Be concise and professional."""
         question: str,
         history: list | None = None,
     ) -> AsyncGenerator[dict, None]:
-        """Stream answer with tool-calling for context gathering, then streaming text.
+        """Answer with tools, then yield the result as SSE chunks.
 
-        Yields SSE-compatible chunks: {"type": "chunk"|"done"|"error", "content": "..."}
+        Yields: {"type": "chunk"|"done"|"error", "content": "..."}
+
+        Uses the proven call_with_tools() for the tool loop, then yields
+        the final text. Single code path, no fragile streaming-tool parsing.
         """
-        # First, gather context via tool calls (non-streaming)
-        db_handlers = create_db_tool_handlers(db, self.org_id, pack_id)
-        storage_handlers = create_storage_tool_handlers(db, self.org_id, pack_id, storage)
-        search_handlers = create_search_tool_handlers(db, self.org_id, pack_id)
-        all_handlers = {**db_handlers, **storage_handlers, **search_handlers}
-
-        tools = [SEARCH_TEXT_TOOL, GET_EXTRACTIONS_BY_TYPE_TOOL, GET_FLAGS_TOOL, READ_PAGE_OCR_TOOL]
-
-        # Build initial messages
-        messages = []
-        if history:
-            for msg in history[-8:]:
-                messages.append({"role": msg.role, "content": msg.content})
-
-        messages.append({
-            "role": "user",
-            "content": f"{question}\n\nUse tools to search for relevant information, then answer. Cite page numbers in [Page X] format.",
-        })
-
-        # Do tool-calling phase (non-streaming) to gather context
-        import litellm
-        converted_tools = _convert_tools_for_litellm(tools)
-        working_messages = [{"role": "system", "content": self.SYSTEM_PROMPT}] + list(messages)
-
-        # Tool-calling loop (max 6 steps for context, leaving room for final response)
-        for step in range(6):
-            try:
-                response = await litellm.acompletion(
-                    model=self.model,
-                    messages=working_messages,
-                    tools=converted_tools,
-                    max_tokens=2048,
-                )
-            except Exception as e:
-                logger.error("Chat tool-calling step failed", exc_info=True)
-                yield {"type": "error", "content": "An error occurred while processing your request"}
-                return
-
-            message = response.choices[0].message
-            if not message.tool_calls:
-                # No tool calls — stream the final response instead
-                break
-
-            working_messages.append(message.model_dump())
-            for tool_call in message.tool_calls:
-                tool_name = tool_call.function.name
-                try:
-                    args = json.loads(tool_call.function.arguments) if isinstance(
-                        tool_call.function.arguments, str) else tool_call.function.arguments
-                except json.JSONDecodeError:
-                    args = {}
-
-                handler = all_handlers.get(tool_name)
-                if handler:
-                    try:
-                        result = await handler(**args)
-                        result_str = json.dumps(result) if not isinstance(result, str) else result
-                    except Exception as e:
-                        result_str = json.dumps({"error": str(e)})
-                else:
-                    result_str = json.dumps({"error": f"Unknown tool: {tool_name}"})
-
-                working_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": result_str,
-                })
-        else:
-            # If we exhausted tool steps, the last message content is the answer
-            if message and message.content:
-                yield {"type": "chunk", "content": message.content}
-                yield {"type": "done", "content": ""}
-                return
-
-        # Now stream the final response
-        # Must include tools= if working_messages contains tool calls/results
         try:
-            stream_response = await litellm.acompletion(
-                model=self.model,
-                messages=working_messages,
-                tools=converted_tools,
-                max_tokens=2048,
-                stream=True,
+            response_text, _ = await self.answer_with_tools(
+                db=db, pack_id=pack_id, storage=storage,
+                question=question, history=history,
             )
-            full_text = ""
-            async for chunk in stream_response:
-                delta = chunk.choices[0].delta
-                if delta and delta.content:
-                    full_text += delta.content
-                    yield {"type": "chunk", "content": delta.content}
+        except Exception:
+            logger.error("Chat answer_with_tools failed", exc_info=True)
+            yield {"type": "error", "content": "An error occurred while processing your request"}
+            return
 
-            yield {"type": "done", "content": ""}
-        except Exception as e:
-            logger.error("Chat streaming failed", exc_info=True)
-            yield {"type": "error", "content": "An error occurred while generating the response"}
+        if response_text:
+            yield {"type": "chunk", "content": response_text}
+        yield {"type": "done", "content": ""}
 
     # Keep backward-compatible answer method
     async def answer(

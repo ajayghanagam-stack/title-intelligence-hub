@@ -17,6 +17,7 @@ import { SeverityBadge } from "./severity-badge";
 import { FlagDetailDialog } from "./flag-detail-dialog";
 import { FlagNoteInput } from "./flag-note-input";
 import { Pagination } from "./pagination";
+import { SEVERITY_DISPLAY_NAMES } from "@/lib/ti-constants";
 import type { Flag, ReviewDecision } from "@/lib/ti-types";
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -39,16 +40,19 @@ const CATEGORY_LABELS: Record<string, string> = {
   tax_issue: "Tax Issue",
 };
 
-const severityOrder: Record<string, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-};
+function getCategoryLabel(flagType: string): string {
+  return CATEGORY_LABELS[flagType] || flagType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
-interface FlagRowProps {
+function getDocumentRef(flag: Flag): string {
+  if (!flag.evidence_refs || flag.evidence_refs.length === 0) return "";
+  const pages = [...new Set(flag.evidence_refs.map((r) => r.page_number))].sort((a, b) => a - b);
+  return "p. " + pages.join(", ");
+}
+
+interface FlagCardProps {
   flag: Flag;
-  exceptionId: string;
+  itemNumber: string;
   packId: string;
   isExpanded: boolean;
   isLoading: boolean;
@@ -59,27 +63,9 @@ interface FlagRowProps {
   onSaveNote: (flagId: string, note: string | null) => Promise<void>;
 }
 
-function getRequiredAction(flag: Flag): string {
-  const text = flag.ai_explanation || flag.description || "";
-  const match = text.match(/^[^.!?]+[.!?]/);
-  return match ? match[0] : text.slice(0, 120);
-}
-
-function getDocumentRef(flag: Flag): string {
-  if (!flag.evidence_refs || flag.evidence_refs.length === 0) return "\u2014";
-  const first = flag.evidence_refs[0];
-  let label = `Page ${first.page_number}`;
-  if (flag.evidence_refs.length > 1) label += ` +${flag.evidence_refs.length - 1}`;
-  return label;
-}
-
-function getCategoryLabel(flagType: string): string {
-  return CATEGORY_LABELS[flagType] || flagType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-const FlagRow = memo(function FlagRow({
+const FlagCard = memo(function FlagCard({
   flag,
-  exceptionId,
+  itemNumber,
   isExpanded,
   isLoading,
   onToggle,
@@ -87,86 +73,100 @@ const FlagRow = memo(function FlagRow({
   onOpenDetail,
   onNavigateToPage,
   onSaveNote,
-}: FlagRowProps) {
+}: FlagCardProps) {
   const docRef = getDocumentRef(flag);
-  const requiredAction = getRequiredAction(flag);
   const category = getCategoryLabel(flag.flag_type);
+  const sevDisplay = SEVERITY_DISPLAY_NAMES[flag.severity] || flag.severity.toUpperCase();
 
   return (
     <div className={cn(
-      "transition-colors",
-      isExpanded ? "bg-muted/30" : "hover:bg-muted/15"
+      "border-b border-border/40 transition-colors",
+      isExpanded ? "bg-muted/20" : "hover:bg-muted/10"
     )}>
-      {/* Row */}
+      {/* Card header — matches PDF exception item layout */}
       <div
-        className="flex items-start gap-0 cursor-pointer"
+        className="flex items-start gap-3 px-5 py-3.5 cursor-pointer"
         onClick={() => onToggle(flag.id)}
       >
-        {/* Chevron */}
-        <div className="shrink-0 w-9 flex items-center justify-center pt-3.5 text-muted-foreground/40">
-          {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        {/* Expand chevron */}
+        <div className="shrink-0 mt-0.5 text-muted-foreground/40">
+          {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </div>
-        {/* ID */}
-        <div className="shrink-0 w-[60px] pt-3 pb-3 pr-2">
-          <span className="text-[12px] font-mono font-semibold text-muted-foreground">{exceptionId}</span>
-        </div>
-        {/* Severity */}
-        <div className="shrink-0 w-[80px] pt-2.5 pb-3">
+
+        {/* Item number */}
+        <span className="shrink-0 text-sm font-bold text-brand-charcoal mt-0.5">{itemNumber}</span>
+
+        {/* Severity badge */}
+        <div className="shrink-0 mt-0.5">
           <SeverityBadge severity={flag.severity} />
         </div>
-        {/* Category — desktop only */}
-        <div className="shrink-0 w-[110px] pt-3 pb-3 pr-2 hidden lg:block">
-          <span className="text-[12px] font-medium text-muted-foreground">{category}</span>
+
+        {/* Title + description */}
+        <div className="flex-1 min-w-0">
+          <p className="text-[13px] font-bold text-brand-charcoal leading-snug">{flag.title}</p>
+          <p className="text-[12px] text-muted-foreground mt-1 line-clamp-2 leading-relaxed">{flag.description}</p>
+          {/* Mobile: show category + doc ref */}
+          <div className="flex items-center gap-2 mt-1.5 lg:hidden">
+            <span className="text-[11px] text-muted-foreground">{category}</span>
+            {docRef && <span className="text-[11px] text-primary font-medium">{docRef}</span>}
+          </div>
         </div>
-        {/* Description */}
-        <div className="flex-1 min-w-0 pt-3 pb-3 pr-3">
-          <p className="text-[13px] text-foreground leading-snug line-clamp-2">{flag.description || flag.title}</p>
-          {/* Mobile: show category below description */}
-          <p className="text-[11px] text-muted-foreground mt-0.5 lg:hidden">{category}</p>
-        </div>
-        {/* Doc Ref — desktop only */}
-        <div className="shrink-0 w-[120px] pt-3 pb-3 pr-2 hidden lg:block">
+
+        {/* Doc Ref — desktop */}
+        <div className="shrink-0 w-[80px] hidden lg:block mt-0.5">
           {flag.evidence_refs.length > 0 ? (
             <button
               onClick={(e) => { e.stopPropagation(); onNavigateToPage(flag.evidence_refs[0].page_number, flag.evidence_refs[0].text_snippet); }}
-              className="text-[12px] text-primary hover:text-primary/80 hover:underline font-medium transition-colors"
+              className="text-[11px] text-primary hover:text-primary/80 hover:underline font-medium transition-colors"
             >
               {docRef}
             </button>
           ) : (
-            <span className="text-[12px] text-muted-foreground">{docRef}</span>
+            <span className="text-[11px] text-muted-foreground">&mdash;</span>
           )}
         </div>
-        {/* Required Action — desktop only */}
-        <div className="shrink-0 w-[160px] pt-3 pb-3 pr-2 hidden lg:block">
-          <p className="text-[12px] text-muted-foreground leading-snug line-clamp-3">{requiredAction}</p>
-        </div>
-        {/* Note — desktop only */}
-        <div className="shrink-0 w-[200px] pt-2 pb-2 pr-4 hidden lg:block" onClick={(e) => e.stopPropagation()}>
+
+        {/* Note — desktop */}
+        <div className="shrink-0 w-[180px] hidden lg:block" onClick={(e) => e.stopPropagation()}>
           <FlagNoteInput flagId={flag.id} initialNote={flag.note} onSave={onSaveNote} />
         </div>
       </div>
 
-      {/* Divider between rows */}
-      <div className="border-b border-border/50" />
-
       {/* Expanded detail */}
       {isExpanded && (
-        <div className="pl-9 pr-5 py-4 space-y-3 border-b border-border/50 bg-muted/10">
+        <div className="pl-14 pr-5 pb-4 space-y-3">
+          {/* Category label */}
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{category}</span>
+            {flag.status !== "open" && (
+              <span className={cn(
+                "text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider",
+                flag.status === "approved" ? "bg-emerald-100 text-emerald-700" :
+                flag.status === "rejected" ? "bg-red-100 text-red-700" :
+                "bg-purple-100 text-purple-700"
+              )}>
+                {flag.status}
+              </span>
+            )}
+          </div>
+
+          {/* Full description */}
           <p className="text-[13px] text-muted-foreground leading-relaxed">{flag.description}</p>
 
+          {/* AI Recommendation — styled like PDF warning */}
           {flag.ai_explanation && (
             <div className="rounded-lg bg-amber-50/70 border border-amber-200/50 px-4 py-3">
-              <p className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-700 mb-1">
-                <Sparkles className="h-3 w-3" />Recommendation
+              <p className="flex items-center gap-1.5 text-[11px] font-bold text-amber-800 mb-1 uppercase tracking-wider">
+                <Sparkles className="h-3 w-3" />Examiner&apos;s Note
               </p>
               <p className="text-[13px] leading-relaxed text-amber-900/80">{flag.ai_explanation}</p>
             </div>
           )}
 
+          {/* Evidence */}
           {flag.evidence_refs.length > 0 && (
             <div>
-              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+              <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">
                 Evidence ({flag.evidence_refs.length})
               </p>
               <div className="space-y-1">
@@ -189,6 +189,7 @@ const FlagRow = memo(function FlagRow({
             </div>
           )}
 
+          {/* Actions */}
           <div className="flex items-center gap-2 pt-2">
             {flag.status === "open" && (
               <div className="flex items-center gap-1.5 mr-3" onClick={(e) => e.stopPropagation()}>
@@ -200,6 +201,11 @@ const FlagRow = memo(function FlagRow({
             <button onClick={() => onOpenDetail(flag)} className="inline-flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold transition-colors">
               View full detail <ArrowUpRight className="h-3 w-3" />
             </button>
+          </div>
+
+          {/* Mobile note input */}
+          <div className="lg:hidden" onClick={(e) => e.stopPropagation()}>
+            <FlagNoteInput flagId={flag.id} initialNote={flag.note} onSave={onSaveNote} />
           </div>
         </div>
       )}
@@ -233,10 +239,9 @@ export function FlagsTable({
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  // Server-driven pagination: flags are already sorted/paginated by backend
   const isServerPaginated = total !== undefined && serverPage !== undefined && onServerPageChange !== undefined;
   const currentPage = isServerPaginated ? serverPage : 1;
-  const pageItems = flags;  // Already paginated by server
+  const pageItems = flags;
   const effectiveTotal = isServerPaginated ? total : flags.length;
   const totalPages = Math.max(1, Math.ceil(effectiveTotal / PAGE_SIZE));
 
@@ -261,9 +266,8 @@ export function FlagsTable({
   const handleOpenDetail = useCallback((flag: Flag) => setSelectedFlag(flag), []);
 
   const handleNavigateToPage = useCallback(
-    (pageNumber: number, textSnippet?: string) => {
+    (pageNumber: number, _textSnippet?: string) => {
       const params = new URLSearchParams({ page: String(pageNumber) });
-      if (textSnippet) params.set("highlight", textSnippet);
       router.push(`/apps/title-intelligence/packs/${packId}/documents?${params.toString()}`);
     },
     [router, packId]
@@ -288,28 +292,16 @@ export function FlagsTable({
 
   return (
     <>
-      {/* Table header */}
-      <div className="hidden lg:flex items-center gap-0 bg-muted/40 border-b text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-        <div className="w-9" />
-        <span className="w-[60px] py-2.5 pr-2">ID</span>
-        <span className="w-[80px] py-2.5">Severity</span>
-        <span className="w-[110px] py-2.5 pr-2">Category</span>
-        <span className="flex-1 py-2.5 pr-3">Description</span>
-        <span className="w-[120px] py-2.5 pr-2">Doc Ref</span>
-        <span className="w-[160px] py-2.5 pr-2">Required Action</span>
-        <span className="w-[200px] py-2.5 pr-4">Notes</span>
-      </div>
-
-      {/* Rows */}
+      {/* Card rows */}
       <div>
         {pageItems.map((flag, idx) => {
           const globalIdx = (currentPage - 1) * PAGE_SIZE + idx;
-          const exceptionId = `EX-${String(globalIdx + 1).padStart(3, "0")}`;
+          const itemNumber = `EX-${String(globalIdx + 1).padStart(3, "0")}`;
           return (
-            <FlagRow
+            <FlagCard
               key={flag.id}
               flag={flag}
-              exceptionId={exceptionId}
+              itemNumber={itemNumber}
               packId={packId}
               isExpanded={expandedRows.has(flag.id)}
               isLoading={actionLoading === flag.id || !!submitting}

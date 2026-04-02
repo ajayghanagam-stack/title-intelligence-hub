@@ -446,7 +446,7 @@ class TestVersionTrackerSpecialized:
     def test_version_info_includes_registry_hash(self):
         from app.config import Settings
         from app.micro_apps.title_intelligence.pipeline.version_tracker import collect_version_info
-        settings = Settings(DEBUG=True, PIPELINE_BACKEND="background_tasks", PIPELINE_MODE="native_pdf")
+        settings = Settings(DEBUG=True, PIPELINE_BACKEND="background_tasks", PIPELINE_MODE="native_pdf", AI_PROVIDER="gemini")
         info = collect_version_info(settings)
         assert "extraction_registry_hash" in info
         assert len(info["extraction_registry_hash"]) == 64

@@ -24,21 +24,29 @@ export function PipelineProgress({ stages, examineProgress }: { stages: StageSta
         : "Starting pipeline...";
 
   return (
-    <div className="section-card space-y-5" role="status" aria-live="polite" aria-label={statusLabel}>
+    <div
+      className="section-card space-y-5"
+      role="status"
+      aria-live="polite"
+      aria-label={statusLabel}
+      data-testid="pipeline-progress"
+    >
       {/* Header + progress bar */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
             Processing Pipeline
           </h3>
-          <span className={cn(
-            "text-xs font-semibold tabular-nums px-2.5 py-0.5 rounded-full",
-            failed
-              ? "bg-red-50 text-red-700"
-              : completed === total
-                ? "bg-emerald-50 text-emerald-700"
-                : "bg-amber-50 text-amber-700"
-          )}>
+          <span
+            className={cn(
+              "text-xs font-semibold tabular-nums px-2.5 py-0.5 rounded-full",
+              failed
+                ? "bg-red-50 text-red-700"
+                : completed === total
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-amber-50 text-amber-700"
+            )}
+          >
             {pct}%
           </span>
         </div>
@@ -46,7 +54,9 @@ export function PipelineProgress({ stages, examineProgress }: { stages: StageSta
           <div
             className={cn(
               "h-full rounded-full transition-all duration-700 ease-out",
-              failed ? "bg-red-500" : "bg-gradient-to-r from-amber-500 to-orange-500"
+              failed
+                ? "bg-red-500"
+                : "bg-gradient-to-r from-amber-500 to-orange-500"
             )}
             style={{ width: `${pct}%` }}
           />
@@ -55,7 +65,7 @@ export function PipelineProgress({ stages, examineProgress }: { stages: StageSta
       </div>
 
       {/* Pipeline stages — circles + connecting lines */}
-      <div className="flex items-start gap-0 overflow-x-auto pb-1">
+      <div className="flex items-start justify-between overflow-x-auto pb-1">
         {stageKeys.map((stageKey, i) => {
           const status = stageMap.get(stageKey) || "pending";
           const isCompleted = status === "completed";
@@ -69,10 +79,14 @@ export function PipelineProgress({ stages, examineProgress }: { stages: StageSta
                 <div
                   className={cn(
                     "flex h-9 w-9 items-center justify-center rounded-full border-2 transition-all duration-300",
-                    isCompleted && "border-emerald-500 bg-emerald-500 text-white shadow-sm",
-                    isCurrent && "border-amber-500 bg-amber-500 text-white shadow-md pulse-glow",
-                    isFailed && "border-red-500 bg-red-500 text-white shadow-sm",
-                    isPending && "border-border bg-muted/50 text-muted-foreground/40"
+                    isCompleted &&
+                      "border-emerald-500 bg-emerald-500 text-white shadow-sm",
+                    isCurrent &&
+                      "border-amber-500 bg-amber-500 text-white shadow-md pulse-glow",
+                    isFailed &&
+                      "border-red-500 bg-red-500 text-white shadow-sm",
+                    isPending &&
+                      "border-border bg-muted/50 text-muted-foreground/40"
                   )}
                 >
                   {isCompleted ? (
@@ -87,11 +101,14 @@ export function PipelineProgress({ stages, examineProgress }: { stages: StageSta
                 </div>
                 <span
                   className={cn(
-                    "mt-2 text-[10px] font-medium whitespace-nowrap leading-tight text-center",
-                    isCompleted ? "text-emerald-700" :
-                    isCurrent ? "text-amber-700 font-semibold" :
-                    isFailed ? "text-red-700" :
-                    "text-muted-foreground/50"
+                    "mt-2 text-xs font-medium whitespace-nowrap leading-tight text-center",
+                    isCompleted
+                      ? "text-emerald-700"
+                      : isCurrent
+                        ? "text-amber-700 font-semibold"
+                        : isFailed
+                          ? "text-red-700"
+                          : "text-muted-foreground/50"
                   )}
                 >
                   {STAGE_LABELS[stageKey] || stageKey}
@@ -105,7 +122,7 @@ export function PipelineProgress({ stages, examineProgress }: { stages: StageSta
               {i < stageKeys.length - 1 && (
                 <div
                   className={cn(
-                    "mt-[18px] mx-1.5 h-0.5 w-10 flex-shrink-0 rounded-full transition-colors duration-500",
+                    "mt-[18px] mx-1 h-0.5 flex-1 min-w-6 rounded-full transition-colors duration-500",
                     isCompleted ? "bg-emerald-400" : "bg-border"
                   )}
                 />

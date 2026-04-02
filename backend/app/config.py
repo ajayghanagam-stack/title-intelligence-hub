@@ -30,8 +30,12 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRATION_MINUTES: int = 1440  # 24 hours
 
-    # AI Provider selection — "gemini" (default) or "claude"
-    AI_PROVIDER: Literal["gemini", "claude"] = "gemini"
+    # AI Provider selection — "claude" (default), "gemini", or "hybrid" (Gemini vision + Claude extraction)
+    AI_PROVIDER: Literal["gemini", "claude", "hybrid"] = "claude"
+
+    # Per-agent provider overrides (empty string = use AI_PROVIDER)
+    TI_CHAT_PROVIDER: Literal["gemini", "claude", ""] = ""
+    TA_AI_PROVIDER: Literal["gemini", "claude", ""] = ""
 
     # Gemini (default)
     GOOGLE_API_KEY: str = ""
@@ -41,10 +45,11 @@ class Settings(BaseSettings):
 
     # Claude-specific examiner settings
     CLAUDE_EXAMINER_BATCH_SIZE: int = 8          # image pages per batch (Claude slower output)
-    CLAUDE_EXAMINER_BATCH_SIZE_TEXT: int = 15     # text pages per batch
-    CLAUDE_EXAMINER_RENDER_DPI: int = 150         # higher DPI for Claude vision accuracy
-    CLAUDE_EXAMINER_CONCURRENCY: int = 5          # parallel batch calls (Anthropic rate limits)
-    CLAUDE_EXAMINER_STAGGER_MS: int = 300         # ms between batch launches
+    CLAUDE_EXAMINER_BATCH_SIZE_TEXT: int = 25     # text pages per batch (larger = fewer API calls)
+    CLAUDE_EXAMINER_RENDER_DPI: int = 100         # 100 DPI balances quality vs size (avoids 5MB limit)
+    CLAUDE_EXAMINER_CONCURRENCY: int = 8          # parallel batch calls (higher throughput)
+    CLAUDE_EXAMINER_STAGGER_MS: int = 100         # ms between batch launches (reduced from 300)
+    CLAUDE_EXAMINER_RPM: int = 50                 # proactive requests/minute limit (0 = disabled)
 
     # OCR
     TESSERACT_PATH: str = ""  # Custom tesseract binary path (leave empty for system default)
@@ -75,7 +80,7 @@ class Settings(BaseSettings):
 
     # Page triage — lightweight LLM classification before deep extraction
     TRIAGE_ENABLED: bool = True           # set False to skip triage (all pages → examine)
-    TRIAGE_SKIP_BELOW: int = 80           # skip LLM triage for docs under this page count
+    TRIAGE_SKIP_BELOW: int = 200          # skip LLM triage for docs under this page count
     TRIAGE_CHUNK_SIZE: int = 50           # pages per triage chunk (split larger PDFs)
     TRIAGE_CONCURRENCY: int = 4           # max parallel triage LLM calls
 
@@ -101,7 +106,7 @@ class Settings(BaseSettings):
     EXAMINER_BATCH_OVERLAP: int = 1
     EXAMINER_BATCH_COOLDOWN: float = 0.0
     EXAMINER_CALL_TIMEOUT: int = 300
-    EXAMINER_MAX_OUTPUT_TOKENS: int = 65536
+    EXAMINER_MAX_OUTPUT_TOKENS: int = 16384
     EXAMINER_RENDER_DPI: int = 72
 
     # CORS
@@ -122,12 +127,62 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _validate_chat_provider_keys(self) -> "Settings":
+        """Ensure the required API key is present when TI_CHAT_PROVIDER is set."""
+        if self.TI_CHAT_PROVIDER == "claude" and not self.ANTHROPIC_API_KEY:
+            raise ValueError(
+                "TI_CHAT_PROVIDER='claude' requires ANTHROPIC_API_KEY"
+            )
+        if self.TI_CHAT_PROVIDER == "gemini" and not self.GOOGLE_API_KEY:
+            raise ValueError(
+                "TI_CHAT_PROVIDER='gemini' requires GOOGLE_API_KEY"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_ta_provider_keys(self) -> "Settings":
+        """Ensure the required API key is present when TA_AI_PROVIDER is set."""
+        if self.TA_AI_PROVIDER == "claude" and not self.ANTHROPIC_API_KEY:
+            raise ValueError(
+                "TA_AI_PROVIDER='claude' requires ANTHROPIC_API_KEY"
+            )
+        if self.TA_AI_PROVIDER == "gemini" and not self.GOOGLE_API_KEY:
+            raise ValueError(
+                "TA_AI_PROVIDER='gemini' requires GOOGLE_API_KEY"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _coerce_claude_settings(self) -> "Settings":
         """Force legacy pipeline mode and higher DPI when using Claude."""
         if self.AI_PROVIDER == "claude":
             if self.PIPELINE_MODE == "native_pdf":
                 object.__setattr__(self, "PIPELINE_MODE", "legacy")
             object.__setattr__(self, "EXAMINER_RENDER_DPI", self.CLAUDE_EXAMINER_RENDER_DPI)
+        return self
+
+    @model_validator(mode="after")
+    def _coerce_hybrid_settings(self) -> "Settings":
+        """Force native_pdf pipeline mode for hybrid (Gemini handles vision pass)."""
+        if self.AI_PROVIDER == "hybrid":
+            if self.PIPELINE_MODE != "native_pdf":
+                object.__setattr__(self, "PIPELINE_MODE", "native_pdf")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_hybrid_keys(self) -> "Settings":
+        """Hybrid mode requires both Google and Anthropic API keys."""
+        if self.AI_PROVIDER == "hybrid":
+            if not self.GOOGLE_API_KEY:
+                raise ValueError(
+                    "AI_PROVIDER='hybrid' requires GOOGLE_API_KEY "
+                    "(Gemini handles the vision/OCR pass)"
+                )
+            if not self.ANTHROPIC_API_KEY:
+                raise ValueError(
+                    "AI_PROVIDER='hybrid' requires ANTHROPIC_API_KEY "
+                    "(Claude handles the extraction pass)"
+                )
         return self
 
 

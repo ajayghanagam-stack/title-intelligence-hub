@@ -56,6 +56,12 @@ PARSER_TOOL = {
 
 
 class DocumentParserAgent(BaseAIService):
+    def __init__(self, org_id: uuid.UUID):
+        from app.config import get_settings
+        settings = get_settings()
+        provider_override = settings.TA_AI_PROVIDER or None
+        super().__init__(org_id, provider_override=provider_override)
+
     async def parse(self, raw_content: str) -> dict:
         """Parse raw document content into structured fields."""
         result = await self.call_haiku_structured(

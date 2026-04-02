@@ -135,6 +135,22 @@ def _make_mock_storage():
     return storage
 
 
+def _make_mock_agent(mock_consolidated):
+    """Create a mock TitleExaminerAgent with proper batch config."""
+    mock_agent = MagicMock()
+    mock_agent.examine_document = AsyncMock(return_value=mock_consolidated)
+    mock_agent._get_batch_config = MagicMock(return_value={
+        "batch_size_image": 8,
+        "batch_size_text": 25,
+        "concurrency": 8,
+        "stagger_ms": 100,
+        "rpm": 50,
+    })
+    mock_agent._ensure_context_cache = AsyncMock(return_value=None)
+    mock_agent.JSON_SCHEMA = {}
+    return mock_agent
+
+
 def _stage_examine_patches():
     """Return a stack of patches needed for stage_examine tests."""
     return [
@@ -157,8 +173,7 @@ async def test_stage_examine_creates_records(db_session: AsyncSession, pack_with
     mock_storage = _make_mock_storage()
     mock_consolidated = _make_mock_consolidated()
 
-    mock_agent_instance = MagicMock()
-    mock_agent_instance.examine_document = AsyncMock(return_value=mock_consolidated)
+    mock_agent_instance = _make_mock_agent(mock_consolidated)
 
     patches = _stage_examine_patches() + [
         patch(
@@ -302,8 +317,7 @@ async def test_stage_examine_idempotent(db_session: AsyncSession, pack_with_page
     mock_storage = _make_mock_storage()
     mock_consolidated = _make_mock_consolidated()
 
-    mock_agent_instance = MagicMock()
-    mock_agent_instance.examine_document = AsyncMock(return_value=mock_consolidated)
+    mock_agent_instance = _make_mock_agent(mock_consolidated)
 
     patches = _stage_examine_patches() + [
         patch(
@@ -374,8 +388,7 @@ async def test_stage_examine_normalizes_flags(db_session: AsyncSession, pack_wit
 
     mock_storage = _make_mock_storage()
 
-    mock_agent_instance = MagicMock()
-    mock_agent_instance.examine_document = AsyncMock(return_value=mock_consolidated)
+    mock_agent_instance = _make_mock_agent(mock_consolidated)
 
     patches = _stage_examine_patches() + [
         patch(
@@ -410,8 +423,7 @@ async def test_stage_examine_clears_progress(db_session: AsyncSession, pack_with
     mock_storage = _make_mock_storage()
     mock_consolidated = _make_mock_consolidated()
 
-    mock_agent_instance = MagicMock()
-    mock_agent_instance.examine_document = AsyncMock(return_value=mock_consolidated)
+    mock_agent_instance = _make_mock_agent(mock_consolidated)
 
     patches = _stage_examine_patches() + [
         patch(

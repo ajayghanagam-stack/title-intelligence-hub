@@ -5,20 +5,20 @@ import { useParams } from "next/navigation";
 import { useOrg } from "@/hooks/use-org";
 import { usePipelineStatus } from "@/hooks/use-pipeline-status";
 import { FlagsTable } from "@/components/title-intelligence/flags-table";
-import { ChatSlidePanel } from "@/components/title-intelligence/chat-slide-panel";
 import { PipelineProgress } from "@/components/title-intelligence/pipeline-progress";
 import {
   Download,
   RefreshCw,
-  Send,
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/components/ui/toast";
 import { PAGE_SIZE } from "@/components/title-intelligence/flags-table";
-import type { Flag, FlagListResponse, Extraction, ReviewDecision, Pack } from "@/lib/ti-types";
+import { SEVERITY_DISPLAY_NAMES, SEVERITY_BG_COLORS, SEVERITY_TEXT_COLORS } from "@/lib/ti-constants";
+import { ScheduleBSection, ScheduleCSection, WarningsSection, ChecklistSection } from "@/components/title-intelligence/report-sections";
+import type { Flag, FlagListResponse, Extraction, ReviewDecision, Pack, ReportData } from "@/lib/ti-types";
 
-type SeverityFilter = "all" | "critical" | "warning" | "review";
+type SeverityFilter = "all" | "critical" | "high" | "medium" | "low";
 
 function extractValue(ext: Extraction): string {
   const v = ext.value;
@@ -48,6 +48,8 @@ function findExtraction(extractions: Extraction[], type: string, ...labelPattern
   return "";
 }
 
+const SEVERITY_ORDER = ["critical", "high", "medium", "low"] as const;
+
 export default function ResultsPage() {
   const params = useParams();
   const packId = params.packId as string;
@@ -64,11 +66,9 @@ export default function ResultsPage() {
   const [flagsLoading, setFlagsLoading] = useState(true);
   const [flagsRefetching, setFlagsRefetching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [showChat, setShowChat] = useState(false);
-  const [chatInitialQuestion, setChatInitialQuestion] = useState<string>("");
-  const [inlineQuestion, setInlineQuestion] = useState("");
   const [reanalyzing, setReanalyzing] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [reportData, setReportData] = useState<ReportData | null>(null);
   const { showToast } = useToast();
 
   const isProcessing = pack?.status === "processing";
@@ -91,7 +91,7 @@ export default function ResultsPage() {
       setFlagCounts(data.counts);
       setFlagTotal(data.total);
     } catch { setFlags([]); setFlagCounts({}); setFlagTotal(0); showToast("error", "Failed to load flags"); }
-    finally { 
+    finally {
       setFlagsLoading(false);
       setFlagsRefetching(false);
     }
@@ -102,6 +102,13 @@ export default function ResultsPage() {
       const data = await orgFetch<Extraction[]>(`/api/v1/apps/title-intelligence/packs/${packId}/extractions`);
       setExtractions(data);
     } catch { setExtractions([]); }
+  }, [orgFetch, packId]);
+
+  const fetchReportData = useCallback(async () => {
+    try {
+      const data = await orgFetch<ReportData>(`/api/v1/apps/title-intelligence/packs/${packId}/report-data`);
+      setReportData(data);
+    } catch { setReportData(null); }
   }, [orgFetch, packId]);
 
   const fetchPack = useCallback(async () => {
@@ -118,7 +125,6 @@ export default function ResultsPage() {
     try {
       await orgFetch<unknown>(`/api/v1/apps/title-intelligence/packs/${packId}/process`, { method: "POST" });
       showToast("success", "Re-analysis started");
-      // Set pack status locally so pipeline progress UI appears immediately
       setPack((prev) => prev ? { ...prev, status: "processing" as Pack["status"] } : prev);
       fetchPack();
     } catch {
@@ -151,18 +157,12 @@ export default function ResultsPage() {
     }
   };
 
-  const handleInlineAsk = () => {
-    if (!inlineQuestion.trim()) return;
-    setChatInitialQuestion(inlineQuestion.trim());
-    setInlineQuestion("");
-    setShowChat(true);
-  };
-
   useEffect(() => {
     fetchFlags();
     fetchExtractions();
     fetchPack();
-  }, [fetchFlags, fetchExtractions, fetchPack]);
+    fetchReportData();
+  }, [fetchFlags, fetchExtractions, fetchPack, fetchReportData]);
 
   // Poll pack data while processing to detect completion
   useEffect(() => {
@@ -179,9 +179,10 @@ export default function ResultsPage() {
       setFlagPage(1);
       fetchFlags(1, "all");
       fetchExtractions();
+      fetchReportData();
     }
     prevStatusRef.current = pack?.status;
-  }, [pack?.status, fetchFlags, fetchExtractions]);
+  }, [pack?.status, fetchFlags, fetchExtractions, fetchReportData]);
 
   const handleSeverityFilter = (filter: SeverityFilter) => {
     setSeverityFilter(filter);
@@ -201,7 +202,6 @@ export default function ResultsPage() {
         method: "POST",
         body: JSON.stringify({ decision, reason_code: reasonCode, notes }),
       });
-      // Sync review notes to the flag's note field so the line-item column stays updated
       if (notes) {
         await orgFetch<unknown>(`/api/v1/apps/title-intelligence/packs/${packId}/flags/${flagId}/note`, {
           method: "PATCH",
@@ -209,6 +209,7 @@ export default function ResultsPage() {
         });
       }
       fetchFlags(flagPage, severityFilter);
+      fetchReportData();
     } catch (error) {
       showToast("error", error instanceof Error ? error.message : "Failed to submit review");
     } finally {
@@ -221,7 +222,6 @@ export default function ResultsPage() {
       method: "PATCH",
       body: JSON.stringify({ note }),
     });
-    // Update local state so dialog sees the latest note
     setFlags((prev) => prev.map((f) => (f.id === flagId ? { ...f, note: note ?? null } : f)));
   }, [orgFetch, packId]);
 
@@ -238,9 +238,9 @@ export default function ResultsPage() {
   // Counts from server (unfiltered, full severity breakdown)
   const totalFlagCount = Object.values(flagCounts).reduce((a, b) => a + b, 0);
   const criticalCount = flagCounts["critical"] || 0;
-  const warningCount = (flagCounts["high"] || 0) + (flagCounts["medium"] || 0);
-  const reviewCount = flagCounts["low"] || 0;
-
+  const highCount = flagCounts["high"] || 0;
+  const mediumCount = flagCounts["medium"] || 0;
+  const lowCount = flagCounts["low"] || 0;
   const analyzedAt = pack?.status === "completed" && pack?.updated_at
     ? new Date(pack.updated_at).toLocaleString("en-US", { month: "numeric", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
     : null;
@@ -248,8 +248,9 @@ export default function ResultsPage() {
   const severityTabs: { key: SeverityFilter; label: string; count: number }[] = [
     { key: "all", label: "All", count: totalFlagCount },
     { key: "critical", label: "Critical", count: criticalCount },
-    { key: "warning", label: "Warning", count: warningCount },
-    { key: "review", label: "Review", count: reviewCount },
+    { key: "high", label: "High", count: highCount },
+    { key: "medium", label: "Moderate", count: mediumCount },
+    { key: "low", label: "Standard", count: lowCount },
   ];
 
   return (
@@ -257,10 +258,10 @@ export default function ResultsPage() {
       {/* ── Header ── */}
       <div className="flex items-start justify-between gap-6">
         <div className="min-w-0">
-          <h1 className="text-xl font-bold tracking-tight text-foreground">{displayTitle}</h1>
+          <h1 className="text-xl font-bold tracking-tight text-brand-charcoal">{displayTitle}</h1>
           <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-0.5 text-[13px] text-muted-foreground">
-            {orderNumber && <span>Order No: {orderNumber}</span>}
-            {commitmentDate && <span>Commitment Date: {commitmentDate}</span>}
+            {orderNumber && <span>Commitment No: {orderNumber}</span>}
+            {commitmentDate && <span>Effective Date: {commitmentDate}</span>}
             {issuedBy && <span>Issued by: {issuedBy}</span>}
           </div>
         </div>
@@ -302,65 +303,53 @@ export default function ResultsPage() {
         </div>
       )}
 
-      {/* ── Summary Cards ── */}
+      {/* ── Examiner's Risk Summary — 4 severity boxes ── */}
       {!flagsLoading && (
-        <div className="grid grid-cols-3 gap-3">
-          {[
-            { value: criticalCount, label: "Critical Issues", sub: "Require immediate resolution", color: "border-l-red-500", text: "text-red-600" },
-            { value: warningCount, label: "Warnings", sub: "Require attention before closing", color: "border-l-amber-500", text: "text-amber-600" },
-            { value: reviewCount, label: "Under Review", sub: "Examiner judgment required", color: "border-l-blue-500", text: "text-blue-600" },
-          ].map((card) => (
-            <div key={card.label} className={cn("rounded-lg border bg-card p-4 border-l-4", card.color)}>
-              <p className={cn("text-2xl font-bold", card.text)}>{card.value}</p>
-              <p className="text-xs font-medium text-foreground/80 mt-0.5">{card.label}</p>
-              <p className="text-[10px] text-muted-foreground">{card.sub}</p>
-            </div>
-          ))}
+        <div className="grid grid-cols-4 gap-3">
+          {SEVERITY_ORDER.map((sev) => {
+            const count = flagCounts[sev] || 0;
+            const textColor = SEVERITY_TEXT_COLORS[sev] || "text-foreground";
+            return (
+              <div
+                key={sev}
+                className={cn(
+                  "rounded-lg p-4 text-center transition-all hover:shadow-md",
+                  SEVERITY_BG_COLORS[sev]
+                )}
+              >
+                <p className={cn("text-sm font-bold tracking-wide", textColor)}>{SEVERITY_DISPLAY_NAMES[sev]}</p>
+                <p className={cn("text-2xl font-extrabold mt-1", textColor)}>{count}</p>
+                <p className={cn("text-xs mt-0.5 opacity-70", textColor)}>item{count !== 1 ? "s" : ""}</p>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {/* ── Summary sentence ── */}
-      {!flagsLoading && (
+      {/* ── Risk narrative ── */}
+      {!flagsLoading && totalFlagCount > 0 && (
         <p className="text-[13px] text-muted-foreground leading-relaxed">
-          This package contains {criticalCount} critical issue{criticalCount !== 1 ? "s" : ""} requiring resolution before closing and {warningCount} warning{warningCount !== 1 ? "s" : ""} to address.
+          This package contains <span className="font-semibold text-foreground">{totalFlagCount} open item{totalFlagCount !== 1 ? "s" : ""}</span> requiring attention.
+          {criticalCount > 0 && (
+            <> <span className="font-semibold text-red-700">{criticalCount} critical issue{criticalCount !== 1 ? "s" : ""}</span> must be resolved before closing.</>
+          )}
+          {highCount > 0 && (
+            <> {criticalCount > 0 ? "Additionally, " : ""}<span className="font-semibold text-amber-700">{highCount} high-priority item{highCount !== 1 ? "s" : ""}</span> require attention.</>
+          )}
         </p>
       )}
-
-      {/* ── Ask a Question ── */}
-      <div className="rounded-lg border bg-card px-4 py-3">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Ask a Question</p>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={inlineQuestion}
-            onChange={(e) => setInlineQuestion(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleInlineAsk()}
-            placeholder="Ask a question about this package..."
-            className="flex-1 h-9 rounded-md border bg-background px-3 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-brand-amber/30 transition-shadow"
-          />
-          <button
-            onClick={handleInlineAsk}
-            disabled={!inlineQuestion.trim()}
-            className="btn-cta h-9 px-4 text-xs gap-1.5"
-          >
-            <Send className="h-3.5 w-3.5" />
-            Ask
-          </button>
-        </div>
-      </div>
 
       {/* ── Exceptions & Required Actions — contained section ── */}
       <div className="rounded-xl border bg-card overflow-hidden">
         {/* Section header */}
-        <div className="px-5 pt-5 pb-3">
-          <h2 className="text-base font-bold tracking-tight text-foreground">Exceptions & Required Actions</h2>
-          <p className="text-[13px] text-muted-foreground mt-0.5">Issues identified requiring resolution prior to closing</p>
+        <div className="bg-amber-50 border-b border-amber-200 px-5 py-3">
+          <h2 className="text-base font-bold tracking-tight text-amber-900">Exceptions & Required Actions</h2>
+          <p className="text-[13px] text-amber-700/70 mt-0.5">Issues identified requiring resolution prior to closing</p>
         </div>
 
         {/* Filter tabs */}
         {!flagsLoading && (
           <div className="px-5 border-b space-y-0">
-            {/* Severity filter row */}
             <div className="flex items-center gap-0.5">
               {severityTabs.map((tab) => (
                 <button
@@ -375,7 +364,7 @@ export default function ResultsPage() {
                 >
                   {tab.label} ({tab.count})
                   {severityFilter === tab.key && (
-                    <span className="absolute bottom-0 inset-x-1 h-[2px] bg-brand-amber rounded-t" />
+                    <span className="absolute bottom-0 inset-x-1 h-[2px] bg-amber-400 rounded-t" />
                   )}
                 </button>
               ))}
@@ -387,7 +376,7 @@ export default function ResultsPage() {
         {!flagsLoading && flagTotal > 0 && (
           <div className="px-5 py-2.5 bg-muted/20 border-b">
             <p className="text-[12px] text-muted-foreground">
-              {totalFlagCount} issue{totalFlagCount !== 1 ? "s" : ""} found &mdash; {criticalCount + warningCount} require action before closing
+              {totalFlagCount} issue{totalFlagCount !== 1 ? "s" : ""} found &mdash; {criticalCount + highCount} require action before closing
             </p>
           </div>
         )}
@@ -416,13 +405,16 @@ export default function ResultsPage() {
         </div>
       </div>
 
-      {/* Chat Slide Panel */}
-      <ChatSlidePanel
-        packId={packId}
-        open={showChat}
-        onClose={() => { setShowChat(false); setChatInitialQuestion(""); }}
-        initialQuestion={chatInitialQuestion}
-      />
+      {/* ── Report Sections ── */}
+      {reportData && (
+        <>
+          <ScheduleBSection data={reportData} />
+          <ScheduleCSection data={reportData} />
+          <WarningsSection data={reportData} />
+          <ChecklistSection data={reportData} />
+        </>
+      )}
+
     </div>
   );
 }
