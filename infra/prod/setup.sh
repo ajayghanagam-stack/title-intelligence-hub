@@ -3,12 +3,17 @@ set -euo pipefail
 export AWS_PAGER=""
 
 # ============================================================================
-# Title Intelligence Hub — AWS Infrastructure Setup
-# One-time script to create all AWS resources for ECS Fargate deployment.
+# Title Intelligence Hub — Full Infrastructure Setup (Production)
+# Creates all AWS resources: S3, RDS, EC2, security groups, IAM, SSM secrets.
+# Idempotent — safe to re-run (skips existing resources).
 # ============================================================================
 
 PREFIX="ti-hub-prod"
 REGION="us-east-1"
+INSTANCE_TYPE="t4g.xlarge"   # 4 vCPU, 16 GB RAM (ARM64)
+KEY_NAME="${PREFIX}-key"
+KEY_FILE="$HOME/.ssh/${KEY_NAME}.pem"
+VOLUME_SIZE=30               # GB, gp3
 DB_NAME="title_intelligence_hub"
 DB_USER="tihubadmin"
 DB_INSTANCE_CLASS="db.t4g.large"
@@ -32,6 +37,7 @@ command -v jq  >/dev/null 2>&1 || { err "jq not found. Install: brew install jq"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 log "AWS Account: $ACCOUNT_ID"
 log "Region: $REGION"
+log "Prefix: $PREFIX"
 
 # ── Auto-discover default VPC & subnets ─────────────────────────────────────
 VPC_ID=$(aws ec2 describe-vpcs --region "$REGION" \
@@ -45,40 +51,17 @@ fi
 log "VPC: $VPC_ID"
 
 SUBNET_IDS=$(aws ec2 describe-subnets --region "$REGION" \
-  --filters "Name=vpc-id,Values=$VPC_ID" \
+  --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" \
   --query "Subnets[*].SubnetId" --output text)
 SUBNET_ARRAY=($SUBNET_IDS)
 
 if [ ${#SUBNET_ARRAY[@]} -lt 2 ]; then
-  err "Need at least 2 subnets for ALB. Found ${#SUBNET_ARRAY[@]}."
+  err "Need at least 2 subnets for RDS. Found ${#SUBNET_ARRAY[@]}."
   exit 1
 fi
 log "Subnets: ${SUBNET_ARRAY[*]}"
 
-# Comma and JSON formats
-SUBNETS_CSV=$(IFS=,; echo "${SUBNET_ARRAY[*]}")
-SUBNETS_JSON=$(printf '%s\n' "${SUBNET_ARRAY[@]}" | jq -R . | jq -s .)
-
-# ── 1. ECR Repositories ────────────────────────────────────────────────────
-create_ecr_repo() {
-  local name="$1"
-  if aws ecr describe-repositories --region "$REGION" --repository-names "$name" >/dev/null 2>&1; then
-    info "ECR repo '$name' already exists"
-  else
-    aws ecr create-repository --region "$REGION" --repository-name "$name" \
-      --image-scanning-configuration scanOnPush=true \
-      --encryption-configuration encryptionType=AES256 >/dev/null
-    log "Created ECR repo: $name"
-  fi
-}
-
-create_ecr_repo "${PREFIX}-backend"
-create_ecr_repo "${PREFIX}-frontend"
-
-ECR_BACKEND="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${PREFIX}-backend"
-ECR_FRONTEND="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${PREFIX}-frontend"
-
-# ── 2. S3 Bucket ───────────────────────────────────────────────────────────
+# ── 1. S3 Bucket ──────────────────────────────────────────────────────────
 S3_BUCKET="${PREFIX}-storage-${ACCOUNT_ID}"
 
 if aws s3api head-bucket --bucket "$S3_BUCKET" 2>/dev/null; then
@@ -94,7 +77,7 @@ else
   log "Created S3 bucket: $S3_BUCKET (public access blocked, encrypted)"
 fi
 
-# ── 3. Security Groups ─────────────────────────────────────────────────────
+# ── 2. Security Groups ───────────────────────────────────────────────────
 create_sg() {
   local name="$1" desc="$2"
   local sg_id
@@ -113,33 +96,25 @@ create_sg() {
   echo "$sg_id"
 }
 
-SG_ALB=$(create_sg "${PREFIX}-alb-sg" "ALB - HTTP/HTTPS from internet")
-SG_ECS=$(create_sg "${PREFIX}-ecs-sg" "ECS tasks - traffic from ALB only")
-SG_RDS=$(create_sg "${PREFIX}-rds-sg" "RDS - traffic from ECS only")
+SG_EC2=$(create_sg "${PREFIX}-ec2-sg" "EC2 instance - SSH, HTTP, HTTPS")
+SG_RDS=$(create_sg "${PREFIX}-rds-sg" "RDS - traffic from EC2 only")
 
-# ALB SG rules: allow 80 and 443 from anywhere
-add_ingress() {
-  local sg="$1" port="$2" source="$3" desc="$4"
-  aws ec2 authorize-security-group-ingress --region "$REGION" \
-    --group-id "$sg" --protocol tcp --port "$port" --cidr "$source" \
-    --tag-specifications "ResourceType=security-group-rule,Tags=[{Key=Description,Value=$desc}]" \
-    2>/dev/null || true
-}
+# EC2 SG rules
+aws ec2 authorize-security-group-ingress --region "$REGION" \
+  --group-id "$SG_EC2" --protocol tcp --port 22 --cidr "0.0.0.0/0" 2>/dev/null || true
+aws ec2 authorize-security-group-ingress --region "$REGION" \
+  --group-id "$SG_EC2" --protocol tcp --port 80 --cidr "0.0.0.0/0" 2>/dev/null || true
+aws ec2 authorize-security-group-ingress --region "$REGION" \
+  --group-id "$SG_EC2" --protocol tcp --port 443 --cidr "0.0.0.0/0" 2>/dev/null || true
 
-add_ingress_sg() {
-  local sg="$1" port="$2" source_sg="$3"
-  aws ec2 authorize-security-group-ingress --region "$REGION" \
-    --group-id "$sg" --protocol tcp --port "$port" \
-    --source-group "$source_sg" 2>/dev/null || true
-}
+# RDS SG rule: allow EC2 → PostgreSQL
+aws ec2 authorize-security-group-ingress --region "$REGION" \
+  --group-id "$SG_RDS" --protocol tcp --port 5432 \
+  --source-group "$SG_EC2" 2>/dev/null || true
 
-add_ingress "$SG_ALB" 80 "0.0.0.0/0" "HTTP"
-add_ingress "$SG_ALB" 443 "0.0.0.0/0" "HTTPS"
-add_ingress_sg "$SG_ECS" 8000 "$SG_ALB"   # backend
-add_ingress_sg "$SG_ECS" 3000 "$SG_ALB"   # frontend
-add_ingress_sg "$SG_RDS" 5432 "$SG_ECS"   # postgres from ECS
+log "Security group rules configured"
 
-# ── 4. RDS PostgreSQL ──────────────────────────────────────────────────────
+# ── 3. RDS PostgreSQL ─────────────────────────────────────────────────────
 DB_INSTANCE_ID="${PREFIX}-db"
 RDS_ENDPOINT=""
 
@@ -150,7 +125,6 @@ if aws rds describe-db-instances --region "$REGION" \
     --db-instance-identifier "$DB_INSTANCE_ID" \
     --query "DBInstances[0].Endpoint.Address" --output text)
 else
-  # Generate random password
   DB_PASSWORD=$(openssl rand -hex 16)
 
   # Create DB subnet group
@@ -185,33 +159,44 @@ else
     --db-instance-identifier "$DB_INSTANCE_ID" \
     --query "DBInstances[0].Endpoint.Address" --output text)
 
-  # Store DB password in SSM
+  # Store secrets in SSM
   aws ssm put-parameter --region "$REGION" \
     --name "/${PREFIX}/db-password" \
     --type SecureString \
     --value "$DB_PASSWORD" \
     --overwrite >/dev/null
-  log "Stored DB password in SSM: /${PREFIX}/db-password"
-fi
+  log "Stored DB password in SSM"
 
-log "RDS endpoint: $RDS_ENDPOINT"
-
-# Construct DATABASE_URL and store in SSM
-DB_PASSWORD_SSM=$(aws ssm get-parameter --region "$REGION" \
-  --name "/${PREFIX}/db-password" --with-decryption \
-  --query "Parameter.Value" --output text 2>/dev/null || echo "")
-
-if [ -n "$DB_PASSWORD_SSM" ]; then
-  DATABASE_URL="postgresql+asyncpg://${DB_USER}:${DB_PASSWORD_SSM}@${RDS_ENDPOINT}:5432/${DB_NAME}"
+  DATABASE_URL="postgresql+asyncpg://${DB_USER}:${DB_PASSWORD}@${RDS_ENDPOINT}:5432/${DB_NAME}"
   aws ssm put-parameter --region "$REGION" \
     --name "/${PREFIX}/database-url" \
     --type SecureString \
     --value "$DATABASE_URL" \
     --overwrite >/dev/null
-  log "Stored DATABASE_URL in SSM: /${PREFIX}/database-url"
+  log "Stored DATABASE_URL in SSM"
 fi
 
-# ── 5. JWT Secret ──────────────────────────────────────────────────────────
+log "RDS endpoint: $RDS_ENDPOINT"
+
+# Ensure DATABASE_URL is in SSM (even if RDS already existed)
+if ! aws ssm get-parameter --region "$REGION" --name "/${PREFIX}/database-url" >/dev/null 2>&1; then
+  DB_PASSWORD_SSM=$(aws ssm get-parameter --region "$REGION" \
+    --name "/${PREFIX}/db-password" --with-decryption \
+    --query "Parameter.Value" --output text 2>/dev/null || echo "")
+  if [ -n "$DB_PASSWORD_SSM" ]; then
+    DATABASE_URL="postgresql+asyncpg://${DB_USER}:${DB_PASSWORD_SSM}@${RDS_ENDPOINT}:5432/${DB_NAME}"
+    aws ssm put-parameter --region "$REGION" \
+      --name "/${PREFIX}/database-url" \
+      --type SecureString \
+      --value "$DATABASE_URL" \
+      --overwrite >/dev/null
+    log "Reconstructed and stored DATABASE_URL in SSM"
+  else
+    warn "Cannot reconstruct DATABASE_URL — DB password not in SSM. You'll need to reset the RDS password."
+  fi
+fi
+
+# ── 4. JWT Secret ─────────────────────────────────────────────────────────
 if aws ssm get-parameter --region "$REGION" --name "/${PREFIX}/jwt-secret" >/dev/null 2>&1; then
   info "JWT secret already exists in SSM"
 else
@@ -221,75 +206,42 @@ else
     --type SecureString \
     --value "$JWT_SECRET" \
     --overwrite >/dev/null
-  log "Generated and stored JWT secret in SSM: /${PREFIX}/jwt-secret"
+  log "Generated and stored JWT secret in SSM"
 fi
 
-# ── 6. CloudWatch Log Groups ───────────────────────────────────────────────
-for svc in backend frontend; do
-  LOG_GROUP="/ecs/${PREFIX}-${svc}"
-  if aws logs describe-log-groups --region "$REGION" \
-    --log-group-name-prefix "$LOG_GROUP" \
-    --query "logGroups[?logGroupName=='$LOG_GROUP']" --output text | grep -q "$LOG_GROUP"; then
-    info "Log group '$LOG_GROUP' already exists"
-  else
-    aws logs create-log-group --region "$REGION" --log-group-name "$LOG_GROUP" >/dev/null
-    aws logs put-retention-policy --region "$REGION" \
-      --log-group-name "$LOG_GROUP" --retention-in-days 30 >/dev/null
-    log "Created log group: $LOG_GROUP (30-day retention)"
+# ── 5. SSH Key Pair ───────────────────────────────────────────────────────
+if aws ec2 describe-key-pairs --region "$REGION" --key-names "$KEY_NAME" >/dev/null 2>&1; then
+  info "Key pair '$KEY_NAME' already exists"
+  if [ ! -f "$KEY_FILE" ]; then
+    warn "Key file not found at $KEY_FILE — you may need to use an existing copy"
   fi
-done
-
-# ── 7. IAM Roles ───────────────────────────────────────────────────────────
-TASK_EXEC_ROLE="${PREFIX}-task-execution-role"
-TASK_ROLE="${PREFIX}-task-role"
-
-# Task Execution Role (ECR pull + SSM read + CloudWatch logs)
-if aws iam get-role --role-name "$TASK_EXEC_ROLE" >/dev/null 2>&1; then
-  info "IAM role '$TASK_EXEC_ROLE' already exists"
 else
-  aws iam create-role --role-name "$TASK_EXEC_ROLE" \
-    --assume-role-policy-document '{
-      "Version": "2012-10-17",
-      "Statement": [{
-        "Effect": "Allow",
-        "Principal": {"Service": "ecs-tasks.amazonaws.com"},
-        "Action": "sts:AssumeRole"
-      }]
-    }' >/dev/null
-  aws iam attach-role-policy --role-name "$TASK_EXEC_ROLE" \
-    --policy-arn "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-
-  # SSM read access for secrets
-  aws iam put-role-policy --role-name "$TASK_EXEC_ROLE" \
-    --policy-name "${PREFIX}-ssm-read" \
-    --policy-document "{
-      \"Version\": \"2012-10-17\",
-      \"Statement\": [{
-        \"Effect\": \"Allow\",
-        \"Action\": [\"ssm:GetParameters\", \"ssm:GetParameter\"],
-        \"Resource\": \"arn:aws:ssm:${REGION}:${ACCOUNT_ID}:parameter/${PREFIX}/*\"
-      }]
-    }"
-  log "Created IAM role: $TASK_EXEC_ROLE"
+  log "Creating SSH key pair: $KEY_NAME"
+  aws ec2 create-key-pair --region "$REGION" --key-name "$KEY_NAME" \
+    --key-type ed25519 \
+    --query "KeyMaterial" --output text > "$KEY_FILE"
+  chmod 400 "$KEY_FILE"
+  log "Saved private key to $KEY_FILE"
 fi
 
-TASK_EXEC_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${TASK_EXEC_ROLE}"
+# ── 6. IAM Instance Profile ──────────────────────────────────────────────
+EC2_ROLE="${PREFIX}-ec2-role"
+INSTANCE_PROFILE="${PREFIX}-ec2-profile"
 
-# Task Role (S3 access for file storage)
-if aws iam get-role --role-name "$TASK_ROLE" >/dev/null 2>&1; then
-  info "IAM role '$TASK_ROLE' already exists"
+if aws iam get-role --role-name "$EC2_ROLE" >/dev/null 2>&1; then
+  info "IAM role '$EC2_ROLE' already exists"
 else
-  aws iam create-role --role-name "$TASK_ROLE" \
+  aws iam create-role --role-name "$EC2_ROLE" \
     --assume-role-policy-document '{
       "Version": "2012-10-17",
       "Statement": [{
         "Effect": "Allow",
-        "Principal": {"Service": "ecs-tasks.amazonaws.com"},
+        "Principal": {"Service": "ec2.amazonaws.com"},
         "Action": "sts:AssumeRole"
       }]
     }' >/dev/null
 
-  aws iam put-role-policy --role-name "$TASK_ROLE" \
+  aws iam put-role-policy --role-name "$EC2_ROLE" \
     --policy-name "${PREFIX}-s3-access" \
     --policy-document "{
       \"Version\": \"2012-10-17\",
@@ -302,232 +254,171 @@ else
         ]
       }]
     }"
-  log "Created IAM role: $TASK_ROLE"
+
+  aws iam put-role-policy --role-name "$EC2_ROLE" \
+    --policy-name "${PREFIX}-ssm-read" \
+    --policy-document "{
+      \"Version\": \"2012-10-17\",
+      \"Statement\": [{
+        \"Effect\": \"Allow\",
+        \"Action\": [\"ssm:GetParameters\", \"ssm:GetParameter\"],
+        \"Resource\": \"arn:aws:ssm:${REGION}:${ACCOUNT_ID}:parameter/${PREFIX}/*\"
+      }]
+    }"
+
+  log "Created IAM role: $EC2_ROLE (S3 + SSM access)"
 fi
 
-TASK_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${TASK_ROLE}"
-
-# ── 8. ALB ─────────────────────────────────────────────────────────────────
-ALB_NAME="${PREFIX}-alb"
-ALB_ARN=""
-
-if aws elbv2 describe-load-balancers --region "$REGION" --names "$ALB_NAME" >/dev/null 2>&1; then
-  info "ALB '$ALB_NAME' already exists"
-  ALB_ARN=$(aws elbv2 describe-load-balancers --region "$REGION" --names "$ALB_NAME" \
-    --query "LoadBalancers[0].LoadBalancerArn" --output text)
+if aws iam get-instance-profile --instance-profile-name "$INSTANCE_PROFILE" >/dev/null 2>&1; then
+  info "Instance profile '$INSTANCE_PROFILE' already exists"
 else
-  ALB_ARN=$(aws elbv2 create-load-balancer --region "$REGION" \
-    --name "$ALB_NAME" \
-    --subnets ${SUBNET_ARRAY[*]} \
-    --security-groups "$SG_ALB" \
-    --scheme internet-facing \
-    --type application \
-    --query "LoadBalancers[0].LoadBalancerArn" --output text)
-  log "Created ALB: $ALB_NAME"
+  aws iam create-instance-profile --instance-profile-name "$INSTANCE_PROFILE" >/dev/null
+  aws iam add-role-to-instance-profile \
+    --instance-profile-name "$INSTANCE_PROFILE" \
+    --role-name "$EC2_ROLE"
+  log "Created instance profile: $INSTANCE_PROFILE"
+  log "Waiting for IAM propagation (15s)..."
+  sleep 15
 fi
 
-ALB_DNS=$(aws elbv2 describe-load-balancers --region "$REGION" --names "$ALB_NAME" \
-  --query "LoadBalancers[0].DNSName" --output text)
+# ── 7. Find latest Amazon Linux 2023 ARM64 AMI ───────────────────────────
+AMI_ID=$(aws ec2 describe-images --region "$REGION" \
+  --owners amazon \
+  --filters "Name=name,Values=al2023-ami-2023*-arm64" \
+            "Name=state,Values=available" \
+            "Name=architecture,Values=arm64" \
+  --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
 
-# Target Groups
-create_tg() {
-  local name="$1" port="$2" health_path="$3"
-  local tg_arn
-  tg_arn=$(aws elbv2 describe-target-groups --region "$REGION" --names "$name" \
-    --query "TargetGroups[0].TargetGroupArn" --output text 2>/dev/null)
-  if [ "$tg_arn" != "None" ] && [ -n "$tg_arn" ]; then
-    info "Target group '$name' already exists" >&2
-    echo "$tg_arn"
-    return
-  fi
-  tg_arn=$(aws elbv2 create-target-group --region "$REGION" \
-    --name "$name" \
-    --protocol HTTP --port "$port" \
-    --vpc-id "$VPC_ID" \
-    --target-type ip \
-    --health-check-protocol HTTP \
-    --health-check-path "$health_path" \
-    --health-check-interval-seconds 30 \
-    --healthy-threshold-count 2 \
-    --unhealthy-threshold-count 3 \
-    --matcher "HttpCode=200-399" \
-    --query "TargetGroups[0].TargetGroupArn" --output text)
-  log "Created target group: $name" >&2
-  echo "$tg_arn"
-}
-
-TG_BACKEND=$(create_tg "${PREFIX}-backend-tg" 8000 "/api/v1/health")
-TG_FRONTEND=$(create_tg "${PREFIX}-frontend-tg" 3000 "/")
-
-# Listener — default to frontend, /api/* to backend
-LISTENER_ARN=$(aws elbv2 describe-listeners --region "$REGION" \
-  --load-balancer-arn "$ALB_ARN" \
-  --query "Listeners[?Port==\`80\`].ListenerArn" --output text 2>/dev/null)
-
-if [ "$LISTENER_ARN" = "None" ] || [ -z "$LISTENER_ARN" ]; then
-  LISTENER_ARN=$(aws elbv2 create-listener --region "$REGION" \
-    --load-balancer-arn "$ALB_ARN" \
-    --protocol HTTP --port 80 \
-    --default-actions "Type=forward,TargetGroupArn=$TG_FRONTEND" \
-    --query "Listeners[0].ListenerArn" --output text)
-  log "Created HTTP listener"
+if [ -z "$AMI_ID" ] || [ "$AMI_ID" = "None" ]; then
+  err "Could not find Amazon Linux 2023 ARM64 AMI"
+  exit 1
 fi
+log "AMI: $AMI_ID (Amazon Linux 2023 ARM64)"
 
-# Add /api/* rule to route to backend
-EXISTING_RULES=$(aws elbv2 describe-rules --region "$REGION" \
-  --listener-arn "$LISTENER_ARN" \
-  --query "Rules[?Conditions[?Field=='path-pattern' && Values[0]=='/api/*']].RuleArn" \
-  --output text 2>/dev/null)
+# ── 8. User Data (cloud-init) ────────────────────────────────────────────
+USER_DATA=$(cat <<'USERDATA'
+#!/bin/bash
+set -e
 
-if [ "$EXISTING_RULES" = "None" ] || [ -z "$EXISTING_RULES" ]; then
-  aws elbv2 create-rule --region "$REGION" \
-    --listener-arn "$LISTENER_ARN" \
-    --priority 10 \
-    --conditions "Field=path-pattern,Values=/api/*" \
-    --actions "Type=forward,TargetGroupArn=$TG_BACKEND" >/dev/null
-  log "Created ALB rule: /api/* -> backend"
-fi
+# Install Docker
+dnf update -y
+dnf install -y docker git
+systemctl enable docker
+systemctl start docker
+usermod -aG docker ec2-user
 
-# ── 9. ECS Cluster ─────────────────────────────────────────────────────────
-CLUSTER_NAME="${PREFIX}-cluster"
+# Install Docker Compose plugin
+mkdir -p /usr/local/lib/docker/cli-plugins
+COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-aarch64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
-if aws ecs describe-clusters --region "$REGION" --clusters "$CLUSTER_NAME" \
-  --query "clusters[?status=='ACTIVE'].clusterName" --output text | grep -q "$CLUSTER_NAME"; then
-  info "ECS cluster '$CLUSTER_NAME' already exists"
+# Clone repository
+git clone git@github.com:ajayghanagam-stack/title-intelligence-hub.git /opt/ti-hub
+chown -R ec2-user:ec2-user /opt/ti-hub
+
+echo "Cloud-init complete" > /var/log/cloud-init-done
+USERDATA
+)
+
+# ── 9. Launch EC2 Instance ────────────────────────────────────────────────
+INSTANCE_NAME="${PREFIX}-server"
+
+EXISTING_INSTANCE=$(aws ec2 describe-instances --region "$REGION" \
+  --filters "Name=tag:Name,Values=$INSTANCE_NAME" \
+            "Name=instance-state-name,Values=running,pending,stopped" \
+  --query "Reservations[0].Instances[0].InstanceId" --output text 2>/dev/null)
+
+if [ "$EXISTING_INSTANCE" != "None" ] && [ -n "$EXISTING_INSTANCE" ]; then
+  info "EC2 instance '$INSTANCE_NAME' already exists: $EXISTING_INSTANCE"
+  INSTANCE_ID="$EXISTING_INSTANCE"
 else
-  aws ecs create-cluster --region "$REGION" --cluster-name "$CLUSTER_NAME" \
-    --setting "name=containerInsights,value=enabled" >/dev/null
-  log "Created ECS cluster: $CLUSTER_NAME"
+  INSTANCE_ID=$(aws ec2 run-instances --region "$REGION" \
+    --image-id "$AMI_ID" \
+    --instance-type "$INSTANCE_TYPE" \
+    --key-name "$KEY_NAME" \
+    --security-group-ids "$SG_EC2" \
+    --subnet-id "${SUBNET_ARRAY[0]}" \
+    --iam-instance-profile "Name=$INSTANCE_PROFILE" \
+    --block-device-mappings "[{\"DeviceName\":\"/dev/xvda\",\"Ebs\":{\"VolumeSize\":$VOLUME_SIZE,\"VolumeType\":\"gp3\",\"Encrypted\":true}}]" \
+    --user-data "$USER_DATA" \
+    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=Project,Value=$PREFIX}]" \
+    --query "Instances[0].InstanceId" --output text)
+  log "Launched EC2 instance: $INSTANCE_ID"
+
+  log "Waiting for instance to be running..."
+  aws ec2 wait instance-running --region "$REGION" --instance-ids "$INSTANCE_ID"
+  log "Instance is running"
 fi
 
-# ── 10. Register Task Definitions ──────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ── 10. Elastic IP ────────────────────────────────────────────────────────
+EXISTING_EIP=$(aws ec2 describe-addresses --region "$REGION" \
+  --filters "Name=instance-id,Values=$INSTANCE_ID" \
+  --query "Addresses[0].PublicIp" --output text 2>/dev/null)
 
-# Backend task definition
-BACKEND_TASK_DEF=$(cat "$SCRIPT_DIR/ecs-task-backend.json.tpl" \
-  | sed "s|{{ACCOUNT_ID}}|${ACCOUNT_ID}|g" \
-  | sed "s|{{REGION}}|${REGION}|g" \
-  | sed "s|{{PREFIX}}|${PREFIX}|g" \
-  | sed "s|{{ECR_BACKEND}}|${ECR_BACKEND}|g" \
-  | sed "s|{{S3_BUCKET}}|${S3_BUCKET}|g" \
-  | sed "s|{{TASK_EXEC_ROLE_ARN}}|${TASK_EXEC_ROLE_ARN}|g" \
-  | sed "s|{{TASK_ROLE_ARN}}|${TASK_ROLE_ARN}|g" \
-  | sed "s|{{ALB_DNS}}|${ALB_DNS}|g")
+if [ "$EXISTING_EIP" != "None" ] && [ -n "$EXISTING_EIP" ]; then
+  info "Elastic IP already associated: $EXISTING_EIP"
+  PUBLIC_IP="$EXISTING_EIP"
+else
+  ALLOC_ID=$(aws ec2 describe-addresses --region "$REGION" \
+    --filters "Name=tag:Project,Values=$PREFIX" \
+    --query "Addresses[?AssociationId==null].AllocationId" --output text 2>/dev/null | head -1)
 
-echo "$BACKEND_TASK_DEF" > /tmp/ti-hub-backend-task.json
-aws ecs register-task-definition --region "$REGION" \
-  --cli-input-json file:///tmp/ti-hub-backend-task.json >/dev/null
-log "Registered backend task definition"
-
-# Frontend task definition
-FRONTEND_TASK_DEF=$(cat "$SCRIPT_DIR/ecs-task-frontend.json.tpl" \
-  | sed "s|{{ACCOUNT_ID}}|${ACCOUNT_ID}|g" \
-  | sed "s|{{REGION}}|${REGION}|g" \
-  | sed "s|{{PREFIX}}|${PREFIX}|g" \
-  | sed "s|{{ECR_FRONTEND}}|${ECR_FRONTEND}|g" \
-  | sed "s|{{TASK_EXEC_ROLE_ARN}}|${TASK_EXEC_ROLE_ARN}|g" \
-  | sed "s|{{TASK_ROLE_ARN}}|${TASK_ROLE_ARN}|g" \
-  | sed "s|{{ALB_DNS}}|${ALB_DNS}|g")
-
-echo "$FRONTEND_TASK_DEF" > /tmp/ti-hub-frontend-task.json
-aws ecs register-task-definition --region "$REGION" \
-  --cli-input-json file:///tmp/ti-hub-frontend-task.json >/dev/null
-log "Registered frontend task definition"
-
-# ── 11. ECS Services ──────────────────────────────────────────────────────
-create_ecs_service() {
-  local name="$1" task_family="$2" tg_arn="$3" container_name="$4" container_port="$5"
-
-  if aws ecs describe-services --region "$REGION" --cluster "$CLUSTER_NAME" \
-    --services "$name" --query "services[?status=='ACTIVE'].serviceName" \
-    --output text 2>/dev/null | grep -q "$name"; then
-    info "ECS service '$name' already exists"
-    return
+  if [ -z "$ALLOC_ID" ] || [ "$ALLOC_ID" = "None" ]; then
+    ALLOC_ID=$(aws ec2 allocate-address --region "$REGION" \
+      --domain vpc \
+      --tag-specifications "ResourceType=elastic-ip,Tags=[{Key=Name,Value=${PREFIX}-eip},{Key=Project,Value=$PREFIX}]" \
+      --query "AllocationId" --output text)
+    log "Allocated Elastic IP"
   fi
 
-  aws ecs create-service --region "$REGION" \
-    --cluster "$CLUSTER_NAME" \
-    --service-name "$name" \
-    --task-definition "$task_family" \
-    --desired-count 1 \
-    --launch-type FARGATE \
-    --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS_CSV}],securityGroups=[${SG_ECS}],assignPublicIp=ENABLED}" \
-    --load-balancers "targetGroupArn=${tg_arn},containerName=${container_name},containerPort=${container_port}" \
-    --deployment-configuration "minimumHealthyPercent=100,maximumPercent=200" \
-    --enable-execute-command >/dev/null
-  log "Created ECS service: $name"
-}
+  aws ec2 associate-address --region "$REGION" \
+    --instance-id "$INSTANCE_ID" \
+    --allocation-id "$ALLOC_ID" >/dev/null
+  PUBLIC_IP=$(aws ec2 describe-addresses --region "$REGION" \
+    --allocation-ids "$ALLOC_ID" \
+    --query "Addresses[0].PublicIp" --output text)
+  log "Associated Elastic IP: $PUBLIC_IP"
+fi
 
-create_ecs_service "${PREFIX}-backend" "${PREFIX}-backend" "$TG_BACKEND" "backend" 8000
-create_ecs_service "${PREFIX}-frontend" "${PREFIX}-frontend" "$TG_FRONTEND" "frontend" 3000
-
-# ── 12. Auto-scaling (backend only) ────────────────────────────────────────
-SCALING_TARGET="service/${CLUSTER_NAME}/${PREFIX}-backend"
-
-# Register scalable target
-aws application-autoscaling register-scalable-target --region "$REGION" \
-  --service-namespace ecs \
-  --resource-id "$SCALING_TARGET" \
-  --scalable-dimension "ecs:service:DesiredCount" \
-  --min-capacity 1 --max-capacity 4 2>/dev/null || true
-
-# CPU-based scaling
-aws application-autoscaling put-scaling-policy --region "$REGION" \
-  --service-namespace ecs \
-  --resource-id "$SCALING_TARGET" \
-  --scalable-dimension "ecs:service:DesiredCount" \
-  --policy-name "${PREFIX}-cpu-scaling" \
-  --policy-type TargetTrackingScaling \
-  --target-tracking-scaling-policy-configuration '{
-    "TargetValue": 60.0,
-    "PredefinedMetricSpecification": {"PredefinedMetricType": "ECSServiceAverageCPUUtilization"},
-    "ScaleInCooldown": 300,
-    "ScaleOutCooldown": 60
-  }' >/dev/null 2>&1 || true
-
-# Memory-based scaling
-aws application-autoscaling put-scaling-policy --region "$REGION" \
-  --service-namespace ecs \
-  --resource-id "$SCALING_TARGET" \
-  --scalable-dimension "ecs:service:DesiredCount" \
-  --policy-name "${PREFIX}-memory-scaling" \
-  --policy-type TargetTrackingScaling \
-  --target-tracking-scaling-policy-configuration '{
-    "TargetValue": 70.0,
-    "PredefinedMetricSpecification": {"PredefinedMetricType": "ECSServiceAverageMemoryUtilization"},
-    "ScaleInCooldown": 300,
-    "ScaleOutCooldown": 60
-  }' >/dev/null 2>&1 || true
-
-log "Configured auto-scaling: 1-4 tasks (CPU 60% / Memory 70%)"
-
-# ── Done ───────────────────────────────────────────────────────────────────
+# ── Done ──────────────────────────────────────────────────────────────────
 echo ""
 echo "============================================================"
-echo -e "${GREEN}AWS Infrastructure Setup Complete${NC}"
+echo -e "${GREEN}Infrastructure Setup Complete${NC}"
 echo "============================================================"
 echo ""
-echo "Resources created:"
-echo "  ECR Backend:  $ECR_BACKEND"
-echo "  ECR Frontend: $ECR_FRONTEND"
 echo "  S3 Bucket:    $S3_BUCKET"
 echo "  RDS Endpoint: $RDS_ENDPOINT"
-echo "  ECS Cluster:  $CLUSTER_NAME"
-echo "  ALB URL:      http://$ALB_DNS"
+echo "  EC2 Instance: $INSTANCE_ID ($INSTANCE_TYPE)"
+echo "  Public IP:    $PUBLIC_IP"
+echo "  Key File:     $KEY_FILE"
+echo ""
+echo "  SSH: ssh -i $KEY_FILE ec2-user@$PUBLIC_IP"
 echo ""
 echo "============================================================"
-echo -e "${YELLOW}ACTION REQUIRED: Store your API keys in SSM${NC}"
+echo -e "${YELLOW}Next Steps${NC}"
 echo "============================================================"
 echo ""
-echo "  aws ssm put-parameter --region $REGION \\"
-echo "    --name /${PREFIX}/google-api-key \\"
-echo "    --type SecureString \\"
-echo "    --value '<your-google-api-key>'"
+echo "  1. Store your API keys in SSM (if not already done):"
 echo ""
-echo "  aws ssm put-parameter --region $REGION \\"
-echo "    --name /${PREFIX}/anthropic-api-key \\"
-echo "    --type SecureString \\"
-echo "    --value '<your-anthropic-api-key>'"
+echo "     aws ssm put-parameter --region $REGION \\"
+echo "       --name /${PREFIX}/google-api-key \\"
+echo "       --type SecureString --value '<your-key>' --overwrite"
 echo ""
-echo "Then deploy with: ./infra/deploy.sh"
+echo "     aws ssm put-parameter --region $REGION \\"
+echo "       --name /${PREFIX}/anthropic-api-key \\"
+echo "       --type SecureString --value '<your-key>' --overwrite"
+echo ""
+echo "  2. Wait ~2 minutes for cloud-init to finish installing Docker"
+echo ""
+echo "  3. SSH in and verify:"
+echo "     ssh -i $KEY_FILE ec2-user@$PUBLIC_IP"
+echo "     docker --version && docker compose version"
+echo ""
+echo "  4. Deploy: EC2_HOST=$PUBLIC_IP ./infra/prod/deploy.sh"
+echo ""
+echo "  5. Update GitHub secrets:"
+echo "     EC2_HOST=$PUBLIC_IP"
+echo "     EC2_SSH_KEY=<contents of $KEY_FILE>"
 echo ""

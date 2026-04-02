@@ -64,34 +64,33 @@ docker-compose up               # full stack via Docker (db:5436 on host, backen
 
 **Dev port mapping** (docker-compose): PostgreSQL is exposed on host port **5436** (not 5432), frontend on **3001** (not 3000). Use `psql -h localhost -p 5436` for local DB access. `start-dev.sh` runs frontend on `:3000` and Temporal UI on `http://localhost:8085`.
 
-### Production Deployment (AWS ECS)
+### Production Deployment (AWS EC2)
 ```bash
-git push origin main                              # triggers CI (tests + build) then CD (deploy to AWS ECS)
-./infra/deploy.sh                                 # manual deploy: build, push to ECR, migrate, redeploy ECS
-./infra/deploy.sh backend                         # deploy backend only
-./infra/deploy.sh frontend                        # deploy frontend only
-./infra/setup.sh                                  # one-time AWS infrastructure creation
-./infra/teardown.sh                               # remove all AWS resources (destructive, prompts for confirm)
+git push origin main                              # triggers CI (tests + build) then CD (deploy to EC2 via SSH)
+EC2_HOST=<ip> ./infra/prod/deploy.sh               # manual deploy: SSH into EC2, pull, build, restart
+EC2_HOST=<ip> ./infra/prod/deploy.sh backend       # deploy backend only
+EC2_HOST=<ip> ./infra/prod/deploy.sh frontend      # deploy frontend only
+./infra/prod/setup.sh                              # one-time EC2 infrastructure creation
+./infra/prod/teardown.sh                           # remove EC2 resources (destructive, prompts for confirm)
 ```
 
-**Production URL**: `http://ti-hub-alb-482449147.us-east-1.elb.amazonaws.com` (AWS ALB, us-east-1)
+**Production URL**: `http://<EC2_ELASTIC_IP>` (EC2 t4g.xlarge, us-east-1)
 
 **CI/CD Pipeline** (GitHub Actions):
 - **CI** (`.github/workflows/ci.yml`): backend tests (Python 3.12) → frontend lint+build (Node 20) → Docker image build check. Runs on push to `main` and PRs.
-- **CD** (`.github/workflows/deploy-aws.yml`): builds backend+frontend Docker images in parallel → pushes to ECR → forces new ECS deployment → waits for stability → health check. Runs on push to `main` only.
+- **CD** (`.github/workflows/deploy-aws.yml`): SSHes into EC2 → pulls code → builds Docker images on-instance → restarts containers → runs migrations → health check. Runs on push to `main` only.
 
-**Production stack** (AWS ECS Fargate): ALB (HTTP routing, /api/* → backend, /* → frontend), ECS backend (8 vCPU/24GB, Gemini AI), ECS frontend (0.5 vCPU/1GB, Next.js standalone), RDS PostgreSQL 16 (db.t4g.large, encrypted, private), S3 (file storage). Secrets in SSM Parameter Store.
+**Production stack** (AWS EC2): EC2 t4g.xlarge (4 vCPU/16GB, ARM64) running Docker Compose (backend + frontend + Caddy reverse proxy), RDS PostgreSQL 16 (db.t4g.large, encrypted, private), S3 (file storage). Secrets in SSM Parameter Store, fetched at deploy time into `.env.prod`.
 
-**AWS Resources** (managed by `infra/setup.sh`):
-- ECR: `ti-hub-backend`, `ti-hub-frontend`
-- S3: `ti-hub-storage-{account_id}` (public access blocked)
-- RDS: `ti-hub-db` (PostgreSQL 16, db.t4g.large, private)
-- ECS: `ti-hub-cluster` with `ti-hub-backend` (auto-scales 1→4) and `ti-hub-frontend` services
-- ALB: `ti-hub-alb` with path-based routing
-- SSM: `/ti-hub/database-url`, `/ti-hub/jwt-secret`, `/ti-hub/google-api-key`, `/ti-hub/anthropic-api-key`
-- CloudWatch: `/ecs/ti-hub-backend`, `/ecs/ti-hub-frontend`
+**AWS Resources** (managed by `infra/prod/setup.sh`):
+- EC2: `ti-hub-prod-server` (t4g.xlarge, 30GB gp3, Elastic IP)
+- S3: `ti-hub-prod-storage-{account_id}` (public access blocked)
+- RDS: `ti-hub-prod-db` (PostgreSQL 16, db.t4g.large, private)
+- SSM: `/ti-hub-prod/database-url`, `/ti-hub-prod/jwt-secret`, `/ti-hub-prod/google-api-key`, `/ti-hub-prod/anthropic-api-key`
+- IAM: `ti-hub-prod-ec2-role` (S3 + SSM access), `ti-hub-prod-ec2-profile`
+- Security Groups: `ti-hub-prod-ec2-sg` (SSH/HTTP/HTTPS), `ti-hub-prod-rds-sg` (PostgreSQL from EC2)
 
-**GitHub repo secrets needed**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ACCOUNT_ID`.
+**GitHub repo secrets needed**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `EC2_HOST`, `EC2_SSH_KEY`.
 
 ---
 

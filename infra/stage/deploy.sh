@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export AWS_PAGER=""
 
 # ============================================================================
-# Title Intelligence Hub — Fast Deploy
-# Usage: ./infra/deploy.sh [backend|frontend|both]
+# Title Intelligence Hub — EC2 Deploy
+# Usage: EC2_HOST=<ip> ./infra/stage/deploy.sh [backend|frontend|both]
+# Deploys via SSH: pulls code, builds images on EC2, restarts containers.
 # ============================================================================
 
 PREFIX="ti-hub"
 REGION="us-east-1"
-CLUSTER="${PREFIX}-cluster"
 TARGET="${1:-both}"
+KEY_FILE="${EC2_KEY_FILE:-$HOME/.ssh/${PREFIX}-key.pem}"
+EC2_USER="ec2-user"
+APP_DIR="/opt/ti-hub"
+COMPOSE_FILE="infra/stage/docker-compose.prod.yml"
 
 # Colors
 RED='\033[0;31m'
@@ -23,129 +26,112 @@ err()  { echo -e "${RED}[x]${NC} $*" >&2; }
 warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 
 if [[ "$TARGET" != "backend" && "$TARGET" != "frontend" && "$TARGET" != "both" ]]; then
-  err "Usage: $0 [backend|frontend|both]"
+  err "Usage: EC2_HOST=<ip> $0 [backend|frontend|both]"
   exit 1
 fi
 
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -z "${EC2_HOST:-}" ]; then
+  err "EC2_HOST not set. Usage: EC2_HOST=<ip> $0 [backend|frontend|both]"
+  exit 1
+fi
+
+if [ ! -f "$KEY_FILE" ]; then
+  err "SSH key not found at $KEY_FILE. Set EC2_KEY_FILE or run setup-ec2.sh first."
+  exit 1
+fi
+
+SSH_OPTS="-i $KEY_FILE -o StrictHostKeyChecking=no -o ConnectTimeout=10"
+SSH_CMD="ssh $SSH_OPTS ${EC2_USER}@${EC2_HOST}"
 
 START_TIME=$(date +%s)
 
-# ── 1. ECR Login ───────────────────────────────────────────────────────────
-log "Logging into ECR..."
-aws ecr get-login-password --region "$REGION" | \
-  docker login --username AWS --password-stdin "$ECR_REGISTRY" 2>/dev/null
+# ── 1. Fetch secrets from SSM and build .env.prod ─────────────────────────
+log "Fetching secrets from SSM..."
+DATABASE_URL=$(aws ssm get-parameter --region "$REGION" \
+  --name "/${PREFIX}/database-url" --with-decryption \
+  --query "Parameter.Value" --output text)
+JWT_SECRET=$(aws ssm get-parameter --region "$REGION" \
+  --name "/${PREFIX}/jwt-secret" --with-decryption \
+  --query "Parameter.Value" --output text)
+GOOGLE_API_KEY=$(aws ssm get-parameter --region "$REGION" \
+  --name "/${PREFIX}/google-api-key" --with-decryption \
+  --query "Parameter.Value" --output text 2>/dev/null || echo "")
+ANTHROPIC_API_KEY=$(aws ssm get-parameter --region "$REGION" \
+  --name "/${PREFIX}/anthropic-api-key" --with-decryption \
+  --query "Parameter.Value" --output text 2>/dev/null || echo "")
 
-# ── 2. Build & Push ───────────────────────────────────────────────────────
-deploy_service() {
-  local service="$1"
-  local image="${ECR_REGISTRY}/${PREFIX}-${service}"
-  local dockerfile context
+S3_BUCKET="${PREFIX}-storage-$(aws sts get-caller-identity --query Account --output text)"
 
-  if [ "$service" = "backend" ]; then
-    dockerfile="$REPO_ROOT/backend/Dockerfile.prod"
-    context="$REPO_ROOT/backend"
-  else
-    dockerfile="$REPO_ROOT/frontend/Dockerfile.prod"
-    context="$REPO_ROOT/frontend"
-  fi
+# Build .env.prod content
+ENV_CONTENT="DATABASE_URL=${DATABASE_URL}
+JWT_SECRET=${JWT_SECRET}
+GOOGLE_API_KEY=${GOOGLE_API_KEY}
+ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+STORAGE_PROVIDER=s3
+S3_BUCKET=${S3_BUCKET}
+S3_REGION=${REGION}
+PIPELINE_BACKEND=background_tasks
+AI_PROVIDER=gemini
+NATIVE_PDF_CONCURRENCY=12
+NATIVE_PDF_BATCH_SIZE=20
+TRIAGE_CONCURRENCY=4
+CORS_ORIGINS=[\"http://${EC2_HOST}\"]
+DEBUG=false"
 
-  log "Building ${service} image..."
+log "Uploading .env.prod to EC2..."
+echo "$ENV_CONTENT" | $SSH_CMD "cat > ${APP_DIR}/infra/stage/.env.prod"
 
-  # Get ALB URL for frontend build arg
-  local build_args=""
-  if [ "$service" = "frontend" ]; then
-    ALB_DNS=$(aws elbv2 describe-load-balancers --region "$REGION" --names "${PREFIX}-alb" \
-      --query "LoadBalancers[0].DNSName" --output text 2>/dev/null || echo "")
-    if [ -n "$ALB_DNS" ] && [ "$ALB_DNS" != "None" ]; then
-      build_args="--build-arg NEXT_PUBLIC_API_URL=http://${ALB_DNS}"
-    fi
-  fi
+# ── 2. Pull latest code ───────────────────────────────────────────────────
+log "Pulling latest code on EC2..."
+$SSH_CMD "cd ${APP_DIR} && git fetch origin main && git reset --hard origin/main"
 
-  docker build --platform linux/amd64 \
-    -f "$dockerfile" \
-    $build_args \
-    -t "${image}:latest" \
-    "$context"
-
-  log "Pushing ${service} image..."
-  docker push "${image}:latest"
-
-  log "Forcing new ${service} deployment..."
-  aws ecs update-service --region "$REGION" \
-    --cluster "$CLUSTER" \
-    --service "${PREFIX}-${service}" \
-    --force-new-deployment >/dev/null
-
-  log "${service} deployment initiated"
-}
-
+# ── 3. Build and start containers ─────────────────────────────────────────
+SERVICES=""
 if [ "$TARGET" = "backend" ] || [ "$TARGET" = "both" ]; then
-  deploy_service "backend"
+  SERVICES="$SERVICES backend"
 fi
-
 if [ "$TARGET" = "frontend" ] || [ "$TARGET" = "both" ]; then
-  deploy_service "frontend"
+  SERVICES="$SERVICES frontend"
 fi
+# Always include caddy when deploying both or any service
+SERVICES="$SERVICES caddy"
 
-# ── 3. Run Migrations (backend deploys only) ─────────────────────────────
+log "Building and starting: $SERVICES"
+$SSH_CMD "cd ${APP_DIR} && \
+  NEXT_PUBLIC_API_URL=http://${EC2_HOST} \
+  docker compose -f ${COMPOSE_FILE} up -d --build $SERVICES"
+
+# ── 4. Run migrations ────────────────────────────────────────────────────
 if [ "$TARGET" = "backend" ] || [ "$TARGET" = "both" ]; then
   log "Running database migrations..."
-  SUBNETS=$(aws ec2 describe-subnets --region "$REGION" \
-    --filters "Name=default-for-az,Values=true" \
-    --query "Subnets[0:2].SubnetId" --output text | tr '\t' ',')
-  SG=$(aws ec2 describe-security-groups --region "$REGION" \
-    --filters "Name=group-name,Values=${PREFIX}-ecs-sg" \
-    --query "SecurityGroups[0].GroupId" --output text)
-  MIGRATE_TASK=$(aws ecs run-task --region "$REGION" \
-    --cluster "$CLUSTER" --task-definition "${PREFIX}-backend" --launch-type FARGATE \
-    --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SG}],assignPublicIp=ENABLED}" \
-    --overrides '{"containerOverrides":[{"name":"backend","command":["sh","-c","alembic upgrade head"]}]}' \
-    --query "tasks[0].taskArn" --output text)
-  aws ecs wait tasks-stopped --region "$REGION" --cluster "$CLUSTER" --tasks "$MIGRATE_TASK"
-  EXIT_CODE=$(aws ecs describe-tasks --region "$REGION" --cluster "$CLUSTER" --tasks "$MIGRATE_TASK" \
-    --query "tasks[0].containers[0].exitCode" --output text)
-  if [ "$EXIT_CODE" = "0" ]; then
-    log "Migrations complete"
-  else
-    err "Migration failed (exit code $EXIT_CODE). Check CloudWatch logs."
-    exit 1
+  $SSH_CMD "cd ${APP_DIR} && \
+    docker compose -f ${COMPOSE_FILE} exec -T backend \
+    alembic upgrade head"
+
+  log "Running seed script..."
+  $SSH_CMD "cd ${APP_DIR} && \
+    docker compose -f ${COMPOSE_FILE} exec -T backend \
+    python scripts/seed.py" || warn "Seed script returned non-zero (may be OK if already seeded)"
+fi
+
+# ── 5. Health check ──────────────────────────────────────────────────────
+log "Running health check..."
+HEALTH_OK=false
+for i in {1..10}; do
+  if $SSH_CMD "curl -sf http://localhost/api/v1/health" >/dev/null 2>&1; then
+    HEALTH_OK=true
+    log "Health check passed"
+    break
   fi
-fi
+  if [ "$i" -lt 10 ]; then
+    log "  Attempt $i/10 — waiting 5s..."
+    sleep 5
+  fi
+done
 
-# ── 4. Wait for Stability ─────────────────────────────────────────────────
-log "Waiting for service(s) to stabilize..."
-
-SERVICES_TO_WAIT=()
-if [ "$TARGET" = "backend" ] || [ "$TARGET" = "both" ]; then
-  SERVICES_TO_WAIT+=("${PREFIX}-backend")
-fi
-if [ "$TARGET" = "frontend" ] || [ "$TARGET" = "both" ]; then
-  SERVICES_TO_WAIT+=("${PREFIX}-frontend")
-fi
-
-aws ecs wait services-stable --region "$REGION" \
-  --cluster "$CLUSTER" \
-  --services "${SERVICES_TO_WAIT[@]}"
-
-# ── 4. Health Check ───────────────────────────────────────────────────────
-ALB_DNS=$(aws elbv2 describe-load-balancers --region "$REGION" --names "${PREFIX}-alb" \
-  --query "LoadBalancers[0].DNSName" --output text)
-
-if [ "$TARGET" = "backend" ] || [ "$TARGET" = "both" ]; then
-  log "Health check: backend..."
-  for i in {1..5}; do
-    if curl -sf "http://${ALB_DNS}/api/v1/health" >/dev/null 2>&1; then
-      log "Backend health check passed"
-      break
-    fi
-    if [ "$i" -eq 5 ]; then
-      warn "Backend health check did not pass after 5 attempts"
-    fi
-    sleep 3
-  done
+if ! $HEALTH_OK; then
+  warn "Health check did not pass after 10 attempts"
+  warn "Check logs: ssh -i $KEY_FILE ${EC2_USER}@${EC2_HOST} 'cd ${APP_DIR} && docker compose -f ${COMPOSE_FILE} logs'"
 fi
 
 END_TIME=$(date +%s)
@@ -153,8 +139,13 @@ ELAPSED=$((END_TIME - START_TIME))
 
 echo ""
 echo "============================================================"
-echo -e "${GREEN}Deploy complete in ${ELAPSED}s${NC}"
+if $HEALTH_OK; then
+  echo -e "${GREEN}  READY — Deploy complete in ${ELAPSED}s${NC}"
+else
+  echo -e "${YELLOW}  DEPLOYED in ${ELAPSED}s (health check warning)${NC}"
+fi
 echo "============================================================"
-echo "  URL: http://${ALB_DNS}"
-echo "  API: http://${ALB_DNS}/api/v1/health"
+echo "  URL: http://${EC2_HOST}"
+echo "  API: http://${EC2_HOST}/api/v1/health"
+echo "  SSH: ssh -i $KEY_FILE ${EC2_USER}@${EC2_HOST}"
 echo ""
