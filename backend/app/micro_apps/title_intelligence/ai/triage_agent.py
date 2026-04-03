@@ -51,28 +51,60 @@ for specialized extraction routing.
 For each page, output page_number, page_type, and document_type_hint.
 
 PAGE TYPES:
-- **content** — Pages with substantive title information.
-- **blank** — Completely blank or nearly blank pages.
-- **cover** — Cover pages, title pages, transmittal cover sheets.
-- **signature** — Pages that are only signature blocks or notary acknowledgments.
-- **transmittal** — Transmittal letters or routing slips with no title content.
-- **boilerplate** — Standard terms/conditions, general disclaimers, form instructions.
+- **content** — Pages with substantive title information that requires examination. \
+This includes schedules, legal descriptions, endorsements, recorded instruments, \
+chain of title documents, tax certificates, surveys, and any page with parties, \
+property details, requirements, exceptions, or risk-relevant information.
+- **blank** — Completely blank or nearly blank pages with no meaningful text. \
+A page with only a page number, header, or footer is still blank. \
+Pages with just horizontal lines or form borders are blank.
+- **cover** — Cover pages, title pages, transmittal cover sheets that identify \
+the title company and commitment number but contain no substantive title data. \
+Example: "First American Title Insurance Company — Commitment for Title Insurance".
+- **signature** — Pages that consist solely of signature blocks, notary \
+acknowledgments, or witness attestations with no other substantive content. \
+If a signature page also contains legal terms or descriptions, classify as content.
+- **transmittal** — Transmittal letters, routing slips, or cover letters that \
+accompany the commitment but contain no title data. Example: "Please find enclosed \
+the title commitment for the above-referenced transaction."
+- **boilerplate** — Standard terms and conditions, general disclaimers, privacy \
+notices, ALTA form conditions, or form instructions that are identical across \
+all commitments and contain no property-specific information.
 
 DOCUMENT TYPE HINTS (for content pages only):
-- **commitment** — Title commitment schedules (A, B-I, B-II, C), policy info.
-- **deed** — Warranty deeds, quitclaim deeds, special warranty deeds.
-- **mortgage** — Mortgages, deeds of trust, security instruments.
-- **lien** — Tax liens, mechanic's liens, judgments, assessments.
-- **release** — Satisfactions, reconveyances, releases, discharges.
-- **easement** — Easements, restrictions, CC&Rs, covenants.
-- **plat** — Plat maps, surveys, legal description documents.
-- **endorsement** — Title insurance endorsements.
+- **commitment** — Title commitment schedules (A, B-I, B-II, C, D), policy info, \
+effective dates, proposed insured, policy amounts, and commitment conditions.
+- **deed** — Warranty deeds, quitclaim deeds, special warranty deeds, grant deeds, \
+trustee's deeds, executor's deeds, and other conveyance instruments.
+- **mortgage** — Mortgages, deeds of trust, security instruments, loan documents, \
+and any encumbrance securing a debt obligation against the property.
+- **lien** — Tax liens, mechanic's liens, judgment liens, HOA liens, federal tax \
+liens, assessment liens, and any involuntary encumbrance.
+- **release** — Satisfactions of mortgage, reconveyances, releases of lien, \
+discharges, and any instrument removing an encumbrance from title.
+- **easement** — Easements, restrictions, CC&Rs, covenants, right-of-way grants, \
+utility easements, and any instrument limiting use of the property.
+- **plat** — Plat maps, subdivision plats, surveys, metes and bounds descriptions, \
+lot and block diagrams, and legal description reference documents.
+- **endorsement** — Title insurance endorsements (e.g., T-19, T-19.1, T-36), \
+additional coverage forms, and endorsement schedules.
 - **generic** — Unknown or mixed content that doesn't fit above categories.
+
+CLASSIFICATION PRIORITY:
+- Safety first: when uncertain, always classify page_type as "content". \
+It is far better to send a non-essential page for examination than to skip \
+a page with important title information.
+- A page with ANY substantive text (party names, legal descriptions, recording \
+references, dollar amounts, or dates) should be classified as "content".
+- Multi-purpose pages: if a page contains both boilerplate AND specific title \
+information, classify it as "content" — the title information takes priority.
 
 RULES:
 1. When in doubt, classify page_type as "content" — never skip important pages.
 2. When in doubt about document type, use "generic".
 3. For non-content pages, set document_type_hint to "generic".
+4. Number pages sequentially starting from 1. Every page must be classified.
+5. Look at the actual content of each page, not just its position in the document.
 """
 
 TRIAGE_JSON_SCHEMA = {

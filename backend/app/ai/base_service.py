@@ -120,15 +120,17 @@ def _parse_json_robust(text: str) -> dict | list:
     fixed = re.sub(r'"\s*\n\s*"', '", "', fixed)
     # null/true/false/number followed by "key" without comma
     fixed = re.sub(r'(null|true|false|\d+)\s*\n\s*"', r'\1, "', fixed)
+    # Missing comma after } or ] before newline + "key" (common in large Gemini output)
+    fixed = re.sub(r'([}\]])\s*\n(\s*")', r'\1,\n\2', fixed)
 
     try:
         return json.loads(fixed)
     except json.JSONDecodeError:
         pass
 
-    # Attempt 3: iterative error-position repair (up to 20 fixes)
+    # Attempt 3: iterative error-position repair (up to 50 fixes)
     repaired = fixed
-    for _ in range(20):
+    for _ in range(50):
         try:
             return json.loads(repaired)
         except json.JSONDecodeError as e:

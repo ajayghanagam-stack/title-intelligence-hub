@@ -357,6 +357,15 @@ async def call_json_structured_cached_gemini(
                 await asyncio.sleep(2 ** attempt)
                 continue
             raise
+        except json.JSONDecodeError as e:
+            # JSON parse errors on cached calls won't be fixed by retrying —
+            # same cache + same input = same broken output. Fail fast to
+            # trigger fallback to uncached path.
+            logger.warning(
+                f"Cached call returned malformed JSON — skipping retries, "
+                f"falling back to uncached: {e}"
+            )
+            raise
         except Exception as e:
             err_str = str(e)
             logger.warning(f"Cached AI call failed (attempt {attempt + 1}/{retries}): {e}")

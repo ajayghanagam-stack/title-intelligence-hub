@@ -252,7 +252,10 @@ For every batch of pages, perform ALL of the following:
 
 ## 1. TRANSCRIBE every page
 Transcribe ALL text faithfully. Preserve formatting, tables, recording stamps, notary \
-blocks, clerk stamps, and marginal notes exactly as they appear.
+blocks, clerk stamps, and marginal notes exactly as they appear. Include recording \
+information (Volume/Page, Document Number, Filing Date), notary blocks with commission \
+expiration dates, and any handwritten annotations or stamps. Do not summarize or \
+paraphrase — copy the text verbatim from each page.
 
 ## 2. IDENTIFY DOCUMENT SECTIONS
 Match sections by the EXACT heading printed on the page, not by content type. \
@@ -260,52 +263,96 @@ Valid types: schedule_a, schedule_b (general Schedule B), schedule_b1 (Schedule 
 schedule_b2 (Schedule B-2/B-II), schedule_c, schedule_d, legal_description, endorsements. \
 IMPORTANT: If the page heading says "SCHEDULE B", use schedule_b. If it says \
 "SCHEDULE C", use schedule_c. If it says "SCHEDULE D", use schedule_d. \
-Do NOT remap by content — use the literal schedule letter from the document.
+Do NOT remap by content — use the literal schedule letter from the document. \
+A section spans from where its heading first appears to where the next section \
+heading begins or the document ends. Include all continuation pages in the range.
 
 ## 3. EXTRACT STRUCTURED DATA
 Output extractions as typed arrays. Each item has: label, value (with type-specific fields), \
-evidence_refs, confidence.
+evidence_refs, confidence. Every extraction must reference the specific page(s) where \
+the information was found.
 
 ### policy_info_items — Use these exact labels:
 - "GF Number" (commitment/file number, e.g. TX-26-1410)
 - "FAF File Number" (underwriter file number)
-- "Effective Date" (commitment effective date)
+- "Effective Date" (commitment effective date, e.g. "03/02/2026 at 8:00 AM")
 - "Issued Date" (date commitment was issued)
 - "Owner's Policy" with field_value as the amount and policy_type (e.g. "T-1R")
 - "Lender's Policy" with field_value as the amount and policy_type (e.g. "T-2")
+- "Premium" if listed (title insurance premium amount)
 
 ### parties — Extract ALL named parties with roles:
 - Roles: current_owner, proposed_buyer, seller, lender, underwriter, issuing_agent, \
 borrower, trustee, prior_owner, executor, beneficiary
-- Fields: name, role, entity_type, marital_status
+- Fields: name, role, entity_type (individual, corporation, llc, trust, estate, \
+partnership, government, unknown), marital_status
+- Extract every party mentioned anywhere in the document — Schedule A, B, C, \
+recorded instruments, chain of title documents, and endorsements.
+- For married couples, extract each spouse as a separate party with marital_status noted.
 
 ### properties — Extract with these fields:
 - address, county, state, legal_description, interest_type (e.g. "Fee Simple"), \
-lot, block, subdivision
+lot, block, subdivision, tax_id, acreage
+- Include the full legal description text, not a summary.
+- If multiple properties are covered, extract each one separately.
 
 ### requirements — Schedule B-1/C items:
-- number, description, category, risk_level, is_standard_boilerplate
+- number, description, category (recording, payment, documentation, release, \
+verification, standard), risk_level, is_standard_boilerplate
+- Standard boilerplate includes: search fees, recording costs, standard title \
+company requirements that appear in every commitment.
+- Non-standard requirements are property-specific items that require action.
 
 ### exceptions — Schedule B-2 items:
-- number, description, category, risk_level, recording_reference
+- number, description, category (tax, easement, restriction, lien, encumbrance, \
+mineral, other), risk_level, recording_reference
+- Include the full recording reference (Volume, Page, Document Number, Date) \
+when available.
 
-### endorsements, compliance_items, chain_of_title_items
-- Extract as before with full detail.
+### endorsements — Title insurance endorsements:
+- endorsement_number, title, description, form_type (e.g. "T-19", "T-19.1", "T-36")
+- Note any modifications or special conditions.
+
+### compliance_items — Regulatory compliance items:
+- description, regulation, status (compliant, non_compliant, needs_review)
+
+### chain_of_title_items — Chain of title instruments:
+- instrument_type (deed, mortgage, lien, release, easement), grantor, grantee, \
+recording_reference, date, consideration
+- Extract chronologically to establish the chain of ownership.
 
 ## 4. DETECT RISK FLAGS
-Flag everything needing attention before closing.
+Flag everything needing attention before closing. Be thorough — it is better to \
+flag something that turns out to be benign than to miss a genuine issue.
 
 Valid flag types:
-- missing_endorsement, unacceptable_exception, unresolved_lien, unreleased_mortgage
-- cross_section_mismatch, requirement_missing_proof, name_discrepancy, marital_status_issue
-- incomplete_document, regulatory_compliance, chain_of_title_gap, document_defect
-- mineral_rights, trust_issue, estate_issue, vesting_issue, tax_issue
+- missing_endorsement: Required endorsement not included in the commitment.
+- unacceptable_exception: Exception that could prevent clear title or financing.
+- unresolved_lien: Outstanding lien that must be satisfied before closing.
+- unreleased_mortgage: Prior mortgage without a recorded satisfaction/release.
+- cross_section_mismatch: Inconsistency between Schedule A, B, and C data.
+- requirement_missing_proof: Requirement listed but no evidence of satisfaction.
+- name_discrepancy: Name spelled differently across documents (e.g. "Smith" vs "Smyth").
+- marital_status_issue: Marital status unclear or inconsistent across documents.
+- incomplete_document: Missing pages, illegible sections, or truncated recordings.
+- regulatory_compliance: Potential regulatory or compliance issue.
+- chain_of_title_gap: Missing link in the ownership chain.
+- document_defect: Recording deficiency, missing notarization, or execution defect.
+- mineral_rights: Mineral rights reservation or severance affecting title.
+- trust_issue: Trust-related issue (missing trust agreement, expired trust, trustee authority).
+- estate_issue: Probate or estate-related issue affecting title.
+- vesting_issue: Vesting inconsistency or incorrect ownership characterization.
+- tax_issue: Delinquent taxes, special assessments, or tax sale affecting title.
 
-Severity: critical (blocks closing), high (must resolve before closing), \
-medium (should address), low (informational).
+Severity levels:
+- critical: Blocks closing — title cannot be insured without resolution.
+- high: Must resolve before closing — significant risk if unaddressed.
+- medium: Should address — may cause issues but does not block closing.
+- low: Informational — minor item for awareness, no action required.
 
-Each flag needs: specific title, description, ai_explanation, evidence_refs with \
-page_number and text_snippet.
+Each flag needs: a specific descriptive title, detailed description explaining \
+the issue, ai_explanation with your professional analysis, and evidence_refs \
+with page_number and a text_snippet quoting the relevant document text.
 
 ### CRITICAL RULES:
 - Every extraction MUST have a fully populated value object. NEVER return empty values.
@@ -313,6 +360,8 @@ page_number and text_snippet.
 - Extract EVERY recorded instrument in the chain of title.
 - Set is_standard_boilerplate=true for standard commitment language in requirements.
 - Set category and recording_reference on exceptions where available.
+- Produce valid, well-formed JSON output. Ensure all strings are properly escaped \
+and all arrays and objects are properly closed.
 """
 
 # Shared sub-schemas for evidence_refs (with maxLength to limit output bloat)
@@ -755,15 +804,15 @@ class TitleExaminerAgent(BaseAIService):
             return await self._examine_batch_hybrid(page_images, batch_context)
 
         settings = get_settings()
+        configured_max_tokens = getattr(settings, "EXAMINER_MAX_OUTPUT_TOKENS", 16384)
         call_timeout = getattr(settings, "EXAMINER_CALL_TIMEOUT", 300)
 
         # Adaptive max_output_tokens: scale with batch page count
         batch_page_count = len(page_images)
         adaptive_tokens = max(8192, batch_page_count * 2000)
+        max_output_tokens = min(adaptive_tokens, configured_max_tokens)
         if self._provider == "claude":
-            max_output_tokens = min(adaptive_tokens, 64000)
-        else:
-            max_output_tokens = min(adaptive_tokens, 65536)
+            max_output_tokens = min(max_output_tokens, 64000)  # Claude absolute limit
 
         # Build multimodal message content
         content: list[dict[str, Any]] = []
@@ -1381,14 +1430,13 @@ class TitleExaminerAgent(BaseAIService):
 
         # Adaptive max_output_tokens: scale with batch page count to prevent
         # truncation on large batches. ~2000 tokens/page covers transcription +
-        # sections + extractions + flags. Floor at 8192, cap at provider limit.
+        # sections + extractions + flags. Floor at 8192, cap at configured max.
         start_page, end_page = page_range
         batch_page_count = end_page - start_page + 1
         adaptive_tokens = max(8192, batch_page_count * 2000)
+        max_output_tokens = min(adaptive_tokens, configured_max_tokens)
         if self._provider == "claude":
-            max_output_tokens = min(adaptive_tokens, 64000)
-        else:
-            max_output_tokens = min(adaptive_tokens, 65536)
+            max_output_tokens = min(max_output_tokens, 64000)  # Claude absolute limit
 
         content: list[dict[str, Any]] = []
 

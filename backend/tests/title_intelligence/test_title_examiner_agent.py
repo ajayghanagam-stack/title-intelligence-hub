@@ -666,11 +666,12 @@ class TestMaxOutputTokens:
                         EXAMINER_MAX_OUTPUT_TOKENS=65536,
                         EXAMINER_CALL_TIMEOUT=300,
                     )
-                    # Small batch — should use configured max, capped at 64000 for Claude
+                    # Small batch (5 pages): adaptive = max(8192, 5*2000) = 10000
+                    # Capped by min(adaptive, configured_max, claude_limit)
                     await agent.examine_pdf_batch(pdf_bytes, (1, 5), 100, 0, 5)
                     call_kwargs = mock_call.call_args.kwargs
-                    # Claude caps at 64000; Gemini would pass 65536 through
-                    assert call_kwargs["max_tokens"] == 64000
+                    # 5-page batch: min(10000, 65536, 64000) = 10000
+                    assert call_kwargs["max_tokens"] == 10000
 
     @pytest.mark.asyncio
     async def test_pdf_batch_respects_custom_max_tokens(self, agent):
