@@ -245,10 +245,15 @@ async def _call_genai_direct(
                 f"AI genai JSON parse failed (attempt {attempt + 1}/{retries}): {e}\n"
                 f"  Response snippet: {snippet!r}"
             )
-            if attempt < retries - 1:
-                await asyncio.sleep(2 ** attempt)
-                continue
-            raise
+            # JSON parse errors from truncated output won't be fixed by retrying
+            # the same input. Return empty dict rather than blocking the pipeline.
+            if attempt >= retries - 1:
+                logger.warning("All JSON parse attempts failed — returning empty result for this batch")
+                if return_usage:
+                    return {}, {}
+                return {}
+            await asyncio.sleep(2 ** attempt)
+            continue
         except asyncio.TimeoutError:
             logger.warning(f"AI genai direct call timed out (attempt {attempt + 1}/{retries})")
             if attempt < retries - 1:
@@ -353,7 +358,15 @@ async def call_json_structured_cached_gemini(
                 continue
             raise
         except Exception as e:
+            err_str = str(e)
             logger.warning(f"Cached AI call failed (attempt {attempt + 1}/{retries}): {e}")
+            # If cache expired, invalidate the in-memory entry so it gets recreated
+            if "expired" in err_str.lower():
+                for key, val in list(_context_cache_map.items()):
+                    if val == cache_name:
+                        del _context_cache_map[key]
+                        logger.info(f"Invalidated expired cache entry: {cache_name}")
+                        break
             if attempt < retries - 1:
                 await asyncio.sleep(2 ** attempt)
                 continue
