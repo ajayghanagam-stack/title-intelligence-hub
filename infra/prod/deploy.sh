@@ -60,13 +60,47 @@ ANTHROPIC_API_KEY=$(aws ssm get-parameter --region "$REGION" \
   --name "/${PREFIX}/anthropic-api-key" --with-decryption \
   --query "Parameter.Value" --output text 2>/dev/null || echo "")
 
+# Vertex AI credentials (optional — if set, uses Vertex AI instead of AI Studio)
+GCP_PROJECT=$(aws ssm get-parameter --region "$REGION" \
+  --name "/${PREFIX}/gcp-project-id" --with-decryption \
+  --query "Parameter.Value" --output text 2>/dev/null || echo "")
+GCP_SA_JSON=$(aws ssm get-parameter --region "$REGION" \
+  --name "/${PREFIX}/gcp-sa-json" --with-decryption \
+  --query "Parameter.Value" --output text 2>/dev/null || echo "")
+GCP_REGION="${GCP_REGION:-us-central1}"
+
 S3_BUCKET="${PREFIX}-storage-$(aws sts get-caller-identity --query Account --output text)"
+
+# Domain for HTTPS (set DOMAIN env var, or falls back to EC2_HOST with http)
+DOMAIN="${DOMAIN:-}"
+if [ -n "$DOMAIN" ]; then
+  APP_URL="https://${DOMAIN}"
+  CORS_VALUE="[\"https://${DOMAIN}\"]"
+else
+  APP_URL="http://${EC2_HOST}"
+  CORS_VALUE="[\"http://${EC2_HOST}\"]"
+fi
+
+# Determine Vertex AI settings
+VERTEX_AI_ENABLED="false"
+VERTEX_ENV=""
+if [ -n "$GCP_PROJECT" ] && [ -n "$GCP_SA_JSON" ]; then
+  VERTEX_AI_ENABLED="true"
+  VERTEX_ENV="VERTEX_AI=true
+GOOGLE_CLOUD_PROJECT=${GCP_PROJECT}
+GOOGLE_CLOUD_REGION=${GCP_REGION}
+GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-sa-key.json"
+  log "Vertex AI enabled (project: ${GCP_PROJECT}, region: ${GCP_REGION})"
+else
+  log "Using AI Studio (GOOGLE_API_KEY)"
+fi
 
 # Build .env.prod content
 ENV_CONTENT="DATABASE_URL=${DATABASE_URL}
 JWT_SECRET=${JWT_SECRET}
 GOOGLE_API_KEY=${GOOGLE_API_KEY}
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+${VERTEX_ENV}
 STORAGE_PROVIDER=s3
 S3_BUCKET=${S3_BUCKET}
 S3_REGION=${REGION}
@@ -75,11 +109,20 @@ AI_PROVIDER=gemini
 NATIVE_PDF_CONCURRENCY=12
 NATIVE_PDF_BATCH_SIZE=20
 TRIAGE_CONCURRENCY=4
-CORS_ORIGINS=[\"http://${EC2_HOST}\"]
+EXAMINER_MAX_OUTPUT_TOKENS=65536
+CORS_ORIGINS=${CORS_VALUE}
 DEBUG=false"
 
 log "Uploading .env.prod to EC2..."
 echo "$ENV_CONTENT" | $SSH_CMD "cat > ${APP_DIR}/infra/prod/.env.prod"
+
+# Upload GCP service account JSON (or create empty placeholder for docker-compose mount)
+if [ "$VERTEX_AI_ENABLED" = "true" ]; then
+  log "Uploading GCP service account credentials..."
+  echo "$GCP_SA_JSON" | $SSH_CMD "cat > ${APP_DIR}/infra/prod/gcp-sa-key.json"
+else
+  $SSH_CMD "touch ${APP_DIR}/infra/prod/gcp-sa-key.json"
+fi
 
 # ── 2. Pull latest code ───────────────────────────────────────────────────
 log "Pulling latest code on EC2..."
@@ -98,7 +141,7 @@ SERVICES="$SERVICES caddy"
 
 log "Building and starting: $SERVICES"
 $SSH_CMD "cd ${APP_DIR} && \
-  NEXT_PUBLIC_API_URL=http://${EC2_HOST} \
+  NEXT_PUBLIC_API_URL=${APP_URL} \
   docker compose -f ${COMPOSE_FILE} up -d --build $SERVICES"
 
 # ── 4. Run migrations (skip with NO_MIGRATE=1) ──────────────────────────
@@ -147,7 +190,7 @@ else
   echo -e "${YELLOW}  DEPLOYED in ${ELAPSED}s (health check warning)${NC}"
 fi
 echo "============================================================"
-echo "  URL: http://${EC2_HOST}"
-echo "  API: http://${EC2_HOST}/api/v1/health"
+echo "  URL: ${APP_URL}"
+echo "  API: ${APP_URL}/api/v1/health"
 echo "  SSH: ssh -i $KEY_FILE ${EC2_USER}@${EC2_HOST}"
 echo ""
