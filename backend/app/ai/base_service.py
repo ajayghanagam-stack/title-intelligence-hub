@@ -44,7 +44,8 @@ def _get_model_for_provider(provider: str) -> str:
         from app.ai.claude_provider import CLAUDE_MODEL
         return CLAUDE_MODEL
     # Both "gemini" and "hybrid" use Gemini as the primary/vision model
-    return "gemini/gemini-2.5-flash"
+    from app.ai.gemini_provider import _get_litellm_model
+    return _get_litellm_model()
 
 
 def _get_claude_model() -> str:

@@ -37,8 +37,11 @@ class Settings(BaseSettings):
     TI_CHAT_PROVIDER: Literal["gemini", "claude", ""] = ""
     TA_AI_PROVIDER: Literal["gemini", "claude", ""] = ""
 
-    # Gemini (default)
-    GOOGLE_API_KEY: str = ""
+    # Gemini / Vertex AI
+    GOOGLE_API_KEY: str = ""  # AI Studio API key (used when VERTEX_AI=false)
+    VERTEX_AI: bool = False  # Set True to use Vertex AI instead of AI Studio
+    GOOGLE_CLOUD_PROJECT: str = ""  # GCP project ID (required when VERTEX_AI=true)
+    GOOGLE_CLOUD_REGION: str = "us-central1"  # Vertex AI region
 
     # Claude (Anthropic)
     ANTHROPIC_API_KEY: str = ""
@@ -126,6 +129,13 @@ class Settings(BaseSettings):
             )
         return self
 
+    @property
+    def _has_gemini_credentials(self) -> bool:
+        """Check if either AI Studio API key or Vertex AI credentials are configured."""
+        if self.VERTEX_AI:
+            return bool(self.GOOGLE_CLOUD_PROJECT)
+        return bool(self.GOOGLE_API_KEY)
+
     @model_validator(mode="after")
     def _validate_chat_provider_keys(self) -> "Settings":
         """Ensure the required API key is present when TI_CHAT_PROVIDER is set."""
@@ -133,9 +143,9 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TI_CHAT_PROVIDER='claude' requires ANTHROPIC_API_KEY"
             )
-        if self.TI_CHAT_PROVIDER == "gemini" and not self.GOOGLE_API_KEY:
+        if self.TI_CHAT_PROVIDER == "gemini" and not self._has_gemini_credentials:
             raise ValueError(
-                "TI_CHAT_PROVIDER='gemini' requires GOOGLE_API_KEY"
+                "TI_CHAT_PROVIDER='gemini' requires GOOGLE_API_KEY or VERTEX_AI credentials"
             )
         return self
 
@@ -146,9 +156,9 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TA_AI_PROVIDER='claude' requires ANTHROPIC_API_KEY"
             )
-        if self.TA_AI_PROVIDER == "gemini" and not self.GOOGLE_API_KEY:
+        if self.TA_AI_PROVIDER == "gemini" and not self._has_gemini_credentials:
             raise ValueError(
-                "TA_AI_PROVIDER='gemini' requires GOOGLE_API_KEY"
+                "TA_AI_PROVIDER='gemini' requires GOOGLE_API_KEY or VERTEX_AI credentials"
             )
         return self
 
@@ -173,9 +183,9 @@ class Settings(BaseSettings):
     def _validate_hybrid_keys(self) -> "Settings":
         """Hybrid mode requires both Google and Anthropic API keys."""
         if self.AI_PROVIDER == "hybrid":
-            if not self.GOOGLE_API_KEY:
+            if not self._has_gemini_credentials:
                 raise ValueError(
-                    "AI_PROVIDER='hybrid' requires GOOGLE_API_KEY "
+                    "AI_PROVIDER='hybrid' requires GOOGLE_API_KEY or VERTEX_AI credentials "
                     "(Gemini handles the vision/OCR pass)"
                 )
             if not self.ANTHROPIC_API_KEY:

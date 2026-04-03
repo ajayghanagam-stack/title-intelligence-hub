@@ -26,9 +26,25 @@ _context_cache_map: dict[str, str] = {}
 
 
 def configure_gemini(settings: Any) -> None:
-    """Set Gemini API key in environment for litellm."""
-    if settings.GOOGLE_API_KEY:
+    """Set Gemini API key/Vertex AI credentials in environment for litellm."""
+    if settings.VERTEX_AI:
+        # Vertex AI: litellm uses GOOGLE_CLOUD_PROJECT + GOOGLE_CLOUD_REGION
+        os.environ["GOOGLE_CLOUD_PROJECT"] = settings.GOOGLE_CLOUD_PROJECT
+        os.environ["GOOGLE_CLOUD_REGION"] = settings.GOOGLE_CLOUD_REGION
+        logger.info(
+            f"Configured Vertex AI: project={settings.GOOGLE_CLOUD_PROJECT}, "
+            f"region={settings.GOOGLE_CLOUD_REGION}"
+        )
+    elif settings.GOOGLE_API_KEY:
         os.environ["GEMINI_API_KEY"] = settings.GOOGLE_API_KEY
+
+
+def _get_litellm_model() -> str:
+    """Return the litellm model string based on Vertex AI or AI Studio."""
+    settings = get_settings()
+    if settings.VERTEX_AI:
+        return "vertex_ai/gemini-2.5-flash"
+    return GEMINI_MODEL
 
 
 def get_genai_client() -> Any | None:
@@ -36,6 +52,12 @@ def get_genai_client() -> Any | None:
     settings = get_settings()
     try:
         from google import genai
+        if settings.VERTEX_AI:
+            return genai.Client(
+                vertexai=True,
+                project=settings.GOOGLE_CLOUD_PROJECT,
+                location=settings.GOOGLE_CLOUD_REGION,
+            )
         return genai.Client(api_key=settings.GOOGLE_API_KEY)
     except ImportError:
         logger.warning("google-genai not installed — context caching unavailable")
