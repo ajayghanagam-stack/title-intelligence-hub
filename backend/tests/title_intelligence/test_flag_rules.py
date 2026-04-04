@@ -608,3 +608,55 @@ def test_generate_deterministic_flags_10_runs():
             assert f1["severity"] == f2["severity"]
             assert f1["title"] == f2["title"]
             assert f1["description"] == f2["description"]
+
+
+# ---------------------------------------------------------------------------
+# Evidence refs sorted deterministically
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_flags_evidence_refs_sorted():
+    """evidence_refs within each flag are sorted by (page_number, text_snippet)."""
+    flag = _make_flag(
+        flag_type="unresolved_lien",
+        severity="high",
+        page=10,
+        extra_refs=[
+            {"page_number": 3, "text_snippet": "beta snippet"},
+            {"page_number": 3, "text_snippet": "alpha snippet"},
+            {"page_number": 7, "text_snippet": "gamma snippet"},
+        ],
+    )
+    result = normalize_flags([flag])
+    assert len(result) == 1
+    refs = result[0]["evidence_refs"]
+    assert len(refs) == 4
+    # Should be sorted by (page_number, text_snippet)
+    assert refs[0]["page_number"] == 3
+    assert refs[0]["text_snippet"] == "alpha snippet"
+    assert refs[1]["page_number"] == 3
+    assert refs[1]["text_snippet"] == "beta snippet"
+    assert refs[2]["page_number"] == 7
+    assert refs[3]["page_number"] == 10
+
+
+def test_normalize_flags_evidence_refs_sorted_after_dedup():
+    """Merged evidence_refs from dedup are also sorted deterministically."""
+    f1 = _make_flag(
+        flag_type="unresolved_lien",
+        severity="high",
+        page=5,
+        extra_refs=[{"page_number": 10, "text_snippet": "ref B"}],
+    )
+    f2 = _make_flag(
+        flag_type="unresolved_lien",
+        severity="high",
+        page=5,
+        extra_refs=[{"page_number": 2, "text_snippet": "ref A"}],
+    )
+    result = normalize_flags([f1, f2])
+    assert len(result) == 1
+    refs = result[0]["evidence_refs"]
+    page_numbers = [r["page_number"] for r in refs]
+    # Must be sorted ascending by page_number
+    assert page_numbers == sorted(page_numbers)

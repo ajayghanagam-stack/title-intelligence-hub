@@ -148,6 +148,58 @@ RENDER_CONCURRENCY = 8
 _page_image_cache: dict[uuid.UUID, dict[int, bytes]] = {}
 
 
+async def _capture_flag_reviews(
+    db: AsyncSession, org_id: uuid.UUID, pack_id: uuid.UUID,
+) -> dict[tuple[str, str, frozenset[int]], tuple[str, str | None]]:
+    """Snapshot flag review state before flags are deleted.
+
+    Returns a dict keyed by (flag_type, severity, frozenset(page_numbers))
+    mapping to (status, note).  Only flags whose status != 'open' are captured.
+    """
+    result = await db.execute(
+        select(Flag).where(Flag.pack_id == pack_id, Flag.org_id == org_id)
+    )
+    review_map: dict[tuple[str, str, frozenset[int]], tuple[str, str | None]] = {}
+    for flag in result.scalars().all():
+        if flag.status == "open":
+            continue
+        page_nums: set[int] = set()
+        for ref in (flag.evidence_refs or []):
+            if isinstance(ref, dict) and "page_number" in ref:
+                page_nums.add(ref["page_number"])
+        key = (flag.flag_type, flag.severity, frozenset(page_nums))
+        review_map[key] = (flag.status, flag.note)
+    return review_map
+
+
+async def _restore_flag_reviews(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    pack_id: uuid.UUID,
+    review_map: dict[tuple[str, str, frozenset[int]], tuple[str, str | None]],
+) -> int:
+    """Re-apply previously captured review state to newly created flags.
+
+    Returns the number of flags restored.
+    """
+    if not review_map:
+        return 0
+    result = await db.execute(
+        select(Flag).where(Flag.pack_id == pack_id, Flag.org_id == org_id)
+    )
+    restored = 0
+    for flag in result.scalars().all():
+        page_nums: set[int] = set()
+        for ref in (flag.evidence_refs or []):
+            if isinstance(ref, dict) and "page_number" in ref:
+                page_nums.add(ref["page_number"])
+        key = (flag.flag_type, flag.severity, frozenset(page_nums))
+        if key in review_map:
+            flag.status, flag.note = review_map[key]
+            restored += 1
+    return restored
+
+
 async def stage_ingest(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, storage: StorageProvider):
     """Validate files exist and mark pack as processing."""
     result = await db.execute(
@@ -872,15 +924,22 @@ async def _stage_examine_native_pdf(
     # results regardless of AI non-determinism or cache key version changes.
     donor_pack_id = await _find_donor_pack(db, org_id, pack_id, input_file_hash)
     if donor_pack_id:
+        log.info(f"DB dedup: cloning from donor pack {donor_pack_id}")
         cloned = await _clone_analysis_from_donor(donor_pack_id, pack_id, org_id, db)
         if cloned:
             return
 
     cache_key = compute_examiner_cache_key(input_file_hash, version_info)
     cache_path = storage.make_ai_cache_path(org_id, pack_id, "examiner_native", cache_key)
+    log.info(
+        f"Examiner cache key: {cache_key[:16]}... "
+        f"(file_hash={input_file_hash[:12]}, model={version_info.get('ai_model', '?')}, "
+        f"rules={version_info.get('flag_rules_version', '?')})"
+    )
 
     # Check cache
     if await storage.exists(cache_path):
+        log.info(f"Examiner cache HIT: {cache_path}")
         cached_data = json.loads(await storage.read(cache_path))
         await _replay_examiner_cache(db, org_id, pack_id, cached_data, pages)
         await _create_text_chunks_from_transcriptions(
@@ -900,6 +959,8 @@ async def _stage_examine_native_pdf(
             f"{len(cached_data.get('flags', []))} flags"
         )
         return
+
+    log.info(f"Examiner cache MISS: {cache_path}")
 
     # Cache miss — load PDF bytes and concatenate if multiple files
     pdf_data_list = []
@@ -1215,6 +1276,9 @@ async def _stage_examine_native_pdf(
         )
         return
 
+    # Capture flag review state before deletion
+    review_map = await _capture_flag_reviews(db, org_id, pack_id)
+
     # Write consolidated results — same logic as legacy examine
     await db.execute(delete(Extraction).where(Extraction.pack_id == pack_id, Extraction.org_id == org_id))
     await db.execute(delete(Section).where(Section.pack_id == pack_id, Section.org_id == org_id))
@@ -1292,6 +1356,13 @@ async def _stage_examine_native_pdf(
             evidence_refs=f.get("evidence_refs", []),
             status="open",
         ))
+
+    # Restore flag review state from before deletion
+    if review_map:
+        await db.flush()
+        restored = await _restore_flag_reviews(db, org_id, pack_id, review_map)
+        if restored:
+            log.info(f"Restored {restored} flag review(s) from previous analysis")
 
     # Create text chunks from transcriptions
     transcription_dicts = [
@@ -1411,9 +1482,15 @@ async def stage_examine(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession,
     input_file_hash = await compute_input_file_hash(storage, org_id, pack_files)
     cache_key = compute_examiner_cache_key(input_file_hash, version_info)
     cache_path = storage.make_ai_cache_path(org_id, pack_id, "examiner", cache_key)
+    log.info(
+        f"Examiner cache key: {cache_key[:16]}... "
+        f"(file_hash={input_file_hash[:12]}, model={version_info.get('ai_model', '?')}, "
+        f"rules={version_info.get('flag_rules_version', '?')})"
+    )
 
     # Check cache
     if await storage.exists(cache_path):
+        log.info(f"Examiner cache HIT: {cache_path}")
         cached_data = json.loads(await storage.read(cache_path))
         await _replay_examiner_cache(db, org_id, pack_id, cached_data, pages)
         # Also create text chunks from cached transcriptions
@@ -1428,6 +1505,8 @@ async def stage_examine(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession,
             f"{len(cached_data.get('flags', []))} flags"
         )
         return
+
+    log.info(f"Examiner cache MISS: {cache_path}")
 
     # Cache miss — run examiner agent with progressive batch streaming
     agent = TitleExaminerAgent(org_id)
@@ -1480,6 +1559,9 @@ async def stage_examine(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession,
         pages = [p for p in all_pages if p.page_number in content_set]
         triage_filtered = total_pages - len(pages)
         log.info(f"Triage filtered: examining {len(pages)}/{total_pages} pages")
+
+    # Capture flag review state before deletion
+    review_map = await _capture_flag_reviews(db, org_id, pack_id)
 
     # Clear existing data for idempotent retry
     await db.execute(delete(Extraction).where(Extraction.pack_id == pack_id, Extraction.org_id == org_id))
@@ -1619,6 +1701,13 @@ async def stage_examine(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession,
             status="open",
         ))
 
+    # Restore flag review state from before deletion
+    if review_map:
+        await db.flush()
+        restored = await _restore_flag_reviews(db, org_id, pack_id, review_map)
+        if restored:
+            log.info(f"Restored {restored} flag review(s) from previous analysis")
+
     # Create text chunks from transcriptions
     transcription_dicts = [
         {"page_number": t.page_number, "text": t.text}
@@ -1688,6 +1777,9 @@ async def _replay_examiner_cache(
     pages: list,
 ) -> None:
     """Replay cached examiner output into the database."""
+    # Capture flag review state before deletion
+    review_map = await _capture_flag_reviews(db, org_id, pack_id)
+
     # Clear existing data
     await db.execute(delete(Extraction).where(Extraction.pack_id == pack_id, Extraction.org_id == org_id))
     await db.execute(delete(Section).where(Section.pack_id == pack_id, Section.org_id == org_id))
@@ -1760,6 +1852,14 @@ async def _replay_examiner_cache(
             evidence_refs=f.get("evidence_refs", []),
             status=f.get("status", "open"),
         ))
+
+    # Restore flag review state from before deletion
+    if review_map:
+        await db.flush()
+        restored = await _restore_flag_reviews(db, org_id, pack_id, review_map)
+        if restored:
+            log = get_logger(__name__, org_id=org_id, pack_id=pack_id, stage="examine")
+            log.info(f"Restored {restored} flag review(s) from previous analysis")
 
 
 async def _create_text_chunks_from_transcriptions(

@@ -185,6 +185,15 @@ def normalize_flags(flags: list[dict]) -> list[dict]:
 
     merged.sort(key=_sort_key)
 
+    # Step 5: sort evidence_refs within each flag for deterministic ordering
+    for f in merged:
+        refs = f.get("evidence_refs") or []
+        if len(refs) > 1:
+            f["evidence_refs"] = sorted(
+                refs,
+                key=lambda r: (r.get("page_number", 0), r.get("text_snippet", "")),
+            )
+
     return merged
 
 

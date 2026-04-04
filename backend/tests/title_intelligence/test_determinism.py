@@ -630,6 +630,67 @@ def test_full_deterministic_pipeline_roundtrip():
 
 
 # ---------------------------------------------------------------------------
+# Evidence refs sorted deterministically after dedup
+# ---------------------------------------------------------------------------
+
+
+def test_evidence_refs_sorted_after_dedup():
+    """After merge_llm_and_deterministic_flags, evidence_refs are sorted."""
+    llm_flags = [
+        {
+            "flag_type": "missing_endorsement",
+            "severity": "medium",
+            "title": "Missing ALTA 5",
+            "description": "No ALTA 5 endorsement",
+            "evidence_refs": [
+                {"page_number": 12, "text_snippet": "ref C"},
+                {"page_number": 4, "text_snippet": "ref A"},
+                {"page_number": 8, "text_snippet": "ref B"},
+            ],
+        },
+    ]
+    merged = merge_llm_and_deterministic_flags(normalize_flags(llm_flags), [])
+    assert len(merged) == 1
+    refs = merged[0]["evidence_refs"]
+    page_numbers = [r["page_number"] for r in refs]
+    assert page_numbers == sorted(page_numbers), (
+        f"evidence_refs not sorted: {page_numbers}"
+    )
+
+
+def test_deterministic_flags_evidence_refs_sorted():
+    """Deterministic flags have sorted evidence_refs after full pipeline."""
+    mock_extractions = [
+        {
+            "extraction_type": "chain_of_title",
+            "value": {
+                "grantor": "Alice", "grantee": "Bob",
+                "recording_date": "2020-01-01", "instrument_type": "deed",
+                "recording_ref": "D-001",
+            },
+            "evidence_refs": [{"page_number": 5}, {"page_number": 1}],
+        },
+        {
+            "extraction_type": "chain_of_title",
+            "value": {
+                "grantor": "Charlie", "grantee": "Dave",
+                "recording_date": "2021-01-01", "instrument_type": "deed",
+                "recording_ref": "D-002",
+            },
+            "evidence_refs": [{"page_number": 3}],
+        },
+    ]
+    det_flags = generate_deterministic_flags(copy.deepcopy(mock_extractions))
+    for flag in det_flags:
+        refs = flag.get("evidence_refs", [])
+        if len(refs) > 1:
+            page_nums = [r.get("page_number", 0) for r in refs]
+            assert page_nums == sorted(page_nums), (
+                f"evidence_refs not sorted in {flag['flag_type']}: {page_nums}"
+            )
+
+
+# ---------------------------------------------------------------------------
 # Confidence thresholding tests
 # ---------------------------------------------------------------------------
 

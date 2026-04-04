@@ -1067,6 +1067,14 @@ class TitleExaminerAgent(BaseAIService):
                  for r in f.evidence_refs), default=0),
         ))
 
+        # Sort evidence_refs within each flag for deterministic ordering
+        for f in all_flags:
+            if len(f.evidence_refs) > 1:
+                f.evidence_refs.sort(key=lambda r: (
+                    r.page_number if hasattr(r, "page_number") else r.get("page_number", 0),
+                    r.text_snippet if hasattr(r, "text_snippet") else r.get("text_snippet", ""),
+                ))
+
         return ExaminerConsolidatedResult(
             page_transcriptions=all_transcriptions,
             sections=all_sections,
