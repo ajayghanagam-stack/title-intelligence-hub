@@ -1312,6 +1312,7 @@ async def _stage_examine_native_pdf(
         "sections": section_dicts,
         "extractions": extraction_dicts,
         "flags": normalized,
+        "flags_raw": raw_flag_dicts,
         "page_types": page_type_records,
     }
     try:
@@ -1637,6 +1638,7 @@ async def stage_examine(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession,
         "sections": section_dicts,
         "extractions": extraction_dicts,
         "flags": normalized,
+        "flags_raw": raw_flag_dicts,
     }
     try:
         await storage.save(cache_path, json.dumps(cache_data, sort_keys=True).encode("utf-8"))

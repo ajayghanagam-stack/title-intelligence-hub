@@ -1,0 +1,30 @@
+{
+    "name": "large_document",
+    "description": "423-page title commitment (Package 1). Mix of 27 text and 396 scanned pages. Tests chunking, batching, and triage at scale.",
+    "created_at": "2026-04-04T00:00:00Z",
+    "pdf_filename": "Package 1_Optimized.pdf",
+    "total_pages": 423,
+    "pdf_sha256": "b89bdb2b5fb1a5008a5d3ab284370bf204c8712e93600a08e84a47302808b7e6",
+    "ai_provider": "gemini",
+    "ai_model": "gemini/gemini-2.5-flash",
+    "pipeline_mode": "native_pdf",
+    "ingestion_prompt_hash": "2078ce4a67a2a62a5320d6e791cff032a86840fa96532ceeecd13cb771de05dd",
+    "extraction_tool_hash": "placeholder_replace_after_generation",
+    "flag_rules_version": "flag_rules_v4",
+    "chain_builder_version": "chain_builder_v1",
+    "normalizer_version": "party_norm_v1",
+    "triage_prompt_hash": "",
+    "extraction_registry_hash": "",
+    "triage_enabled": true,
+    "grouping_enabled": true,
+    "specialized_extraction": true,
+    "total_elapsed_seconds": 0.0,
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "extra": {
+        "note": "Real PDF, placeholder outputs. Regenerate with: python scripts/run_evals.py --update-golden",
+        "text_pages": 27,
+        "scanned_pages": 396,
+        "source": "Package 1_Optimized.pdf"
+    }
+}

@@ -1,0 +1,50 @@
+[
+  {
+    "ai_explanation": "The chain of title has a gap after position 1. The previous deed transferred to 'PWC-Parcel A, LLC' but the next deed shows 'MJV Associates, LLC' as grantor. Name match score: 25%.",
+    "description": "Grantee 'PWC-Parcel A, LLC' does not match next grantor 'MJV Associates, LLC' (similarity: 25%)",
+    "evidence_refs": [
+      {
+        "page_number": 48,
+        "text_snippet": "AND BEING the same property conveyed a 75% interest unto PWC-Parcel A, LLC, a Virginia\nlimited liability company by virtue of a Deed from Dexter S. Odin, David E. Feldman, and George P.\nSwenson, Trustees, dated December 31, 2005 and recorded January 30, 2006 in Instrument No.\n200601300015999, among the land records of Prince William County, Virginia."
+      },
+      {
+        "page_number": 48,
+        "text_snippet": "AND BEING the same property conveyed a 25% interest unto MJV Parcel A, LLC, a Virginia limited\nliability company by virtue of a Deed from MJV Associates, LLC. a Virginia limited liability\ncompany dated January 1, 2016 and recorded June 17, 2016 in Instrument No. 201606170045675.\namong the land records of Prince William County, Virginia."
+      },
+      {
+        "page_number": 44,
+        "text_snippet": "SPECIAL WARRANTY DEED\nTHIS DEED is made as of the a day of October, 2021, by MJV PARCEL A, LLC, a\nVirginia limited liability company and PWC-PARCEL A, LLC, a Virginia limited liability company\n(collectively, Grantor), and STANLEY MARTIN HOMES, LLC, a Delaware limited liability company"
+      },
+      {
+        "page_number": 44,
+        "text_snippet": "202110250121610\nPrince William County, VA\n10/25/2021 01:54 PM Pages: 5"
+      },
+      {
+        "page_number": 44,
+        "text_snippet": "Consideration: $31,655,000.00"
+      }
+    ],
+    "flag_type": "chain_of_title_gap",
+    "severity": "critical",
+    "source": "deterministic",
+    "title": "Chain gap at position 1"
+  },
+  {
+    "ai_explanation": "The same party appears with different names across sections. Verify the correct legal name.",
+    "description": "'MJV Associates, LLC' in legal_description differs from 'PWC Associates Limited Partnership' in schedule_b \u2014 79% match.",
+    "evidence_refs": [
+      {
+        "page_number": 48,
+        "text_snippet": "Deed from MJV Associates, LLC. a Virginia limited liability"
+      },
+      {
+        "page_number": 46,
+        "text_snippet": "By: PWC Associates Limited Partnership,\na Virginia limited partnership"
+      }
+    ],
+    "flag_type": "cross_section_mismatch",
+    "severity": "medium",
+    "source": "deterministic",
+    "title": "Party name mismatch across sections"
+  }
+]

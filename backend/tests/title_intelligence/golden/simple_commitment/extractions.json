@@ -1,0 +1,716 @@
+[
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 42,
+        "text_snippet": "THIS Deed, made this 30 day of January 2026 by and between Stanley\nMartin Homes, LLC, a Delaware limited liability company, Grantor, and,\n11266 Aristotle LLC, a Virginia limited liability company, Grantee."
+      },
+      {
+        "page_number": 42,
+        "text_snippet": "Consideration: $618,925.00"
+      },
+      {
+        "page_number": 42,
+        "text_snippet": "202601300006000\nPrince William County, VA\n01/30/2026 02:36 PM Pages: 2"
+      }
+    ],
+    "extraction_type": "chain_of_title",
+    "label": "Deed 1",
+    "value": {
+      "consideration": "$618,925.00",
+      "document_type": "Deed",
+      "grantee": "11266 Aristotle LLC",
+      "grantor": "Stanley Martin Homes, LLC",
+      "recording_date": "01/30/2026",
+      "recording_reference": "202601300006000"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 44,
+        "text_snippet": "SPECIAL WARRANTY DEED\nTHIS DEED is made as of the a day of October, 2021, by MJV PARCEL A, LLC, a\nVirginia limited liability company and PWC-PARCEL A, LLC, a Virginia limited liability company\n(collectively, Grantor), and STANLEY MARTIN HOMES, LLC, a Delaware limited liability company"
+      },
+      {
+        "page_number": 44,
+        "text_snippet": "202110250121610\nPrince William County, VA\n10/25/2021 01:54 PM Pages: 5"
+      },
+      {
+        "page_number": 44,
+        "text_snippet": "Consideration: $31,655,000.00"
+      }
+    ],
+    "extraction_type": "chain_of_title",
+    "label": "Deed 2",
+    "value": {
+      "consideration": "$31,655,000.00",
+      "document_type": "Special Warranty Deed",
+      "grantee": "STANLEY MARTIN HOMES, LLC",
+      "grantor": "MJV PARCEL A, LLC and PWC-PARCEL A, LLC",
+      "recording_date": "10/25/2021",
+      "recording_reference": "202110250121610"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 48,
+        "text_snippet": "AND BEING the same property conveyed a 75% interest unto PWC-Parcel A, LLC, a Virginia\nlimited liability company by virtue of a Deed from Dexter S. Odin, David E. Feldman, and George P.\nSwenson, Trustees, dated December 31, 2005 and recorded January 30, 2006 in Instrument No.\n200601300015999, among the land records of Prince William County, Virginia."
+      }
+    ],
+    "extraction_type": "chain_of_title",
+    "label": "Deed 3",
+    "value": {
+      "consideration": "",
+      "document_type": "Deed",
+      "grantee": "PWC-Parcel A, LLC",
+      "grantor": "Dexter S. Odin, David E. Feldman, and George P. Swenson, Trustees",
+      "recording_date": "01/30/2006",
+      "recording_reference": "200601300015999"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 48,
+        "text_snippet": "AND BEING the same property conveyed a 25% interest unto MJV Parcel A, LLC, a Virginia limited\nliability company by virtue of a Deed from MJV Associates, LLC. a Virginia limited liability\ncompany dated January 1, 2016 and recorded June 17, 2016 in Instrument No. 201606170045675.\namong the land records of Prince William County, Virginia."
+      }
+    ],
+    "extraction_type": "chain_of_title",
+    "label": "Deed 4",
+    "value": {
+      "consideration": "",
+      "document_type": "Deed",
+      "grantee": "MJV Parcel A, LLC",
+      "grantor": "MJV Associates, LLC",
+      "recording_date": "06/17/2016",
+      "recording_reference": "201606170045675"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 41,
+        "text_snippet": "Current Balance:\n$0.00\n2025 Taxes\nTax\nFees\nPenalty\nInterest\nTotal\nBill 2025-1 - Due 7/15/2025\nReal Estate Cycle 1\n$658.89\n$0.00\n$0.00\n$0.00\n$658.89\n$658.89\n$0.00\n$0.00\n$0.00\n$658.89\nBill 2025-2 - Due 12/5/2025\nReal Estate Cycle 2\n$658.89\n$0.00\n$0.00\n$0.00\n$658.89\n$658.89\n$0.00\n$0.00\n$0.00\n$658.89\nTotal 2025 Taxes\n$1,317.78\n$0.00\n$0.00\n$0.00\n$1,317.78"
+      }
+    ],
+    "extraction_type": "compliance",
+    "label": "2025 Taxes",
+    "value": {
+      "details": "Total 2025 Taxes: $1,317.78. Current Balance: $0.00. Taxes are listed as due in the future (July and December 2025) and are not currently delinquent.",
+      "item": "2025 Taxes",
+      "status": "compliant"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 49,
+        "text_snippet": "PACER Service Center\n03/13/2026 12:22:31\nUser\nortris_0414\nClient Code\nDescription\nAll Court Types Party Search\nResults\nBillable Pages\nAll Courts; Name 11266 ARISTOTLE\nLLC; Court ID VA\nThe search returned no results.\n1 ($0.10)"
+      }
+    ],
+    "extraction_type": "compliance",
+    "label": "PACER Search - 11266 ARISTOTLE LLC",
+    "value": {
+      "details": "The search returned no results, indicating no adverse findings for the entity.",
+      "item": "PACER Search for 11266 ARISTOTLE LLC",
+      "status": "compliant"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 50,
+        "text_snippet": "PACER Service Center\n03/13/2026 12:22:01\nUser\nortris_0414\nClient Code\nDescription\nAll Court Types Party Search\nResults\nBillable Pages\nAll Courts; Name Gokce, Mehmet;\nCourt ID VA\nThe search returned no results.\n1 ($0.10)"
+      }
+    ],
+    "extraction_type": "compliance",
+    "label": "PACER Search - Mehmet Gokce",
+    "value": {
+      "details": "The search returned no results, indicating no adverse findings for the individual.",
+      "item": "PACER Search for Mehmet Gokce",
+      "status": "compliant"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 51,
+        "text_snippet": "CrossCountry Mortgage LLC\nNo Match\n0 of 57580"
+      }
+    ],
+    "extraction_type": "compliance",
+    "label": "Patriot Search - CrossCountry Mortgage LLC",
+    "value": {
+      "details": "Patriot Search returned 'No Match' for CrossCountry Mortgage LLC, indicating no sanctions or watch list hits.",
+      "item": "Patriot Search for CrossCountry Mortgage LLC",
+      "status": "compliant"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 51,
+        "text_snippet": "Mehmet Gokce\nName(s) Searched\nPatriot Search Results\nMatch Type(s)\nNo Match\nSearch #: 304587671\nSearch Date: 03/11/2026 07:45 PM\n0 of 57580"
+      }
+    ],
+    "extraction_type": "compliance",
+    "label": "Patriot Search - Mehmet Gokce",
+    "value": {
+      "details": "Patriot Search returned 'No Match' for Mehmet Gokce, indicating no sanctions or watch list hits.",
+      "item": "Patriot Search for Mehmet Gokce",
+      "status": "compliant"
+    }
+  },
+  {
+    "confidence": 0.95,
+    "evidence_refs": [
+      {
+        "page_number": 21,
+        "text_snippet": "Filed by Plaintiff CRISWELL CHEVROLET, INC.; Plaintiff CRISWELL CHEVROLET, INC."
+      },
+      {
+        "page_number": 22,
+        "text_snippet": "CRISWELL CHEVROLET, INC.\nPlaintiff/Judgment-Creditor"
+      },
+      {
+        "page_number": 24,
+        "text_snippet": "CRISWELL CHEVROLET, INC.\nPlaintiff/Judgment-Creditor"
+      },
+      {
+        "page_number": 26,
+        "text_snippet": "foreign judgment has been docketed against you in our Circuit Court by: CRISWELL\nCHEVEROLET INC., 503 QUINCE ORCHARD ROAD, GAITHERSBURG, MD 20878."
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "corporation",
+      "marital_status": "unknown",
+      "name": "CRISWELL CHEVROLET, INC.",
+      "role": "plaintiff"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 41,
+        "text_snippet": "View Parcel 266723 - STANLEY MARTIN HOMES LLC"
+      },
+      {
+        "page_number": 42,
+        "text_snippet": "Stanley\nMartin Homes, LLC, a Delaware limited liability company, Grantor"
+      },
+      {
+        "page_number": 44,
+        "text_snippet": "STANLEY MARTIN HOMES, LLC, a Delaware limited liability company\nwhose address for indexing purposes is 14200 Park Meadow Drive, Suite 100 North, Chantilly, VA 20151\n(Grantee)."
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 1",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "llc",
+      "marital_status": "unknown",
+      "name": "STANLEY MARTIN HOMES LLC",
+      "role": "current_owner"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 46,
+        "text_snippet": "Name: David Feldman\nTitle: General Partner & Authorized Signatory\nSTATE OF\nVirginia\nCITY/COUNTY OF Fairfax\nto-wit:\nDevecca Wenause Notary Public in and for the jurisdiction aforesaid, do hereby\ncertify that David Feldman a General Partner and Authorized Signatory of PWC Associates Limited\nPartnership, a Virginia limited partnership being the sole member of PWC-Parcel A, LLC, a Virginia limited\nliability company, who is personally known to me, personally appeared before me and acknowledged the\nsame on behalf of the company"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 10",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "individual",
+      "marital_status": "unknown",
+      "name": "David Feldman",
+      "role": "signatory"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 46,
+        "text_snippet": "Revesce. Wehausen\nNotary Public\nRebecca Tlangoo Wehausen\nCommonwealth of Virginia\nNotary Public\nCommission No. 7296681\nMy Commission Expires 8/31/2025"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 11",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "individual",
+      "marital_status": "unknown",
+      "name": "Rebecca Tlangoo Wehausen",
+      "role": "notary"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 47,
+        "text_snippet": "Thence departing said Wellington Road. Route #674 and running with said Northern Virginia Electric\nCooperative and with the properties of Alfred Paul Dugas and Johanna Maria Dugas. Instrument No.\n200409290166144."
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 12",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "individual",
+      "marital_status": "unknown",
+      "name": "Alfred Paul Dugas",
+      "role": "prior_owner"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 47,
+        "text_snippet": "Thence departing said Wellington Road. Route #674 and running with said Northern Virginia Electric\nCooperative and with the properties of Alfred Paul Dugas and Johanna Maria Dugas. Instrument No.\n200409290166144."
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 13",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "individual",
+      "marital_status": "unknown",
+      "name": "Johanna Maria Dugas",
+      "role": "prior_owner"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 47,
+        "text_snippet": "Maria B. Magalhaes, instruinent no.\n200202130021848"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 14",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "individual",
+      "marital_status": "unknown",
+      "name": "Maria B. Magalhaes",
+      "role": "prior_owner"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 47,
+        "text_snippet": "McDaniel Pods Realty. L.C.. Instrument No. 200603100040525"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 15",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "llc",
+      "marital_status": "unknown",
+      "name": "McDaniel Pods Realty, L.C.",
+      "role": "prior_owner"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 47,
+        "text_snippet": "Virginia Crane\nRental Incorporated, deed book 1430. page 415"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 16",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "corporation",
+      "marital_status": "unknown",
+      "name": "Virginia Crane Rental Incorporated",
+      "role": "prior_owner"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 47,
+        "text_snippet": "the northerly line of the property of The Rectors and\nVisitors of George Mason University. deed book 2919. page 682.\nThence departing said Virginia Crane Rental Incorporated and running with said The Rectors and\nVisitors of George Mason University"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 17",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "unknown",
+      "marital_status": "unknown",
+      "name": "The Rectors and Visitors of George Mason University",
+      "role": "prior_owner"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 47,
+        "text_snippet": "The Property of the\nBoard of County Supervisors of Prince William County. Virginia, deed book 2428. page 219.\nThence departing said The Rectors and Visitors of George Mason University and ruming with said\nBoard of County Supervisors of Prince William County. Virginia"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 18",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "government",
+      "marital_status": "unknown",
+      "name": "Board of County Supervisors of Prince William County, Virginia",
+      "role": "prior_owner"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 48,
+        "text_snippet": "Deed from Dexter S. Odin, David E. Feldman, and George P.\nSwenson, Trustees"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 19",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "individual",
+      "marital_status": "unknown",
+      "name": "Dexter S. Odin",
+      "role": "trustee"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 42,
+        "text_snippet": "11266 Aristotle LLC, a Virginia limited liability company, Grantee."
+      },
+      {
+        "page_number": 49,
+        "text_snippet": "All Courts; Name 11266 ARISTOTLE\nLLC; Court ID VA"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 2",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "llc",
+      "marital_status": "unknown",
+      "name": "11266 Aristotle LLC",
+      "role": "proposed_buyer"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 48,
+        "text_snippet": "Deed from Dexter S. Odin, David E. Feldman, and George P.\nSwenson, Trustees"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 20",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "individual",
+      "marital_status": "unknown",
+      "name": "George P. Swenson",
+      "role": "trustee"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 48,
+        "text_snippet": "Deed from MJV Associates, LLC. a Virginia limited liability"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 21",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "llc",
+      "marital_status": "unknown",
+      "name": "MJV Associates, LLC",
+      "role": "prior_owner"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 50,
+        "text_snippet": "All Courts; Name Gokce, Mehmet;\nCourt ID VA"
+      },
+      {
+        "page_number": 51,
+        "text_snippet": "Mehmet Gokce\nName(s) Searched\nPatriot Search Results\nMatch Type(s)\nNo Match"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 22",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "individual",
+      "marital_status": "unknown",
+      "name": "Mehmet Gokce",
+      "role": "unknown"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 51,
+        "text_snippet": "CrossCountry Mortgage LLC\nNo Match"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 23",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "llc",
+      "marital_status": "unknown",
+      "name": "CrossCountry Mortgage LLC",
+      "role": "unknown"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 43,
+        "text_snippet": "By: Randi Castillo, Senior Sales Operations Manager\nSTATE OF VIRGINIA, at large:\nCounty of Fairfax\nto wit:\nI, the undersigned Notary Public in and for the State and County aforesaid,\ndo hereby certify that Randi Castillo, Senior Sales Operations Manager of Stanley\nMartin Homes, LLC, a Delaware limited liability company who has signed the\nforegoing Deed, has acknowledged the same before me in my State and County\naforesaid."
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 3",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "individual",
+      "marital_status": "unknown",
+      "name": "Randi Castillo",
+      "role": "signatory"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 43,
+        "text_snippet": "ALISON ONARAN\nNOTARY PUBLIC\nREGISTRATION #00272107\nCOMMONWEALTH OF VIRGINIA\nMY COMMISSION EXPIRES 08/31/28"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 4",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "individual",
+      "marital_status": "unknown",
+      "name": "Alison Onaran",
+      "role": "notary"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 44,
+        "text_snippet": "MJV PARCEL A, LLC, a\nVirginia limited liability company"
+      },
+      {
+        "page_number": 45,
+        "text_snippet": "GRANTOR:\nMJV PARCEL ALLC,\na Virginia limited liability company"
+      },
+      {
+        "page_number": 48,
+        "text_snippet": "As to MJV Parcel A, LLC. a Virginia limited liability company's 25% interest:\nAND BEING the same property conveyed a 25% interest unto MJV Parcel A, LLC, a Virginia limited\nliability company by virtue of a Deed from MJV Associates, LLC. a Virginia limited liability"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 5",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "llc",
+      "marital_status": "unknown",
+      "name": "MJV PARCEL A, LLC",
+      "role": "prior_owner"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 44,
+        "text_snippet": "PWC-PARCEL A, LLC, a Virginia limited liability company"
+      },
+      {
+        "page_number": 46,
+        "text_snippet": "GRANTOR:\nPWC-PARCEL A, LLC,\na Virginia limited liability company"
+      },
+      {
+        "page_number": 48,
+        "text_snippet": "As to PWC-Parcel A. LLC. a Virginia limited liability company's 75% interest:\nAND BEING the same property conveyed a 75% interest unto PWC-Parcel A, LLC, a Virginia\nlimited liability company by virtue of a Deed from Dexter S. Odin, David E. Feldman, and George P.\nSwenson, Trustees, dated December 31, 2005 and recorded January 30, 2006 in Instrument No.\n200601300015999, among the land records of Prince William County, Virginia."
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 6",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "llc",
+      "marital_status": "unknown",
+      "name": "PWC-PARCEL A, LLC",
+      "role": "prior_owner"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 45,
+        "text_snippet": "Name Howard Liby\nTitle: Munagre\nSTATE OF\nMaryland\nOF Montgomery\nto-wit:\n1. Paul J. Really\ncertify that Howard Aibly, the Manager of MJV PARCEL A, LLC, a Virginia\nlimited liability company, who is personally known to me, personally appeared before me and acknowledged\nthe same on behalf of the company"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 7",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "individual",
+      "marital_status": "unknown",
+      "name": "Howard Liby",
+      "role": "signatory"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 45,
+        "text_snippet": "Paul J. O'REILLL\n.....................otary Public\nNOTARY PUB\nMY\nCOMMISSION\nEXPIRES\nMAR. 11, 2025"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 8",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "individual",
+      "marital_status": "unknown",
+      "name": "Paul J. O'Reilly",
+      "role": "notary"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 46,
+        "text_snippet": "By: PWC Associates Limited Partnership,\na Virginia limited partnership"
+      }
+    ],
+    "extraction_type": "party",
+    "label": "Party 9",
+    "value": {
+      "date_of_death": "",
+      "deceased": false,
+      "entity_type": "partnership",
+      "marital_status": "unknown",
+      "name": "PWC Associates Limited Partnership",
+      "role": "general_partner"
+    }
+  },
+  {
+    "confidence": 1.0,
+    "evidence_refs": [
+      {
+        "page_number": 41,
+        "text_snippet": "Address:\n11266 ARISTOTLE ST\nMANASSAS, VA 20109"
+      },
+      {
+        "page_number": 41,
+        "text_snippet": "GPIN:\n7696-02-0565"
+      },
+      {
+        "page_number": 42,
+        "text_snippet": "Tax ID#: 7696-02-0565; Account #266723"
+      },
+      {
+        "page_number": 42,
+        "text_snippet": "Lot 61, Section 2, INNOVATION TOWN CENTER, duly dedicated\nand recorded at Instrument Number 202403250014767 and platted at\nInstrument Number 202403250014768, among the land records of\nPrince William County, Virginia."
+      },
+      {
+        "page_number": 47,
+        "text_snippet": "All of that certain lot or parcel of land situate, lying and being in the County of Prince William,\nVirginia and more particularly described as follows:"
+      },
+      {
+        "page_number": 48,
+        "text_snippet": "acres of land more or less."
+      }
+    ],
+    "extraction_type": "property",
+    "label": "Property 1",
+    "value": {
+      "address": "11266 ARISTOTLE ST MANASSAS, VA 20109",
+      "apn": "7696-02-0565",
+      "block": "2",
+      "county": "Prince William",
+      "interest_type": "Fee Simple",
+      "legal_description": "Lot 61, Section 2, INNOVATION TOWN CENTER, duly dedicated and recorded at Instrument Number 202403250014767 and platted at Instrument Number 202403250014768, among the land records of Prince William County, Virginia. AND BEING a portion of the property acquired by the Grantor by deed dated October 22, 2021 and recorded on October 25, 2021 in the Clerk's Office of the Circuit Court for Prince William County, VA, in Instrument No. 202110250121610. All of that certain lot or parcel of land situate, lying and being in the County of Prince William, Virginia and more particularly described as follows: Beginning at the northeasterly corner of the tract herein described. said corner being an iron pipe set on the southerly variable width public right-of-way line of Wellington Road, Route #674 and on the westerly line of the property of Northern Virginia Electric Cooperative (record information unavailable). Thence departing said Wellington Road. Route #674 and running with said Northern Virginia Electric Cooperative and with the properties of Alfred Paul Dugas and Johanna Maria Dugas. Instrument No. 200409290166144. Newington, L.C.. deed book 2866, page 584. Maria B. Magalhaes, instruinent no. 200202130021848, McDaniel Pods Realty. L.C.. Instrument No. 200603100040525 and Virginia Crane Rental Incorporated, deed book 1430. page 415 the following five (5) courses and distances: S28\u00b003\u203204\u2033E 371.67 feet to an iron pipe found: S28\u00b033'30\"E 148.74 feet to an iron pipe found; S28\u00b022\u203252\u2033E 824.73 feet to an iron pipe set: S31\u00b046\u203208\u2033E 232.89 feet to a fence post found and S31534'56\"E 505.15 feet to an iron pipe found on the northerly line of the property of The Rectors and Visitors of George Mason University. deed book 2919. page 682. Thence departing said Virginia Crane Rental Incorporated and running with said The Rectors and Visitors of George Mason University S43\u00b003'45\"W 477.88 feet to an iron pipe found and S25\u00b025'41\"E 1042.25 feet to an iron pipe found, said iron pipe being the northeasterly corner of The Property of the Board of County Supervisors of Prince William County. Virginia, deed book 2428. page 219. Thence departing said The Rectors and Visitors of George Mason University and ruming with said Board of County Supervisors of Prince William County. Virginia S48\u00b013\u203250\u2033W 512 55 feet to an iron pipe found and S83\u00b046'09\"W 628.65 feet to an iron pipe found. said iron pipe being on the easterly 200 foot public right-of-way line of Prince William Parkway. Thence departing said Board of County Supervisors of Prince William County. Virginia, and running with said Prince William Parkway N23\u00b052'26\"W 2705.80 feet to an iron rod found and S55.29 feet along the arc of a curve to the left, said curve having a radius of 11.559.16 feet. a central angle of 4\u00b014'22\" and a chord which bears N25\u00b059'37\"W 855.09 feet to a drill hole set in a concrete ditch. said drill hole being on the aforementioned southerly variable width public right-of-way line of Wellington Road. Thence departing said Prince William Parkway and running with said Wellington Road the following four (4) courses and distances: N26\u00b022'22\"E 48.12 feet to an iron pipe set: N70\u00b041\u203213\u2033E 787.18 feet to a point: 417.63 feet along the are of a curve to the right. said curve having a radius of 668.94 feet. a central angle of 35\u00b046'14\" and a chord which bears NS8\u00b034\u203220\u2033E 410.88 feet to an iron pipe set and S74\u00b015\u203226\u2033E 161.83 feet to the point of beginning and containing 4.620.882 square feet or 106.08085 acres of land more or less.",
+      "lot": "61",
+      "state": "VA",
+      "subdivision": "INNOVATION TOWN CENTER"
+    }
+  }
+]

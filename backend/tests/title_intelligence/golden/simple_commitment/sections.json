@@ -1,0 +1,44 @@
+[
+  {
+    "confidence": 1.0,
+    "end_page": 4,
+    "section_type": "schedule_a",
+    "start_page": 3
+  },
+  {
+    "confidence": 1.0,
+    "end_page": 6,
+    "section_type": "schedule_b",
+    "start_page": 5
+  },
+  {
+    "confidence": 1.0,
+    "end_page": 9,
+    "section_type": "schedule_b",
+    "start_page": 7
+  },
+  {
+    "confidence": 1.0,
+    "end_page": 11,
+    "section_type": "schedule_a",
+    "start_page": 10
+  },
+  {
+    "confidence": 1.0,
+    "end_page": 13,
+    "section_type": "schedule_b",
+    "start_page": 12
+  },
+  {
+    "confidence": 1.0,
+    "end_page": 46,
+    "section_type": "schedule_b",
+    "start_page": 14
+  },
+  {
+    "confidence": 1.0,
+    "end_page": 52,
+    "section_type": "legal_description",
+    "start_page": 47
+  }
+]

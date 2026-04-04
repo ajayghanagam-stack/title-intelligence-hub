@@ -1,0 +1,125 @@
+{
+  "links": [
+    {
+      "position": 1,
+      "grantor": "Dexter S. Odin, David E. Feldman, and George P. Swenson, Trustees",
+      "grantee": "PWC-Parcel A, LLC",
+      "recording_date": "2006-01-30",
+      "recording_ref": "",
+      "instrument_type": "",
+      "amount": "",
+      "evidence_refs": [
+        {
+          "page_number": 48,
+          "text_snippet": "AND BEING the same property conveyed a 75% interest unto PWC-Parcel A, LLC, a Virginia\nlimited liability company by virtue of a Deed from Dexter S. Odin, David E. Feldman, and George P.\nSwenson, Trustees, dated December 31, 2005 and recorded January 30, 2006 in Instrument No.\n200601300015999, among the land records of Prince William County, Virginia."
+        }
+      ]
+    },
+    {
+      "position": 2,
+      "grantor": "MJV Associates, LLC",
+      "grantee": "MJV Parcel A, LLC",
+      "recording_date": "2016-06-17",
+      "recording_ref": "",
+      "instrument_type": "",
+      "amount": "",
+      "evidence_refs": [
+        {
+          "page_number": 48,
+          "text_snippet": "AND BEING the same property conveyed a 25% interest unto MJV Parcel A, LLC, a Virginia limited\nliability company by virtue of a Deed from MJV Associates, LLC. a Virginia limited liability\ncompany dated January 1, 2016 and recorded June 17, 2016 in Instrument No. 201606170045675.\namong the land records of Prince William County, Virginia."
+        }
+      ]
+    },
+    {
+      "position": 3,
+      "grantor": "MJV PARCEL A, LLC and PWC-PARCEL A, LLC",
+      "grantee": "STANLEY MARTIN HOMES, LLC",
+      "recording_date": "2021-10-25",
+      "recording_ref": "",
+      "instrument_type": "",
+      "amount": "$31,655,000.00",
+      "evidence_refs": [
+        {
+          "page_number": 44,
+          "text_snippet": "SPECIAL WARRANTY DEED\nTHIS DEED is made as of the a day of October, 2021, by MJV PARCEL A, LLC, a\nVirginia limited liability company and PWC-PARCEL A, LLC, a Virginia limited liability company\n(collectively, Grantor), and STANLEY MARTIN HOMES, LLC, a Delaware limited liability company"
+        },
+        {
+          "page_number": 44,
+          "text_snippet": "202110250121610\nPrince William County, VA\n10/25/2021 01:54 PM Pages: 5"
+        },
+        {
+          "page_number": 44,
+          "text_snippet": "Consideration: $31,655,000.00"
+        }
+      ]
+    },
+    {
+      "position": 4,
+      "grantor": "Stanley Martin Homes, LLC",
+      "grantee": "11266 Aristotle LLC",
+      "recording_date": "2026-01-30",
+      "recording_ref": "",
+      "instrument_type": "",
+      "amount": "$618,925.00",
+      "evidence_refs": [
+        {
+          "page_number": 42,
+          "text_snippet": "THIS Deed, made this 30 day of January 2026 by and between Stanley\nMartin Homes, LLC, a Delaware limited liability company, Grantor, and,\n11266 Aristotle LLC, a Virginia limited liability company, Grantee."
+        },
+        {
+          "page_number": 42,
+          "text_snippet": "Consideration: $618,925.00"
+        },
+        {
+          "page_number": 42,
+          "text_snippet": "202601300006000\nPrince William County, VA\n01/30/2026 02:36 PM Pages: 2"
+        }
+      ]
+    }
+  ],
+  "gaps": [
+    {
+      "position": 1,
+      "expected_grantor": "PWC-Parcel A, LLC",
+      "actual_grantor": "MJV Associates, LLC",
+      "match_score": 25.0,
+      "evidence_refs": [
+        {
+          "page_number": 48,
+          "text_snippet": "AND BEING the same property conveyed a 75% interest unto PWC-Parcel A, LLC, a Virginia\nlimited liability company by virtue of a Deed from Dexter S. Odin, David E. Feldman, and George P.\nSwenson, Trustees, dated December 31, 2005 and recorded January 30, 2006 in Instrument No.\n200601300015999, among the land records of Prince William County, Virginia."
+        },
+        {
+          "page_number": 48,
+          "text_snippet": "AND BEING the same property conveyed a 25% interest unto MJV Parcel A, LLC, a Virginia limited\nliability company by virtue of a Deed from MJV Associates, LLC. a Virginia limited liability\ncompany dated January 1, 2016 and recorded June 17, 2016 in Instrument No. 201606170045675.\namong the land records of Prince William County, Virginia."
+        }
+      ]
+    },
+    {
+      "position": 2,
+      "expected_grantor": "MJV Parcel A, LLC",
+      "actual_grantor": "MJV PARCEL A, LLC and PWC-PARCEL A, LLC",
+      "match_score": 57.14285714285714,
+      "evidence_refs": [
+        {
+          "page_number": 48,
+          "text_snippet": "AND BEING the same property conveyed a 25% interest unto MJV Parcel A, LLC, a Virginia limited\nliability company by virtue of a Deed from MJV Associates, LLC. a Virginia limited liability\ncompany dated January 1, 2016 and recorded June 17, 2016 in Instrument No. 201606170045675.\namong the land records of Prince William County, Virginia."
+        },
+        {
+          "page_number": 44,
+          "text_snippet": "SPECIAL WARRANTY DEED\nTHIS DEED is made as of the a day of October, 2021, by MJV PARCEL A, LLC, a\nVirginia limited liability company and PWC-PARCEL A, LLC, a Virginia limited liability company\n(collectively, Grantor), and STANLEY MARTIN HOMES, LLC, a Delaware limited liability company"
+        },
+        {
+          "page_number": 44,
+          "text_snippet": "202110250121610\nPrince William County, VA\n10/25/2021 01:54 PM Pages: 5"
+        },
+        {
+          "page_number": 44,
+          "text_snippet": "Consideration: $31,655,000.00"
+        }
+      ]
+    }
+  ],
+  "unreleased_mortgages": [],
+  "chain_complete": false,
+  "total_links": 4
+}
