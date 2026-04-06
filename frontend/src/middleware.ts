@@ -21,6 +21,19 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // --- Vanity URLs: /<slug> → /org/<slug>/login or /org/<slug>/dashboard ---
+  const RESERVED_PREFIXES = new Set([
+    "/login", "/manage-customers", "/forgot-password", "/reset-password",
+    "/dashboard", "/profile", "/admin", "/apps", "/org", "/error",
+  ]);
+  if (/^\/[a-z0-9]+$/i.test(pathname) && !RESERVED_PREFIXES.has(pathname)) {
+    const slug = pathname.slice(1);
+    if (hasSession) {
+      return NextResponse.redirect(new URL(`/org/${slug}/dashboard`, request.url));
+    }
+    return NextResponse.redirect(new URL(`/org/${slug}/login`, request.url));
+  }
+
   // --- Customer org routes: /org/{slug}/... ---
   const orgMatch = pathname.match(/^\/org\/([^/]+)(\/(.*))?$/);
   if (orgMatch) {

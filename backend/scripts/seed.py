@@ -129,8 +129,8 @@ async def seed(session: AsyncSession) -> None:
 
     # ── 5. Society Title customer account ──────────────────────
     # Create the Society Title org + admin user with subscriptions to both apps
-    CUSTOMER_ORG_NAME = "Society Title Co"
-    CUSTOMER_ORG_SLUG = "society-title-co"
+    CUSTOMER_ORG_NAME = "Society Title"
+    CUSTOMER_ORG_SLUG = "societytitle"
     CUSTOMER_EMAIL = "admin@societytitle.com"
     CUSTOMER_PASSWORD = "admin123"
     CUSTOMER_FULL_NAME = "Society Title Admin"
