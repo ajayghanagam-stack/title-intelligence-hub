@@ -88,8 +88,6 @@ async def seed(session: AsyncSession) -> None:
             print(f"  Updated user to platform admin: {ADMIN_FULL_NAME}")
         else:
             print(f"  Platform admin already exists: {ADMIN_FULL_NAME} <{ADMIN_EMAIL}> (id={user.id})")
-        # Always ensure password is correct
-        user.password_hash = hash_password(ADMIN_PASSWORD)
 
     # ── 3. Title Intelligence micro app ─────────────────────────
     # Seeded so the admin can assign it to customer accounts.
@@ -169,9 +167,7 @@ async def seed(session: AsyncSession) -> None:
         await session.flush()
         print(f"  Created customer admin: {CUSTOMER_FULL_NAME} <{CUSTOMER_EMAIL}> (id={customer_user.id})")
     else:
-        # Always ensure password is correct
-        customer_user.password_hash = hash_password(CUSTOMER_PASSWORD)
-        print(f"  Customer admin already exists: {CUSTOMER_FULL_NAME} <{CUSTOMER_EMAIL}> (id={customer_user.id}) — password reset")
+        print(f"  Customer admin already exists: {CUSTOMER_FULL_NAME} <{CUSTOMER_EMAIL}> (id={customer_user.id})")
 
     # Subscribe Society Title to both micro apps
     for app_obj in [ti_app, ts_app]:
