@@ -89,13 +89,6 @@ GCP_REGION="${GCP_REGION:-us-east1}"
 
 S3_BUCKET="${PREFIX}-storage-$(aws sts get-caller-identity --query Account --output text)"
 
-# Parse RDS credentials from DATABASE_URL for Temporal
-# Format: postgresql+asyncpg://user:pass@host:port/dbname
-DB_USER=$(echo "$DATABASE_URL" | sed -E 's|.*://([^:]+):.*|\1|')
-DB_PASS=$(echo "$DATABASE_URL" | sed -E 's|.*://[^:]+:([^@]+)@.*|\1|')
-DB_HOST=$(echo "$DATABASE_URL" | sed -E 's|.*@([^:/]+)[:/].*|\1|')
-DB_PORT=$(echo "$DATABASE_URL" | sed -E 's|.*@[^:]+:([0-9]+)/.*|\1|')
-
 # Domain
 APP_URL="https://platform.logikality.ai"
 CORS_VALUE="[\"https://platform.logikality.ai\"]"
@@ -123,8 +116,7 @@ ${VERTEX_ENV}
 STORAGE_PROVIDER=s3
 S3_BUCKET=${S3_BUCKET}
 S3_REGION=${REGION}
-PIPELINE_BACKEND=temporal
-TEMPORAL_ADDRESS=temporal:7233
+PIPELINE_BACKEND=background_tasks
 AI_PROVIDER=gemini
 NATIVE_PDF_CONCURRENCY=12
 NATIVE_PDF_BATCH_SIZE=20
@@ -135,14 +127,6 @@ DEBUG=false"
 
 log "Uploading .env.prod to EC2..."
 echo "$ENV_CONTENT" | $SSH_CMD "cat > ${APP_DIR}/infra/prod/.env.prod"
-
-# Write Temporal env (RDS credentials for Temporal auto-setup)
-TEMPORAL_ENV="POSTGRES_USER=${DB_USER}
-POSTGRES_PWD=${DB_PASS}
-POSTGRES_SEEDS=${DB_HOST}
-DB_PORT=${DB_PORT}"
-log "Uploading .env.temporal to EC2..."
-echo "$TEMPORAL_ENV" | $SSH_CMD "cat > ${APP_DIR}/infra/prod/.env.temporal"
 
 # Upload GCP service account JSON (or create empty placeholder for docker-compose mount)
 if [ "$VERTEX_AI_ENABLED" = "true" ]; then
@@ -159,7 +143,7 @@ $SSH_CMD "cd ${APP_DIR} && git fetch origin main && git reset --hard origin/main
 # ── 3. Build and start containers ─────────────────────────────────────────
 SERVICES=""
 if [ "$TARGET" = "backend" ] || [ "$TARGET" = "both" ]; then
-  SERVICES="$SERVICES temporal backend temporal-worker"
+  SERVICES="$SERVICES backend"
 fi
 if [ "$TARGET" = "frontend" ] || [ "$TARGET" = "both" ]; then
   SERVICES="$SERVICES frontend"
