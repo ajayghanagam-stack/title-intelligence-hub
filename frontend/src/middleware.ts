@@ -25,6 +25,7 @@ export function middleware(request: NextRequest) {
   const RESERVED_PREFIXES = new Set([
     "/login", "/manage-customers", "/forgot-password", "/reset-password",
     "/dashboard", "/profile", "/admin", "/apps", "/org", "/error",
+    "/logikality",
   ]);
   if (/^\/[a-z0-9]+$/i.test(pathname) && !RESERVED_PREFIXES.has(pathname)) {
     const slug = pathname.slice(1);
