@@ -38,6 +38,9 @@ PyMuPDF>=1.23
 # Text matching
 rapidfuzz>=3.0
 
+# Workflow orchestration
+temporalio>=1.7
+
 # Templates
 Jinja2==3.1.6
 

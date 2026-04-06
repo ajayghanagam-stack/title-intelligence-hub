@@ -14,7 +14,7 @@ Title Intelligence Hub is a **multi-tenant SaaS platform** composed of pluggable
 
 | Rule | Detail |
 |------|--------|
-| **Micro App Architecture** | Platform hosts 5–10 micro apps. MVP ships 2: Title Intelligence, Tax Search & Certification (stub) |
+| **Micro App Architecture** | Platform hosts 5–10 micro apps. MVP ships 2: Title Intelligence, Title Search & Abstracting |
 | **SaaS Model** | All micro apps hosted as multi-tenant SaaS |
 | **Org-Based Purchasing** | Organizations purchase individual micro apps via subscriptions |
 | **Enable/Disable** | Orgs can enable/disable purchased apps at any time |
@@ -571,13 +571,7 @@ Users input operational volumes, processing times, staffing costs, and exception
 
 ---
 
-## 15. Tax Search & Certification — Micro App
-
-*Stub implemented. Full specification to be defined.*
-
----
-
-## 16. Verification Checklist
+## 15. Verification Checklist
 
 ### Platform
 

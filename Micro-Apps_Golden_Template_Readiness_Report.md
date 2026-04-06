@@ -304,7 +304,7 @@ Frontend:
 | P7 | Role-based access control (owner/admin/member) | **FULL** | `require_admin()`, `require_owner()`, `get_current_member()` | — |
 | P8 | JWT authentication on all routes | **FULL** | Local HS256 JWT via `PyJWT` + `passlib[bcrypt]` | Spec says Supabase — migrated to local |
 | P9 | Platform admin (Logikality admin) | **FULL** | `is_platform_admin`, `require_platform_admin()`, seed script | — |
-| P10 | Tax Search & Certification micro app | **PARTIAL** | Stub only — no models, routes, or services | Spec says "stub implemented" |
+
 
 ## B. Title Intelligence — Upload & Processing
 

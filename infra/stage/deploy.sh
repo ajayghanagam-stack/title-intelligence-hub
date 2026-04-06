@@ -89,6 +89,13 @@ GCP_REGION="${GCP_REGION:-us-east1}"
 
 S3_BUCKET="${PREFIX}-storage-$(aws sts get-caller-identity --query Account --output text)"
 
+# Parse RDS credentials from DATABASE_URL for Temporal
+# Format: postgresql+asyncpg://user:pass@host:port/dbname
+DB_USER=$(echo "$DATABASE_URL" | sed -E 's|.*://([^:]+):.*|\1|')
+DB_PASS=$(echo "$DATABASE_URL" | sed -E 's|.*://[^:]+:([^@]+)@.*|\1|')
+DB_HOST=$(echo "$DATABASE_URL" | sed -E 's|.*@([^:/]+)[:/].*|\1|')
+DB_PORT=$(echo "$DATABASE_URL" | sed -E 's|.*@[^:]+:([0-9]+)/.*|\1|')
+
 # Determine Vertex AI settings
 VERTEX_AI_ENABLED="false"
 VERTEX_ENV=""
@@ -112,7 +119,8 @@ ${VERTEX_ENV}
 STORAGE_PROVIDER=s3
 S3_BUCKET=${S3_BUCKET}
 S3_REGION=${REGION}
-PIPELINE_BACKEND=background_tasks
+PIPELINE_BACKEND=temporal
+TEMPORAL_ADDRESS=temporal:7233
 AI_PROVIDER=gemini
 NATIVE_PDF_CONCURRENCY=12
 NATIVE_PDF_BATCH_SIZE=20
@@ -123,6 +131,14 @@ DEBUG=false"
 
 log "Uploading .env.stage to EC2..."
 echo "$ENV_CONTENT" | $SSH_CMD "cat > ${APP_DIR}/infra/stage/.env.stage"
+
+# Write Temporal env (RDS credentials for Temporal auto-setup)
+TEMPORAL_ENV="TEMPORAL_DB_USER=${DB_USER}
+TEMPORAL_DB_PWD=${DB_PASS}
+TEMPORAL_DB_HOST=${DB_HOST}
+TEMPORAL_DB_PORT=${DB_PORT}"
+log "Uploading .env.temporal to EC2..."
+echo "$TEMPORAL_ENV" | $SSH_CMD "cat > ${APP_DIR}/infra/stage/.env.temporal"
 
 # Upload GCP service account JSON (or create empty placeholder for docker-compose mount)
 if [ "$VERTEX_AI_ENABLED" = "true" ]; then
@@ -139,7 +155,7 @@ $SSH_CMD "cd ${APP_DIR} && git fetch origin main && git reset --hard origin/main
 # ── 3. Build and start containers ─────────────────────────────────────────
 SERVICES=""
 if [ "$TARGET" = "backend" ] || [ "$TARGET" = "both" ]; then
-  SERVICES="$SERVICES backend"
+  SERVICES="$SERVICES temporal backend temporal-worker"
 fi
 if [ "$TARGET" = "frontend" ] || [ "$TARGET" = "both" ]; then
   SERVICES="$SERVICES frontend"
