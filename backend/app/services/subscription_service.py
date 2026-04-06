@@ -16,7 +16,7 @@ async def list_subscriptions(
     result = await db.execute(
         select(Subscription)
         .options(selectinload(Subscription.micro_app))
-        .where(Subscription.org_id == org_id)
+        .where(Subscription.org_id == org_id, Subscription.status == "active")
     )
     return list(result.scalars().all())
 
