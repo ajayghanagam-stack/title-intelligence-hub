@@ -137,10 +137,10 @@ log "Uploading .env.prod to EC2..."
 echo "$ENV_CONTENT" | $SSH_CMD "cat > ${APP_DIR}/infra/prod/.env.prod"
 
 # Write Temporal env (RDS credentials for Temporal auto-setup)
-TEMPORAL_ENV="TEMPORAL_DB_USER=${DB_USER}
-TEMPORAL_DB_PWD=${DB_PASS}
-TEMPORAL_DB_HOST=${DB_HOST}
-TEMPORAL_DB_PORT=${DB_PORT}"
+TEMPORAL_ENV="POSTGRES_USER=${DB_USER}
+POSTGRES_PWD=${DB_PASS}
+POSTGRES_SEEDS=${DB_HOST}
+DB_PORT=${DB_PORT}"
 log "Uploading .env.temporal to EC2..."
 echo "$TEMPORAL_ENV" | $SSH_CMD "cat > ${APP_DIR}/infra/prod/.env.temporal"
 

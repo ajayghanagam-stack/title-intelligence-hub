@@ -3,10 +3,6 @@ services:
     image: temporalio/auto-setup:latest
     environment:
       - DB=postgres12
-      - DB_PORT=${TEMPORAL_DB_PORT:-5432}
-      - POSTGRES_USER=${TEMPORAL_DB_USER}
-      - POSTGRES_PWD=${TEMPORAL_DB_PWD}
-      - POSTGRES_SEEDS=${TEMPORAL_DB_HOST}
     env_file: .env.temporal
     restart: unless-stopped
     healthcheck:
