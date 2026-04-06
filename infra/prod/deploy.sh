@@ -45,6 +45,24 @@ SSH_CMD="ssh $SSH_OPTS ${EC2_USER}@${EC2_HOST}"
 
 START_TIME=$(date +%s)
 
+# ── 0. Ensure local and remote are in sync ────────────────────────────────
+log "Checking local/remote sync..."
+git fetch origin main --quiet
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA=$(git rev-parse origin/main)
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  err "Local ($LOCAL_SHA) and remote ($REMOTE_SHA) are out of sync."
+  err "Commit and push your changes before deploying: git push origin main"
+  exit 1
+fi
+if [ -n "$(git status --porcelain -- ':!backend/test.db' ':!backend/storage/' ':!backend/eval_reports/' ':!docs/')" ]; then
+  warn "You have uncommitted changes in tracked files:"
+  git status --short -- ':!backend/test.db' ':!backend/storage/' ':!backend/eval_reports/' ':!docs/'
+  err "Commit and push before deploying."
+  exit 1
+fi
+log "Local and remote are in sync ($LOCAL_SHA)"
+
 # ── 1. Fetch secrets from SSM and build .env.prod ─────────────────────────
 log "Fetching secrets from SSM..."
 DATABASE_URL=$(aws ssm get-parameter --region "$REGION" \
