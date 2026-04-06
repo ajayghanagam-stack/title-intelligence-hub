@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     TEMPORAL_ADDRESS: str = "localhost:7233"
     TEMPORAL_NAMESPACE: str = "default"
     TEMPORAL_TASK_QUEUE: str = "title-intelligence"
+    TSA_TEMPORAL_TASK_QUEUE: str = "title-search"
 
     # Pipeline mode: native_pdf sends PDF chunks directly to Gemini; legacy renders to JPEG first
     PIPELINE_MODE: Literal["native_pdf", "legacy"] = "native_pdf"

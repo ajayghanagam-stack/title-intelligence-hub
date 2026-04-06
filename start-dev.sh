@@ -29,7 +29,7 @@ cleanup() {
   for pid in "${PIDS[@]}"; do
     kill "$pid" 2>/dev/null || true
   done
-  docker compose -f "$ROOT_DIR/docker-compose.yml" stop db temporal temporal-ui 2>/dev/null || true
+  docker compose -f "$ROOT_DIR/docker-compose.yml" stop db temporal-db temporal temporal-ui 2>/dev/null || true
   echo -e "${GREEN}All stopped.${NC}"
   exit 0
 }
@@ -41,13 +41,13 @@ trap cleanup SIGINT SIGTERM
 echo -e "${CYAN}[0/5] Cleaning up stale state...${NC}"
 
 # Kill any orphaned Temporal worker processes from previous sessions
-STALE_PIDS=$(pgrep -f "temporal_worker" 2>/dev/null || true)
+STALE_PIDS=$(pgrep -f "temporal_worker\|unified_worker" 2>/dev/null || true)
 if [ -n "$STALE_PIDS" ]; then
   echo -e "${YELLOW}       Killing stale Temporal worker(s): $STALE_PIDS${NC}"
   echo "$STALE_PIDS" | xargs kill 2>/dev/null || true
   sleep 2
   # Force-kill any that didn't exit gracefully
-  REMAINING=$(pgrep -f "temporal_worker" 2>/dev/null || true)
+  REMAINING=$(pgrep -f "temporal_worker\|unified_worker" 2>/dev/null || true)
   if [ -n "$REMAINING" ]; then
     echo -e "${YELLOW}       Force-killing stubborn worker(s): $REMAINING${NC}"
     echo "$REMAINING" | xargs kill -9 2>/dev/null || true
@@ -73,7 +73,7 @@ echo -e "${GREEN}       Cleanup complete${NC}"
 # 1. Start infrastructure (Postgres + Temporal) in Docker
 # ------------------------------------------------------------------
 echo -e "${CYAN}[1/5] Starting Postgres + Temporal (Docker)...${NC}"
-docker compose -f "$ROOT_DIR/docker-compose.yml" up -d db temporal temporal-ui
+docker compose -f "$ROOT_DIR/docker-compose.yml" up -d db temporal-db temporal temporal-ui
 
 # Wait for Postgres
 echo -e "${CYAN}       Waiting for Postgres...${NC}"
@@ -138,9 +138,9 @@ PIDS+=($!)
 # ------------------------------------------------------------------
 # 4. Start Temporal worker
 # ------------------------------------------------------------------
-echo -e "${CYAN}[4/5] Starting Temporal worker...${NC}"
+echo -e "${CYAN}[4/5] Starting unified Temporal worker...${NC}"
 cd "$BACKEND_DIR"
-PYTHONPATH="$BACKEND_DIR" python -m app.micro_apps.title_intelligence.pipeline.temporal_worker &
+PYTHONPATH="$BACKEND_DIR" python -m app.pipeline.unified_worker &
 PIDS+=($!)
 
 # ------------------------------------------------------------------

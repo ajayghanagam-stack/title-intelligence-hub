@@ -112,7 +112,9 @@ ${VERTEX_ENV}
 STORAGE_PROVIDER=s3
 S3_BUCKET=${S3_BUCKET}
 S3_REGION=${REGION}
-PIPELINE_BACKEND=background_tasks
+PIPELINE_BACKEND=temporal
+TEMPORAL_ADDRESS=temporal:7233
+TSA_TEMPORAL_TASK_QUEUE=title-search
 AI_PROVIDER=gemini
 NATIVE_PDF_CONCURRENCY=12
 NATIVE_PDF_BATCH_SIZE=20
@@ -139,7 +141,7 @@ $SSH_CMD "cd ${APP_DIR} && git fetch origin main && git reset --hard origin/main
 # ── 3. Build and start containers ─────────────────────────────────────────
 SERVICES=""
 if [ "$TARGET" = "backend" ] || [ "$TARGET" = "both" ]; then
-  SERVICES="$SERVICES backend"
+  SERVICES="$SERVICES temporal-db temporal temporal-worker backend"
 fi
 if [ "$TARGET" = "frontend" ] || [ "$TARGET" = "both" ]; then
   SERVICES="$SERVICES frontend"

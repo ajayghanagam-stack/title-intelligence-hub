@@ -105,10 +105,52 @@ async def trigger_pipeline(
     session_factory: async_sessionmaker,
     background_tasks=None,
 ):
-    if background_tasks:
-        background_tasks.add_task(run_pipeline, order_id, org_id, session_factory)
+    """Route TSA pipeline execution to the configured backend.
+
+    Args:
+        order_id: Order to process
+        org_id: Organization ID
+        session_factory: DB session factory
+        background_tasks: FastAPI BackgroundTasks (required for background_tasks backend)
+    """
+    settings = get_settings()
+
+    if settings.PIPELINE_BACKEND == "temporal":
+        await _trigger_temporal(order_id, org_id, settings)
     else:
-        await run_pipeline(order_id, org_id, session_factory)
+        if background_tasks:
+            background_tasks.add_task(run_pipeline, order_id, org_id, session_factory)
+        else:
+            await run_pipeline(order_id, org_id, session_factory)
+
+
+async def _trigger_temporal(order_id: uuid.UUID, org_id: uuid.UUID, settings):
+    """Start a Temporal workflow for the TSA pipeline."""
+    try:
+        from temporalio.client import Client
+        from app.micro_apps.title_search.pipeline.temporal_workflows import (
+            ProcessOrderWorkflow,
+        )
+
+        client = await Client.connect(
+            settings.TEMPORAL_ADDRESS,
+            namespace=settings.TEMPORAL_NAMESPACE,
+        )
+
+        run_id = uuid.uuid4().hex[:8]
+        await client.start_workflow(
+            ProcessOrderWorkflow.run,
+            args=[str(order_id), str(org_id), settings.TSA_RESEARCH_MODE],
+            id=f"process-order-{order_id}-{run_id}",
+            task_queue=settings.TSA_TEMPORAL_TASK_QUEUE,
+        )
+
+        logger.info(f"Started TSA Temporal workflow for order {order_id}")
+    except ImportError:
+        raise RuntimeError(
+            "PIPELINE_BACKEND=temporal requires the 'temporalio' package. "
+            "Install it with: pip install temporalio"
+        )
 
 
 async def run_pipeline(

@@ -25,6 +25,7 @@ def get_test_settings():
         JWT_SECRET="test-secret-key",
         CORS_ORIGINS=["http://localhost:3000"],
         STORAGE_PATH="./test_storage",
+        PIPELINE_BACKEND="background_tasks",
         PIPELINE_MODE="legacy",
         TSA_RESEARCH_MODE="scraper",
     )
@@ -42,6 +43,8 @@ if os.environ.get("PIPELINE_MODE") not in ("native_pdf", "legacy"):
     os.environ["PIPELINE_MODE"] = "legacy"
 # Default TSA to scraper mode in tests (no ANTHROPIC_API_KEY available)
 os.environ["TSA_RESEARCH_MODE"] = "scraper"
+# Default to background_tasks in tests (no Temporal server available)
+os.environ.setdefault("PIPELINE_BACKEND", "background_tasks")
 # Clear any cached settings from prior test runs
 get_settings.cache_clear()
 

@@ -58,11 +58,12 @@ cd frontend && npm run lint     # ESLint
 
 ### Full Stack
 ```bash
-./start-dev.sh                  # starts Postgres, Temporal, backend, frontend
+./start-dev.sh                  # starts Postgres, Temporal, backend, unified worker, frontend
 docker-compose up               # full stack via Docker (db:5436 on host, backend:8000, frontend:3001 on host)
+python -m app.pipeline.unified_worker  # unified Temporal worker (polls both TI and TSA queues)
 ```
 
-**Dev port mapping** (docker-compose): PostgreSQL is exposed on host port **5436** (not 5432), frontend on **3001** (not 3000). Use `psql -h localhost -p 5436` for local DB access. `start-dev.sh` runs frontend on `:3000` and Temporal UI on `http://localhost:8085`.
+**Dev port mapping** (docker-compose): PostgreSQL is exposed on host port **5436** (not 5432), frontend on **3001** (not 3000). Use `psql -h localhost -p 5436` for local DB access. `start-dev.sh` runs frontend on `:3000` and Temporal UI on `http://localhost:8085`. Temporal uses a dedicated `temporal-db` container (postgres:16-alpine) for its state, separate from the app database.
 
 ### Production Deployment (AWS EC2)
 ```bash
@@ -80,7 +81,7 @@ EC2_HOST=<ip> ./infra/prod/deploy.sh frontend      # deploy frontend only
 - **CI** (`.github/workflows/ci.yml`): backend tests (Python 3.12) → frontend lint+build (Node 20) → Docker image build check. Runs on push to `main` and PRs.
 - **CD** (`.github/workflows/deploy-aws.yml`): SSHes into EC2 → pulls code → builds Docker images on-instance → restarts containers → runs migrations → health check. Runs on push to `main` only.
 
-**Production stack** (AWS EC2): EC2 t4g.xlarge (4 vCPU/16GB, ARM64) running Docker Compose (backend + frontend + Caddy reverse proxy), RDS PostgreSQL 16 (db.t4g.large, encrypted, private), S3 (file storage). Secrets in SSM Parameter Store, fetched at deploy time into `.env.prod`.
+**Production stack** (AWS EC2): EC2 t4g.xlarge (4 vCPU/16GB, ARM64) running Docker Compose (backend + frontend + Caddy reverse proxy + Temporal + temporal-db + unified worker), RDS PostgreSQL 16 (db.t4g.large, encrypted, private), S3 (file storage). Temporal uses a dedicated postgres:16-alpine container (not RDS) for its state. Secrets in SSM Parameter Store, fetched at deploy time into `.env.prod`.
 
 **AWS Resources** (managed by `infra/prod/setup.sh`):
 - EC2: `ti-hub-prod-server` (t4g.xlarge, 30GB gp3, Elastic IP)
@@ -398,7 +399,7 @@ The second micro app. Automates county record searches, document parsing, chain-
 
 **Pipeline** (`pipeline/orchestrator.py`):
 - 6-stage pipeline: `order → retrieve → parse → chain → package → complete`
-- **BackgroundTasks only** for MVP (Temporal support not yet wired in, unlike TI)
+- Dual backend: `PIPELINE_BACKEND` selects `background_tasks` (FastAPI) or `temporal` (durable workflows on `TSA_TEMPORAL_TASK_QUEUE`)
 - Mock retrieval for MVP (no real county portal integration)
 - AI output caching at parse and chain stages (keyed by composite version hashes)
 - Deterministic flag detection via `services/flag_rules.py` with severity floor/cap rules
@@ -408,6 +409,8 @@ The second micro app. Automates county record searches, document parsing, chain-
 **Key files**:
 - `services/flag_rules.py` — deterministic rules engine (`RULES_VERSION`, severity clamping, dedup)
 - `pipeline/version_tracker.py` — prompt/tool/rules hash computation, cache key helpers
+- `pipeline/temporal_workflows.py` — `ProcessOrderWorkflow` (Temporal durable workflow)
+- `pipeline/temporal_activities.py` — per-stage Temporal activity wrappers
 - `tests/title_search/test_determinism.py` — golden-set regression tests
 - `tests/title_search/test_flag_rules.py` — rules engine unit tests
 
@@ -511,10 +514,11 @@ All storage paths are tenant-scoped by org_id at the top level.
 | `TA_AI_PROVIDER` | `""` | Override AI provider for TSA agents (empty = use `AI_PROVIDER`) |
 | `STORAGE_PROVIDER` | `local` | Storage backend: local/s3 |
 | `STORAGE_PATH` | `./storage` | Local storage base path |
-| `PIPELINE_BACKEND` | `temporal` | Pipeline executor: background_tasks/temporal (TI only; TSA uses background_tasks) |
+| `PIPELINE_BACKEND` | `temporal` | Pipeline executor: background_tasks/temporal (both TI and TSA) |
 | `PIPELINE_MODE` | `native_pdf` | `native_pdf` (Gemini only, sends PDF directly) or `legacy` (renders to JPEG) |
 | `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address |
-| `TEMPORAL_TASK_QUEUE` | `title-intelligence` | Temporal task queue name |
+| `TEMPORAL_TASK_QUEUE` | `title-intelligence` | Temporal task queue name (TI) |
+| `TSA_TEMPORAL_TASK_QUEUE` | `title-search` | Temporal task queue name (TSA) |
 | `TESSERACT_PATH` | (system default) | Custom Tesseract binary path |
 | `FILE_UPLOAD_MAX_SIZE` | `104857600` (100MB) | Max upload size |
 | `CORS_ORIGINS` | `["http://localhost:3000"]` | Allowed origins |

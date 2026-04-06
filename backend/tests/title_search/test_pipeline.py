@@ -15,7 +15,7 @@ from app.micro_apps.title_search.models.chain_link import TAChainLink
 from app.micro_apps.title_search.models.flag import TAFlag
 from app.micro_apps.title_search.models.package import TAPackage
 from app.micro_apps.title_search.models.county_source import TACountySource
-from app.micro_apps.title_search.pipeline.orchestrator import run_pipeline
+from app.micro_apps.title_search.pipeline.orchestrator import run_pipeline, trigger_pipeline
 from app.micro_apps.title_search.services.real_data_fetcher import PropertyData
 from tests.conftest import TEST_ORG_ID, TEST_USER_ID, test_session_factory
 from tests.title_search.conftest import TEST_ORDER_ID
@@ -612,3 +612,63 @@ async def test_pipeline_completes_with_fetch_data(pipeline_order):
             select(TARawDocument).where(TARawDocument.order_id == TEST_ORDER_ID)
         )).scalars().all()
         assert len(raw_docs) >= 1
+
+
+@pytest.mark.asyncio
+async def test_trigger_pipeline_temporal_backend(pipeline_order):
+    """trigger_pipeline should start a Temporal workflow when PIPELINE_BACKEND=temporal."""
+    mock_client = AsyncMock()
+    mock_client.start_workflow = AsyncMock()
+
+    mock_settings = MagicMock()
+    mock_settings.PIPELINE_BACKEND = "temporal"
+    mock_settings.TEMPORAL_ADDRESS = "localhost:7233"
+    mock_settings.TEMPORAL_NAMESPACE = "default"
+    mock_settings.TSA_TEMPORAL_TASK_QUEUE = "title-search"
+    mock_settings.TSA_RESEARCH_MODE = "grounded"
+
+    with patch(
+        "app.micro_apps.title_search.pipeline.orchestrator.get_settings",
+        return_value=mock_settings,
+    ):
+        with patch(
+            "temporalio.client.Client.connect",
+            return_value=mock_client,
+        ):
+            await trigger_pipeline(
+                TEST_ORDER_ID, TEST_ORG_ID, test_session_factory
+            )
+
+    # Verify start_workflow was called with correct args
+    mock_client.start_workflow.assert_called_once()
+    call_kwargs = mock_client.start_workflow.call_args
+    assert call_kwargs.kwargs["task_queue"] == "title-search"
+    # args should be [order_id, org_id, research_mode]
+    workflow_args = call_kwargs.kwargs["args"]
+    assert workflow_args[0] == str(TEST_ORDER_ID)
+    assert workflow_args[1] == str(TEST_ORG_ID)
+    assert workflow_args[2] == "grounded"
+
+
+@pytest.mark.asyncio
+async def test_trigger_pipeline_background_tasks(pipeline_order):
+    """trigger_pipeline should use BackgroundTasks when PIPELINE_BACKEND=background_tasks."""
+    mock_bg = MagicMock()
+    mock_bg.add_task = MagicMock()
+
+    mock_settings = MagicMock()
+    mock_settings.PIPELINE_BACKEND = "background_tasks"
+
+    with patch(
+        "app.micro_apps.title_search.pipeline.orchestrator.get_settings",
+        return_value=mock_settings,
+    ):
+        await trigger_pipeline(
+            TEST_ORDER_ID, TEST_ORG_ID, test_session_factory,
+            background_tasks=mock_bg,
+        )
+
+    mock_bg.add_task.assert_called_once()
+    call_args = mock_bg.add_task.call_args[0]
+    assert call_args[0] == run_pipeline
+    assert call_args[1] == TEST_ORDER_ID

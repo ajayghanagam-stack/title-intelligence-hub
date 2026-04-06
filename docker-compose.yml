@@ -15,19 +15,33 @@ services:
       timeout: 5s
       retries: 5
 
+  temporal-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: temporal
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    volumes:
+      - temporal_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   temporal:
     image: temporalio/auto-setup:latest
     ports:
       - "7233:7233"
     depends_on:
-      db:
+      temporal-db:
         condition: service_healthy
     environment:
       - DB=postgres12
       - DB_PORT=5432
-      - POSTGRES_USER=postgres
-      - POSTGRES_PWD=postgres
-      - POSTGRES_SEEDS=db
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=temporal-db
     healthcheck:
       test: ["CMD", "tctl", "--address", "temporal:7233", "cluster", "health"]
       interval: 10s
@@ -60,7 +74,7 @@ services:
     volumes:
       - ./backend:/app
       - storage_data:/app/storage
-    command: python -m app.micro_apps.title_intelligence.pipeline.temporal_worker
+    command: python -m app.pipeline.unified_worker
 
   backend:
     build: ./backend
@@ -92,5 +106,5 @@ services:
 
 volumes:
   pgdata:
+  temporal_pgdata:
   storage_data:
-  temporal_data:
