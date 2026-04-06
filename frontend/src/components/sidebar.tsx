@@ -49,7 +49,7 @@ interface RecentOrder {
 
 const ORG_LOGOS: Record<string, string> = {
   "6cc2b64a-d3ab-4b98-8246-96c6e98efedf": "/grid151-logo.jpeg",      // Grid151
-  "5e704ee4-fc88-4d1e-855f-50d379ea6c0f": "/society-title-logo.svg", // Society Title
+  "5e704ee4-fc88-4d1e-855f-50d379ea6c0f": "/society-title-logo.jpeg", // Society Title
 };
 
 function PackStatusIcon({ status }: { status: string }) {
@@ -261,7 +261,7 @@ export function Sidebar() {
                   src={
                     currentOrgId && ORG_LOGOS[currentOrgId]
                       ? ORG_LOGOS[currentOrgId]
-                      : "/society-title-logo.svg"
+                      : "/society-title-logo.jpeg"
                   }
                   alt="Organization Logo"
                   width={224}
