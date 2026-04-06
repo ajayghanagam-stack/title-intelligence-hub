@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useOrg } from "@/hooks/use-org";
-import { apiFetch } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -11,25 +10,20 @@ import {
   CardTitle,
   CardContent,
 } from "@/components/ui/card";
-import { CreditCard, Sparkles } from "lucide-react";
-import type { MicroApp, Subscription } from "@/lib/platform-types";
+import { CreditCard } from "lucide-react";
+import type { Subscription } from "@/lib/platform-types";
 
 export default function AdminSubscriptionsPage() {
   const { currentOrgId, orgFetch } = useOrg();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
-  const [allApps, setAllApps] = useState<MicroApp[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = async () => {
     if (!currentOrgId) return;
     try {
-      const [subs, apps] = await Promise.all([
-        orgFetch<Subscription[]>("/api/v1/subscriptions"),
-        apiFetch<MicroApp[]>("/api/v1/micro-apps"),
-      ]);
+      const subs = await orgFetch<Subscription[]>("/api/v1/subscriptions");
       setSubscriptions(subs);
-      setAllApps(apps);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load subscriptions");
@@ -40,18 +34,6 @@ export default function AdminSubscriptionsPage() {
   useEffect(() => {
     fetchData();
   }, [currentOrgId]);
-
-  const handlePurchase = async (appId: string) => {
-    try {
-      await orgFetch<unknown>("/api/v1/subscriptions", {
-        method: "POST",
-        body: JSON.stringify({ app_id: appId }),
-      });
-      fetchData();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to subscribe");
-    }
-  };
 
   const handleToggle = async (subId: string, currentStatus: string) => {
     const action = currentStatus === "active" ? "disable" : "enable";
@@ -73,9 +55,6 @@ export default function AdminSubscriptionsPage() {
       </div>
     );
   }
-
-  const subscribedAppIds = new Set(subscriptions.map((s) => s.app_id));
-  const availableApps = allApps.filter((app) => !subscribedAppIds.has(app.id));
 
   return (
     <div className="space-y-6">
@@ -141,36 +120,6 @@ export default function AdminSubscriptionsPage() {
         </CardContent>
       </Card>
 
-      {availableApps.length > 0 && (
-        <Card className="shadow-sm">
-          <CardHeader className="pb-4">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-primary" />
-              <CardTitle className="text-lg">Available Apps</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {availableApps.map((app) => (
-                <div
-                  key={app.id}
-                  className="flex items-center justify-between rounded-lg border p-3.5 hover:bg-muted/30 transition-colors"
-                >
-                  <div>
-                    <p className="font-medium">{app.name}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {app.description}
-                    </p>
-                  </div>
-                  <Button size="sm" onClick={() => handlePurchase(app.id)}>
-                    Subscribe
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }
