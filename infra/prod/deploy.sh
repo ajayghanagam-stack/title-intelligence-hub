@@ -91,7 +91,7 @@ S3_BUCKET="${PREFIX}-storage-$(aws sts get-caller-identity --query Account --out
 
 # Domain
 APP_URL="https://platform.logikality.com"
-CORS_VALUE="[\"https://platform.logikality.com\"]"
+CORS_VALUE="[\"https://platform.logikality.com\",\"http://${EC2_HOST}\"]"
 
 # Determine Vertex AI settings
 VERTEX_AI_ENABLED="false"
