@@ -85,7 +85,7 @@ GCP_PROJECT=$(aws ssm get-parameter --region "$REGION" \
 GCP_SA_JSON=$(aws ssm get-parameter --region "$REGION" \
   --name "/${PREFIX}/gcp-sa-json" --with-decryption \
   --query "Parameter.Value" --output text 2>/dev/null || echo "")
-GCP_REGION="${GCP_REGION:-us-central1}"
+GCP_REGION="${GCP_REGION:-us-east1}"
 
 S3_BUCKET="${PREFIX}-storage-$(aws sts get-caller-identity --query Account --output text)"
 
@@ -118,7 +118,7 @@ NATIVE_PDF_CONCURRENCY=12
 NATIVE_PDF_BATCH_SIZE=20
 TRIAGE_CONCURRENCY=4
 EXAMINER_MAX_OUTPUT_TOKENS=65536
-CORS_ORIGINS=[\"https://platform.logikality.com\"]
+CORS_ORIGINS=[\"https://platform.logikality.ai\"]
 DEBUG=false"
 
 log "Uploading .env.stage to EC2..."
@@ -149,7 +149,7 @@ SERVICES="$SERVICES caddy"
 
 log "Building and starting: $SERVICES"
 $SSH_CMD "cd ${APP_DIR} && \
-  NEXT_PUBLIC_API_URL=https://platform.logikality.com \
+  NEXT_PUBLIC_API_URL=https://platform.logikality.ai \
   docker compose -f ${COMPOSE_FILE} up -d --build $SERVICES"
 
 # ── 4. Run migrations (skip with --no-migrate) ──────────────────────────
@@ -198,7 +198,7 @@ else
   echo -e "${YELLOW}  DEPLOYED in ${ELAPSED}s (health check warning)${NC}"
 fi
 echo "============================================================"
-echo "  URL: https://platform.logikality.com"
-echo "  API: https://platform.logikality.com/api/v1/health"
+echo "  URL: https://platform.logikality.ai"
+echo "  API: https://platform.logikality.ai/api/v1/health"
 echo "  SSH: ssh -i $KEY_FILE ${EC2_USER}@${EC2_HOST}"
 echo ""
