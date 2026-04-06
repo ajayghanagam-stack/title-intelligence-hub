@@ -85,7 +85,7 @@ GCP_PROJECT=$(aws ssm get-parameter --region "$REGION" \
 GCP_SA_JSON=$(aws ssm get-parameter --region "$REGION" \
   --name "/${PREFIX}/gcp-sa-json" --with-decryption \
   --query "Parameter.Value" --output text 2>/dev/null || echo "")
-GCP_REGION="${GCP_REGION:-us-central1}"
+GCP_REGION="${GCP_REGION:-us-east1}"
 
 S3_BUCKET="${PREFIX}-storage-$(aws sts get-caller-identity --query Account --output text)"
 
