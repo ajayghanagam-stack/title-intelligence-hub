@@ -58,7 +58,7 @@ jobs:
             echo "NATIVE_PDF_CONCURRENCY=12"
             echo "NATIVE_PDF_BATCH_SIZE=20"
             echo "TRIAGE_CONCURRENCY=4"
-            echo "CORS_ORIGINS=[\"http://${{ secrets.EC2_HOST }}\"]"
+            echo "CORS_ORIGINS=[\"https://platform.logikality.ai\"]"
             echo "DEBUG=false"
           } > /tmp/env.prod
 
@@ -87,7 +87,7 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             ec2-user@${{ secrets.EC2_HOST }} \
             "cd ${{ env.APP_DIR }} && \
-             NEXT_PUBLIC_API_URL=http://${{ secrets.EC2_HOST }} \
+             NEXT_PUBLIC_API_URL=https://platform.logikality.ai \
              docker compose -f ${{ env.COMPOSE_FILE }} up -d --build"
 
       - name: Run migrations
@@ -108,9 +108,9 @@ jobs:
 
       - name: Health check
         run: |
-          echo "Checking http://${{ secrets.EC2_HOST }}/api/v1/health"
+          echo "Checking https://platform.logikality.ai/api/v1/health (via EC2)"
           for i in {1..10}; do
-            if curl -sf "http://${{ secrets.EC2_HOST }}/api/v1/health"; then
+            if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} "curl -sf http://localhost/api/v1/health"; then
               echo ""
               echo "Health check passed!"
               exit 0

@@ -18,6 +18,7 @@ import { FlagDetailDialog } from "./flag-detail-dialog";
 import { FlagNoteInput } from "./flag-note-input";
 import { Pagination } from "./pagination";
 import { SEVERITY_DISPLAY_NAMES } from "@/lib/ti-constants";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 import type { Flag, ReviewDecision } from "@/lib/ti-types";
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -235,6 +236,7 @@ export function FlagsTable({
   onPageChange?: (page: number) => void;
 }) {
   const router = useRouter();
+  const { orgPath } = useOrgSlug();
   const [selectedFlag, setSelectedFlag] = useState<Flag | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -268,7 +270,7 @@ export function FlagsTable({
   const handleNavigateToPage = useCallback(
     (pageNumber: number, _textSnippet?: string) => {
       const params = new URLSearchParams({ page: String(pageNumber) });
-      router.push(`/apps/title-intelligence/packs/${packId}/documents?${params.toString()}`);
+      router.push(orgPath(`/apps/title-intelligence/packs/${packId}/documents?${params.toString()}`));
     },
     [router, packId]
   );

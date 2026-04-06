@@ -10,10 +10,10 @@ export default function NotFound() {
           The page you are looking for does not exist or has been moved.
         </p>
         <Link
-          href="/dashboard"
+          href="/login"
           className="inline-flex items-center rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
         >
-          Go to Dashboard
+          Go to Login
         </Link>
       </div>
     </div>

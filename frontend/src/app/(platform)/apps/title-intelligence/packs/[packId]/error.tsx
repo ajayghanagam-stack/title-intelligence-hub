@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 import Link from "next/link";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 
 export default function PackError({
   error,
@@ -11,6 +12,8 @@ export default function PackError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const { orgPath } = useOrgSlug();
+
   useEffect(() => {
     if (process.env.NODE_ENV === "development") {
       console.error(error);
@@ -35,7 +38,7 @@ export default function PackError({
             Try again
           </button>
           <Link
-            href="/apps/title-intelligence"
+            href={orgPath("/apps/title-intelligence")}
             className="inline-flex items-center rounded-lg border px-4 py-2.5 text-sm font-medium hover:bg-muted transition-colors"
           >
             Back to packs

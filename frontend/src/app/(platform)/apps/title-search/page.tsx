@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Search, Plus } from "lucide-react";
 import { useOrg } from "@/hooks/use-org";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 import { listOrders } from "@/lib/title-search/api";
 import { OrderList } from "@/components/title-search/order-list";
 import type { TSOrderListItem } from "@/lib/title-search/types";
@@ -19,6 +20,7 @@ const FILTERS = [
 
 export default function TitleSearchPage() {
   const { currentOrgId } = useOrg();
+  const { orgPath } = useOrgSlug();
   const [orders, setOrders] = useState<TSOrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("");
@@ -55,7 +57,7 @@ export default function TitleSearchPage() {
             </div>
           </div>
           <Link
-            href="/apps/title-search/orders/new"
+            href={orgPath("/apps/title-search/orders/new")}
             className="btn-cta gap-2"
             data-testid="new-order-button"
           >

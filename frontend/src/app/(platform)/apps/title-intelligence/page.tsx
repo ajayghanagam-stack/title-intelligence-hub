@@ -5,11 +5,13 @@ import Link from "next/link";
 import { FileSearch, Upload, Plus, ChevronLeft, ChevronRight } from "lucide-react";
 import { PackList } from "@/components/title-intelligence/pack-list";
 import { usePacks } from "@/hooks/use-packs";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 
 const PAGE_SIZE = 10;
 
 export default function TitleIntelligencePage() {
   const { packs, loading, deletePack } = usePacks();
+  const { orgPath } = useOrgSlug();
   const [currentPage, setCurrentPage] = useState(1);
 
   const totalPages = Math.ceil(packs.length / PAGE_SIZE);
@@ -37,7 +39,7 @@ export default function TitleIntelligencePage() {
           </div>
         </div>
         <Link
-          href="/apps/title-intelligence/packs/new"
+          href={orgPath("/apps/title-intelligence/packs/new")}
           className="btn-cta gap-2"
         >
           <Plus className="h-4 w-4" />

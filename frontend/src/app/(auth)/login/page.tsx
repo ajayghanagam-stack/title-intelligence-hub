@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { login } from "@/lib/auth";
+import { login, setOrgSlugCookie } from "@/lib/auth";
 import { useOrgStore } from "@/stores/org-store";
 import { Input } from "@/components/ui/input";
 import {
@@ -32,9 +32,16 @@ export default function LoginPage() {
       const data = await login(email, password);
 
       if (data.orgs.length > 0) {
-        setCurrentOrg(data.orgs[0].id, data.orgs[0].name);
+        setCurrentOrg(data.orgs[0].id, data.orgs[0].name, data.orgs[0].slug);
+        setOrgSlugCookie(data.orgs[0].slug);
       }
-      router.push(data.is_platform_admin ? "/admin/accounts" : "/dashboard");
+      if (data.is_platform_admin) {
+        router.push("/admin/accounts");
+      } else if (data.orgs.length > 0) {
+        router.push(`/org/${data.orgs[0].slug}/dashboard`);
+      } else {
+        router.push("/dashboard");
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");
       setLoading(false);

@@ -20,11 +20,13 @@ import { PipelineProgress } from "@/components/title-intelligence/pipeline-progr
 import { ChatSlidePanel } from "@/components/title-intelligence/chat-slide-panel";
 import { usePack } from "@/hooks/use-pack";
 import { usePipelineStatus } from "@/hooks/use-pipeline-status";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 
 export default function PackOverviewPage() {
   const params = useParams();
   const packId = params.packId as string;
   const { pack, loading, refetch } = usePack(packId);
+  const { orgPath } = useOrgSlug();
   const isProcessing = pack?.status === "processing";
   const { pipeline } = usePipelineStatus(packId, isProcessing);
   const [showChat, setShowChat] = useState(false);
@@ -119,7 +121,7 @@ export default function PackOverviewPage() {
       <div className="flex items-center gap-3 flex-wrap">
         {isCompleted && (
           <Link
-            href={`/apps/title-intelligence/packs/${packId}/documents`}
+            href={orgPath(`/apps/title-intelligence/packs/${packId}/documents`)}
             className="btn-secondary gap-2"
           >
             <Eye className="h-4 w-4" />
@@ -129,7 +131,7 @@ export default function PackOverviewPage() {
         {isCompleted && (
           <>
             <Link
-              href={`/apps/title-intelligence/packs/${packId}/results`}
+              href={orgPath(`/apps/title-intelligence/packs/${packId}/results`)}
               className="btn-cta gap-2"
             >
               <FileBarChart className="h-4 w-4" />

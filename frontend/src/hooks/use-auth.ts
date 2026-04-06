@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getToken, fetchMe, signOut as authSignOut } from "@/lib/auth";
+import { useOrgStore } from "@/stores/org-store";
 import type { AuthUser } from "@/lib/platform-types";
 
 /**
@@ -13,6 +14,7 @@ export function useAuth() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
+  const { currentOrgSlug } = useOrgStore();
 
   useEffect(() => {
     const token = getToken();
@@ -35,5 +37,9 @@ export function useAuth() {
       });
   }, []);
 
-  return { user, isPlatformAdmin, loading, signOut: authSignOut };
+  const signOut = useCallback(() => {
+    authSignOut(currentOrgSlug ?? undefined);
+  }, [currentOrgSlug]);
+
+  return { user, isPlatformAdmin, loading, signOut };
 }

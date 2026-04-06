@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { UploadDropzone } from "@/components/title-intelligence/upload-dropzone";
 import { useOrg } from "@/hooks/use-org";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 import { uploadFiles } from "@/lib/api";
 import { X, FileText } from "lucide-react";
 import type { Pack } from "@/lib/ti-types";
@@ -11,6 +12,7 @@ import type { Pack } from "@/lib/ti-types";
 export default function NewPackPage() {
   const router = useRouter();
   const { currentOrgId, orgFetch } = useOrg();
+  const { orgPath } = useOrgSlug();
   const [files, setFiles] = useState<File[]>([]);
   const [creating, setCreating] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -45,7 +47,7 @@ export default function NewPackPage() {
       // Dispatch event to refresh sidebar
       window.dispatchEvent(new CustomEvent("pack-uploaded"));
 
-      router.push(`/apps/title-intelligence/packs/${pack.id}`);
+      router.push(orgPath(`/apps/title-intelligence/packs/${pack.id}`));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create pack");
     } finally {

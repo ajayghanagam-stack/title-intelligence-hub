@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronRight } from "lucide-react";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 
 const segmentLabels: Record<string, string> = {
   documents: "Documents",
@@ -13,12 +14,13 @@ const segmentLabels: Record<string, string> = {
 
 export function Breadcrumbs({ orderAddress }: { orderAddress?: string }) {
   const pathname = usePathname();
+  const { orgPath } = useOrgSlug();
 
   const crumbs: { label: string; href: string }[] = [
-    { label: "Title Search", href: "/apps/title-search" },
+    { label: "Title Search", href: orgPath("/apps/title-search") },
   ];
 
-  // Match /apps/title-search/orders/{orderId}[/segment]
+  // Match /apps/title-search/orders/{orderId}[/segment] (with optional /org/{slug} prefix)
   const match = pathname.match(
     /\/apps\/title-search\/orders\/([^/]+)(\/([^/]+))?/
   );
@@ -27,14 +29,14 @@ export function Breadcrumbs({ orderAddress }: { orderAddress?: string }) {
     const orderId = match[1];
     crumbs.push({
       label: orderAddress || "Order",
-      href: `/apps/title-search/orders/${orderId}`,
+      href: orgPath(`/apps/title-search/orders/${orderId}`),
     });
 
     const segment = match[3];
     if (segment && segmentLabels[segment]) {
       crumbs.push({
         label: segmentLabels[segment],
-        href: `/apps/title-search/orders/${orderId}/${segment}`,
+        href: orgPath(`/apps/title-search/orders/${orderId}/${segment}`),
       });
     }
   }

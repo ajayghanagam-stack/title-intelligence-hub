@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { Breadcrumbs } from "@/components/title-search/breadcrumbs";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 
 const TABS = [
   { href: "", label: "Overview" },
@@ -20,8 +21,9 @@ export default function OrderDetailLayout({
 }) {
   const params = useParams();
   const pathname = usePathname();
+  const { orgPath } = useOrgSlug();
   const orderId = params.orderId as string;
-  const basePath = `/apps/title-search/orders/${orderId}`;
+  const basePath = orgPath(`/apps/title-search/orders/${orderId}`);
 
   return (
     <div className="space-y-6">

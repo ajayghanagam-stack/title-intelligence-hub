@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useOrgStore } from "@/stores/org-store";
 import { apiFetch } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 import { Onboarding } from "@/components/onboarding";
 import { ToastProvider } from "@/components/ui/toast";
 import type { Org } from "@/lib/platform-types";
@@ -68,6 +69,7 @@ export default function PlatformLayout({
   const [checkingOrg, setCheckingOrg] = useState(true);
   const [hasOrg, setHasOrg] = useState(!!currentOrgId);
   const checkedRef = useRef(false);
+  const { orgPath } = useOrgSlug();
   const crumbs = useBreadcrumbs();
 
   useEffect(() => {
@@ -94,7 +96,7 @@ export default function PlatformLayout({
     apiFetch<Org[]>("/api/v1/organizations/me")
       .then((orgs) => {
         if (orgs.length > 0) {
-          setCurrentOrg(orgs[0].id, orgs[0].name);
+          setCurrentOrg(orgs[0].id, orgs[0].name, orgs[0].slug);
           setHasOrg(true);
         } else {
           setHasOrg(false);
@@ -166,7 +168,7 @@ export default function PlatformLayout({
                   {user?.email}
                 </span>
               </div>
-              <Link href="/profile">
+              <Link href={orgPath("/profile")}>
                 <Button
                   variant="outline"
                   size="sm"

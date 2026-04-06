@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { useOrg } from "@/hooks/use-org";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 import { createOrder, processOrder } from "@/lib/title-search/api";
 import { ArrowRight } from "lucide-react";
 
@@ -18,6 +19,7 @@ const US_STATES = [
 export default function NewOrderPage() {
   const router = useRouter();
   const { currentOrgId } = useOrg();
+  const { orgPath } = useOrgSlug();
   const [form, setForm] = useState({
     property_address: "",
     city: "",
@@ -51,7 +53,7 @@ export default function NewOrderPage() {
       });
       await processOrder(currentOrgId, order.id);
       window.dispatchEvent(new Event("order-created"));
-      router.push(`/apps/title-search/orders/${order.id}`);
+      router.push(orgPath(`/apps/title-search/orders/${order.id}`));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create order");
     } finally {

@@ -90,8 +90,8 @@ GCP_REGION="${GCP_REGION:-us-central1}"
 S3_BUCKET="${PREFIX}-storage-$(aws sts get-caller-identity --query Account --output text)"
 
 # Domain
-APP_URL="https://platform.logikality.com"
-CORS_VALUE="[\"https://platform.logikality.com\",\"http://${EC2_HOST}\"]"
+APP_URL="https://platform.logikality.ai"
+CORS_VALUE="[\"https://platform.logikality.ai\"]"
 
 # Determine Vertex AI settings
 VERTEX_AI_ENABLED="false"

@@ -1,17 +1,4 @@
-platform.logikality.com {
-	handle /api/* {
-		reverse_proxy backend:8000 {
-			flush_interval -1
-		}
-	}
-
-	handle {
-		reverse_proxy frontend:3000
-	}
-}
-
-# Temporary: allow IP-based HTTP access for testing before DNS is pointed
-:80 {
+platform.logikality.ai {
 	handle /api/* {
 		reverse_proxy backend:8000 {
 			flush_interval -1

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useOrg } from "@/hooks/use-org";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LayoutGrid, FileSearch, Search, Sparkles, ArrowRight } from "lucide-react";
@@ -26,6 +27,7 @@ const APP_ICON_COLORS: Record<string, string> = {
 
 export default function DashboardPage() {
   const { currentOrgId, orgFetch } = useOrg();
+  const { orgPath } = useOrgSlug();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -149,7 +151,7 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-2 mt-auto pt-2 border-t">
                   {isActive && (
                     <Link
-                      href={`/apps/${slug}`}
+                      href={orgPath(`/apps/${slug}`)}
                       className="btn-cta gap-1.5 text-xs py-2 px-4"
                     >
                       Open App

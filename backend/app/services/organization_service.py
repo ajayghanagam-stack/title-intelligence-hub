@@ -58,6 +58,17 @@ async def list_org_users(db: AsyncSession, org_id: uuid.UUID) -> list[User]:
     return list(result.scalars().all())
 
 
+async def get_organization_by_slug(
+    db: AsyncSession, slug: str
+) -> Organization | None:
+    result = await db.execute(
+        select(Organization).where(
+            Organization.slug == slug, Organization.is_active == True
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_user_orgs(
     db: AsyncSession, auth_user_id: uuid.UUID
 ) -> list[Organization]:

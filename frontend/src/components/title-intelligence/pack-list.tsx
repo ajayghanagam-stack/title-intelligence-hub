@@ -5,9 +5,11 @@ import Link from "next/link";
 import { PackStatusBadge } from "./pack-status-badge";
 import { Upload, ChevronRight, Shield, Calendar, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 import type { Pack } from "@/lib/ti-types";
 
 export function PackList({ packs, onDelete }: { packs: Pack[]; onDelete?: (id: string) => Promise<void> }) {
+  const { orgPath } = useOrgSlug();
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -31,7 +33,7 @@ export function PackList({ packs, onDelete }: { packs: Pack[]; onDelete?: (id: s
         <p className="text-lg font-medium text-foreground/80 mb-1">No packs yet</p>
         <p className="text-sm text-muted-foreground mb-6">Upload your first title document to get started</p>
         <Link
-          href="/apps/title-intelligence/packs/new"
+          href={orgPath("/apps/title-intelligence/packs/new")}
           className="btn-cta gap-2"
         >
           <Upload className="h-4 w-4" />
@@ -46,7 +48,7 @@ export function PackList({ packs, onDelete }: { packs: Pack[]; onDelete?: (id: s
       {packs.map((pack) => (
         <Link
           key={pack.id}
-          href={`/apps/title-intelligence/packs/${pack.id}`}
+          href={orgPath(`/apps/title-intelligence/packs/${pack.id}`)}
           className="group flex items-center gap-4 card-warm px-5 py-4 hover:border-primary/20"
         >
           {/* Icon */}

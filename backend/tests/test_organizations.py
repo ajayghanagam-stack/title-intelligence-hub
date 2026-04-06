@@ -40,6 +40,25 @@ async def test_update_organization(client):
 
 
 @pytest.mark.asyncio
+async def test_get_org_by_slug(client):
+    response = await client.get("/api/v1/organizations/by-slug/test-org")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "Test Org"
+    assert data["slug"] == "test-org"
+    assert data["id"] == str(TEST_ORG_ID)
+    # Public endpoint should not expose is_active, created_at, etc.
+    assert "is_active" not in data
+    assert "created_at" not in data
+
+
+@pytest.mark.asyncio
+async def test_get_org_by_slug_not_found(client):
+    response = await client.get("/api/v1/organizations/by-slug/nonexistent-org")
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_list_org_users(client):
     response = await client.get(
         f"/api/v1/organizations/{TEST_ORG_ID}/users",

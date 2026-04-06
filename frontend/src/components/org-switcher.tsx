@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { useOrgStore } from "@/stores/org-store";
+import { useOrgSlug } from "@/hooks/use-org-slug";
+import { setOrgSlugCookie } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import type { Org } from "@/lib/platform-types";
 
@@ -13,6 +16,8 @@ interface OrgSwitcherProps {
 export function OrgSwitcher({ variant = "default" }: OrgSwitcherProps) {
   const [orgs, setOrgs] = useState<Org[]>([]);
   const { currentOrgId, setCurrentOrg } = useOrgStore();
+  const { isOrgRoute } = useOrgSlug();
+  const router = useRouter();
 
   useEffect(() => {
     apiFetch<Org[]>("/api/v1/organizations/me")
@@ -25,7 +30,7 @@ export function OrgSwitcher({ variant = "default" }: OrgSwitcherProps) {
   // Auto-select first org if none selected
   useEffect(() => {
     if (!currentOrgId && orgs.length > 0) {
-      setCurrentOrg(orgs[0].id, orgs[0].name);
+      setCurrentOrg(orgs[0].id, orgs[0].name, orgs[0].slug);
     }
   }, [orgs, currentOrgId, setCurrentOrg]);
 
@@ -60,7 +65,14 @@ export function OrgSwitcher({ variant = "default" }: OrgSwitcherProps) {
       value={currentOrgId || ""}
       onChange={(e) => {
         const org = orgs.find((o) => o.id === e.target.value);
-        if (org) setCurrentOrg(org.id, org.name);
+        if (org) {
+          setCurrentOrg(org.id, org.name, org.slug);
+          setOrgSlugCookie(org.slug);
+          // Navigate to the new org's dashboard
+          if (isOrgRoute) {
+            router.push(`/org/${org.slug}/dashboard`);
+          }
+        }
       }}
     >
       {orgs.map((org) => (

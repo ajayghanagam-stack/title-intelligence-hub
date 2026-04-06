@@ -25,6 +25,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { useOrg } from "@/hooks/use-org";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 import { OrgSwitcher } from "./org-switcher";
 
 interface RecentPack {
@@ -45,39 +46,6 @@ interface RecentOrder {
   pipeline_stage: string | null;
   created_at: string;
 }
-
-const customerNavItems = [
-  { href: "/dashboard", label: "Your Apps", icon: LayoutGrid },
-];
-
-const customerAdminItems = [
-  { href: "/admin/users", label: "Users", icon: Users },
-  { href: "/admin/subscriptions", label: "Subscriptions", icon: CreditCard },
-];
-
-const platformAdminItems = [
-  { href: "/admin/accounts", label: "Accounts", icon: Building2 },
-  { href: "/admin/apps", label: "Micro Apps", icon: Blocks },
-];
-
-const tiNavItems = [
-  {
-    href: "/apps/title-intelligence/packs/new",
-    label: "New Package",
-    icon: Plus,
-    isButton: true,
-  },
-  { href: "/apps/title-intelligence", label: "Current Analysis", icon: FileSearch },
-];
-
-const tsaNavItems = [
-  { href: "/apps/title-search", label: "Orders", icon: Search },
-  {
-    href: "/apps/title-search/orders/new",
-    label: "New Order",
-    icon: Plus,
-  },
-];
 
 const ORG_LOGOS: Record<string, string> = {
   "6cc2b64a-d3ab-4b98-8246-96c6e98efedf": "/grid151-logo.jpeg",      // Grid151
@@ -129,32 +97,69 @@ export function Sidebar() {
   const pathname = usePathname();
   const { isPlatformAdmin } = useAuth();
   const { orgFetch, currentOrgId } = useOrg();
+  const { orgPath } = useOrgSlug();
   const [recentPacks, setRecentPacks] = useState<RecentPack[]>([]);
-
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
 
-  const isInsideTI_ = pathname.startsWith("/apps/title-intelligence");
-  const isInsideTSA_ = pathname.startsWith("/apps/title-search");
+  // Strip /org/{slug} prefix for path matching
+  const normalizedPath = pathname.replace(/^\/org\/[^/]+/, "");
+
+  const isInsideTI = normalizedPath.startsWith("/apps/title-intelligence");
+  const isInsideTSA = normalizedPath.startsWith("/apps/title-search");
+  const isInsideApp = isInsideTI || isInsideTSA;
+
+  const customerNavItems = [
+    { href: orgPath("/dashboard"), label: "Your Apps", icon: LayoutGrid },
+  ];
+
+  const customerAdminItems = [
+    { href: orgPath("/admin/users"), label: "Users", icon: Users },
+    { href: orgPath("/admin/subscriptions"), label: "Subscriptions", icon: CreditCard },
+  ];
+
+  const platformAdminItems = [
+    { href: "/admin/accounts", label: "Accounts", icon: Building2 },
+    { href: "/admin/apps", label: "Micro Apps", icon: Blocks },
+  ];
+
+  const tiNavItems = [
+    {
+      href: orgPath("/apps/title-intelligence/packs/new"),
+      label: "New Package",
+      icon: Plus,
+      isButton: true,
+    },
+    { href: orgPath("/apps/title-intelligence"), label: "Current Analysis", icon: FileSearch },
+  ];
+
+  const tsaNavItems = [
+    { href: orgPath("/apps/title-search"), label: "Orders", icon: Search },
+    {
+      href: orgPath("/apps/title-search/orders/new"),
+      label: "New Order",
+      icon: Plus,
+    },
+  ];
 
   const fetchRecentPacks = useCallback(() => {
-    if (!isInsideTI_ || isPlatformAdmin) return;
+    if (!isInsideTI || isPlatformAdmin) return;
     orgFetch<{ packs: RecentPack[] }>("/api/v1/apps/title-intelligence/packs?limit=5")
       .then((data) => {
         const packs = Array.isArray(data) ? data : data.packs || [];
         setRecentPacks(packs.slice(0, 5));
       })
       .catch(() => {});
-  }, [isInsideTI_, isPlatformAdmin, orgFetch]);
+  }, [isInsideTI, isPlatformAdmin, orgFetch]);
 
   const fetchRecentOrders = useCallback(() => {
-    if (!isInsideTSA_ || isPlatformAdmin) return;
+    if (!isInsideTSA || isPlatformAdmin) return;
     orgFetch<RecentOrder[]>("/api/v1/apps/title-search/orders?size=5")
       .then((data) => {
         const orders = Array.isArray(data) ? data : [];
         setRecentOrders(orders.slice(0, 5));
       })
       .catch(() => {});
-  }, [isInsideTSA_, isPlatformAdmin, orgFetch]);
+  }, [isInsideTSA, isPlatformAdmin, orgFetch]);
 
   useEffect(() => {
     fetchRecentPacks();
@@ -166,16 +171,14 @@ export function Sidebar() {
 
   // Poll while any pack is still processing so status updates in real time
   const hasProcessing = recentPacks.some((p) => p.status === "processing");
-  // Also poll if any pack has no address yet (might be recently completed)
   const hasNoAddress = recentPacks.some((p) => p.status === "completed" && !p.property_address);
-  
+
   useEffect(() => {
     if (!hasProcessing && !hasNoAddress) return;
     const interval = setInterval(fetchRecentPacks, hasProcessing ? 5000 : 3000);
     return () => clearInterval(interval);
   }, [hasProcessing, hasNoAddress, fetchRecentPacks]);
 
-  // Poll recent orders if any are still processing
   const hasProcessingOrders = recentOrders.some(
     (o) => o.status === "processing" || o.status === "awaiting_abstractor"
   );
@@ -219,10 +222,6 @@ export function Sidebar() {
     setRecentOrders((prev) => prev.filter((o) => o.id !== orderId));
   }, []);
 
-  const isInsideTI = pathname.startsWith("/apps/title-intelligence");
-  const isInsideTSA = pathname.startsWith("/apps/title-search");
-  const isInsideApp = isInsideTI || isInsideTSA;
-
   let navItems;
   let adminItems: typeof customerAdminItems = [];
   let appLabel = "";
@@ -247,7 +246,7 @@ export function Sidebar() {
       <div className="flex flex-col items-center gap-3 px-4 py-5">
         {!isPlatformAdmin ? (
           <Link
-            href="/dashboard"
+            href={orgPath("/dashboard")}
             className="flex items-center w-full group"
           >
             <div className="w-full flex justify-center items-center">
@@ -311,7 +310,7 @@ export function Sidebar() {
       <nav aria-label="Main navigation" className="flex-1 p-3 overflow-y-auto">
         {isInsideApp && !isPlatformAdmin && (
           <Link
-            href="/dashboard"
+            href={orgPath("/dashboard")}
             className="flex items-center gap-3 rounded-md px-3 py-2 text-xs font-medium text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors mb-2"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
@@ -321,11 +320,12 @@ export function Sidebar() {
 
         <div className="space-y-1">
           {navItems.map((item) => {
+            const itemNormalized = item.href.replace(/^\/org\/[^/]+/, "");
             const isActive =
-              item.href === "/apps/title-intelligence" ||
-              item.href === "/apps/title-search"
-                ? pathname === item.href
-                : pathname === item.href || pathname.startsWith(item.href + "/");
+              itemNormalized === "/apps/title-intelligence" ||
+              itemNormalized === "/apps/title-search"
+                ? normalizedPath === itemNormalized
+                : normalizedPath === itemNormalized || normalizedPath.startsWith(itemNormalized + "/");
             return (
               <Link
                 key={item.href}
@@ -353,7 +353,7 @@ export function Sidebar() {
                 Recent
               </p>
               <Link
-                href="/apps/title-intelligence"
+                href={orgPath("/apps/title-intelligence")}
                 className="text-[10px] font-medium text-amber-600/70 hover:text-amber-700 transition-colors"
               >
                 View all
@@ -373,7 +373,7 @@ export function Sidebar() {
                     )}
                   >
                     <Link
-                      href={`/apps/title-intelligence/packs/${pack.id}`}
+                      href={orgPath(`/apps/title-intelligence/packs/${pack.id}`)}
                       className="flex items-center gap-2.5 min-w-0 flex-1"
                     >
                       <div className="shrink-0">
@@ -416,7 +416,7 @@ export function Sidebar() {
                 Recent
               </p>
               <Link
-                href="/apps/title-search"
+                href={orgPath("/apps/title-search")}
                 className="text-[10px] font-medium text-amber-600/70 hover:text-amber-700 transition-colors"
               >
                 View all
@@ -443,7 +443,7 @@ export function Sidebar() {
                     )}
                   >
                     <Link
-                      href={`/apps/title-search/orders/${order.id}`}
+                      href={orgPath(`/apps/title-search/orders/${order.id}`)}
                       className="flex items-center gap-2.5 min-w-0 flex-1"
                     >
                       <div className="shrink-0">
@@ -497,8 +497,9 @@ export function Sidebar() {
               Admin
             </p>
             {adminItems.map((item) => {
+              const itemNormalized = item.href.replace(/^\/org\/[^/]+/, "");
               const isActive =
-                pathname === item.href || pathname.startsWith(item.href + "/");
+                normalizedPath === itemNormalized || normalizedPath.startsWith(itemNormalized + "/");
               return (
                 <Link
                   key={item.href}

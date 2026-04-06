@@ -9,6 +9,7 @@ from app.core.exceptions import NotFoundError
 from app.models.user import User
 from app.schemas.organization import (
     OrganizationCreate,
+    OrganizationPublicResponse,
     OrganizationResponse,
     OrganizationUpdate,
 )
@@ -16,6 +17,18 @@ from app.schemas.user import UserInvite, UserResponse, UserUpdate, InviteRespons
 from app.services import organization_service, user_service
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
+
+
+@router.get("/by-slug/{slug}", response_model=OrganizationPublicResponse)
+async def get_org_by_slug(
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Public endpoint — no auth required. Returns basic org info for branded login pages."""
+    org = await organization_service.get_organization_by_slug(db, slug)
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return org
 
 
 @router.post("", response_model=OrganizationResponse, status_code=status.HTTP_201_CREATED)

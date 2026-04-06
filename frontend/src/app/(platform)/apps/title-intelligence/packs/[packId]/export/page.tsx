@@ -13,6 +13,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { useOrg } from "@/hooks/use-org";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 import { usePack } from "@/hooks/use-pack";
 import { cn } from "@/lib/utils";
 import type { Flag } from "@/lib/ti-types";
@@ -21,6 +22,7 @@ export default function ExportPage() {
   const params = useParams();
   const packId = params.packId as string;
   const { orgFetch, orgFetchBlob } = useOrg();
+  const { orgPath } = useOrgSlug();
   const { pack } = usePack(packId);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +69,7 @@ export default function ExportPage() {
     <div className="space-y-6 max-w-3xl">
       {/* Back link */}
       <Link
-        href={`/apps/title-intelligence/packs/${packId}/results`}
+        href={orgPath(`/apps/title-intelligence/packs/${packId}/results`)}
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft className="h-3.5 w-3.5" />

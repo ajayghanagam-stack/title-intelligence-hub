@@ -37,7 +37,7 @@ export default function CreateCustomersLoginPage() {
       }
 
       if (data.orgs.length > 0) {
-        setCurrentOrg(data.orgs[0].id, data.orgs[0].name);
+        setCurrentOrg(data.orgs[0].id, data.orgs[0].name, data.orgs[0].slug);
       }
       router.push("/admin/accounts");
     } catch (err: unknown) {

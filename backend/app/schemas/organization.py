@@ -16,6 +16,16 @@ class OrganizationUpdate(BaseModel):
     is_active: bool | None = None
 
 
+class OrganizationPublicResponse(BaseModel):
+    """Public org info for branded login pages — no sensitive data."""
+    id: uuid.UUID
+    name: str
+    slug: str
+    logo_url: str | None
+
+    model_config = {"from_attributes": True}
+
+
 class OrganizationResponse(BaseModel):
     id: uuid.UUID
     name: str

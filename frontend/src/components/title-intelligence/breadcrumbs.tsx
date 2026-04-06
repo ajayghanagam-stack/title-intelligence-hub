@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronRight } from "lucide-react";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 
 const segmentLabels: Record<string, string> = {
   documents: "Documents",
@@ -11,12 +12,13 @@ const segmentLabels: Record<string, string> = {
 
 export function Breadcrumbs({ packName }: { packName?: string }) {
   const pathname = usePathname();
+  const { orgPath } = useOrgSlug();
 
   const crumbs: { label: string; href: string }[] = [
-    { label: "Title Intelligence", href: "/apps/title-intelligence" },
+    { label: "Title Intelligence", href: orgPath("/apps/title-intelligence") },
   ];
 
-  // Match /apps/title-intelligence/packs/{packId}[/segment]
+  // Match /apps/title-intelligence/packs/{packId}[/segment] (with optional /org/{slug} prefix)
   const match = pathname.match(
     /\/apps\/title-intelligence\/packs\/([^/]+)(\/([^/]+))?/
   );
@@ -25,14 +27,14 @@ export function Breadcrumbs({ packName }: { packName?: string }) {
     const packId = match[1];
     crumbs.push({
       label: packName || "Pack",
-      href: `/apps/title-intelligence/packs/${packId}`,
+      href: orgPath(`/apps/title-intelligence/packs/${packId}`),
     });
 
     const segment = match[3];
     if (segment && segmentLabels[segment]) {
       crumbs.push({
         label: segmentLabels[segment],
-        href: `/apps/title-intelligence/packs/${packId}/${segment}`,
+        href: orgPath(`/apps/title-intelligence/packs/${packId}/${segment}`),
       });
     }
   }

@@ -2,6 +2,7 @@ import { API_URL } from "@/lib/config";
 
 const TOKEN_KEY = "auth_token";
 const SESSION_TOKEN_KEY = "admin_session_token";
+const ORG_SLUG_COOKIE = "org_slug";
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -19,11 +20,16 @@ export function setToken(token: string, sessionOnly = false): void {
   document.cookie = "has_session=1; path=/; SameSite=Lax";
 }
 
+export function setOrgSlugCookie(slug: string): void {
+  document.cookie = `${ORG_SLUG_COOKIE}=${encodeURIComponent(slug)}; path=/; SameSite=Lax`;
+}
+
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(SESSION_TOKEN_KEY);
   // Remove the session marker cookie so middleware redirects to login
   document.cookie = "has_session=; path=/; max-age=0";
+  document.cookie = `${ORG_SLUG_COOKIE}=; path=/; max-age=0`;
 }
 
 export function isAdminSession(): boolean {
@@ -60,10 +66,16 @@ export async function login(
   return data;
 }
 
-export function signOut(): void {
+export function signOut(orgSlug?: string): void {
   const wasAdmin = isAdminSession();
   clearToken();
-  window.location.href = wasAdmin ? "/manage-customers" : "/login";
+  if (wasAdmin) {
+    window.location.href = "/manage-customers";
+  } else if (orgSlug) {
+    window.location.href = `/org/${orgSlug}/login`;
+  } else {
+    window.location.href = "/login";
+  }
 }
 
 export async function fetchMe(): Promise<{

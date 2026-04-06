@@ -25,7 +25,7 @@ const nextConfig = {
         key: "Content-Security-Policy",
         value: process.env.NODE_ENV === 'production'
           ? `default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; font-src 'self'; connect-src 'self' ${isHttps ? 'https://*' : 'http://* https://*'}; frame-ancestors 'none';`
-          : "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self' http://localhost:8000 https://*.logikality.com https://*.preview.emergentagent.com https://*.replit.dev https://*.repl.co; frame-ancestors 'none';",
+          : "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self' http://localhost:8000 https://*.logikality.ai https://*.preview.emergentagent.com https://*.replit.dev https://*.repl.co; frame-ancestors 'none';",
       },
     ];
 

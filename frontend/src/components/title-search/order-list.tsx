@@ -7,6 +7,7 @@ import { OrderStatusBadge } from "./order-status-badge";
 import { Search, ChevronRight, ChevronLeft, Calendar, MapPin, Trash2, Check, X } from "lucide-react";
 import { deleteOrder } from "@/lib/title-search/api";
 import { useOrg } from "@/hooks/use-org";
+import { useOrgSlug } from "@/hooks/use-org-slug";
 import type { TSOrderListItem } from "@/lib/title-search/types";
 
 const PAGE_SIZE = 10;
@@ -20,6 +21,7 @@ export function OrderList({
 }) {
   const router = useRouter();
   const { currentOrgId } = useOrg();
+  const { orgPath } = useOrgSlug();
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<Record<string, string>>({});
@@ -68,7 +70,7 @@ export function OrderList({
         <p className="text-sm text-muted-foreground mb-6">
           Create your first title search order to get started
         </p>
-        <Link href="/apps/title-search/orders/new" className="btn-cta gap-2">
+        <Link href={orgPath("/apps/title-search/orders/new")} className="btn-cta gap-2">
           <Search className="h-4 w-4" />
           New Order
         </Link>
@@ -88,7 +90,7 @@ export function OrderList({
             <div
               onClick={() => {
                 if (isConfirming || isDeleting) return;
-                router.push(`/apps/title-search/orders/${order.id}`);
+                router.push(orgPath(`/apps/title-search/orders/${order.id}`));
               }}
               className={`group flex items-center gap-4 card-warm px-5 py-4 cursor-pointer ${
                 isConfirming ? "border-red-200 bg-red-50/30" : "hover:border-primary/20"
