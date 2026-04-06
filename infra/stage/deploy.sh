@@ -100,7 +100,7 @@ NATIVE_PDF_CONCURRENCY=12
 NATIVE_PDF_BATCH_SIZE=20
 TRIAGE_CONCURRENCY=4
 EXAMINER_MAX_OUTPUT_TOKENS=65536
-CORS_ORIGINS=[\"http://${EC2_HOST}\"]
+CORS_ORIGINS=[\"https://platform.logikality.com\"]
 DEBUG=false"
 
 log "Uploading .env.stage to EC2..."
@@ -131,7 +131,7 @@ SERVICES="$SERVICES caddy"
 
 log "Building and starting: $SERVICES"
 $SSH_CMD "cd ${APP_DIR} && \
-  NEXT_PUBLIC_API_URL=http://${EC2_HOST} \
+  NEXT_PUBLIC_API_URL=https://platform.logikality.com \
   docker compose -f ${COMPOSE_FILE} up -d --build $SERVICES"
 
 # ── 4. Run migrations (skip with --no-migrate) ──────────────────────────
@@ -180,7 +180,7 @@ else
   echo -e "${YELLOW}  DEPLOYED in ${ELAPSED}s (health check warning)${NC}"
 fi
 echo "============================================================"
-echo "  URL: http://${EC2_HOST}"
-echo "  API: http://${EC2_HOST}/api/v1/health"
+echo "  URL: https://platform.logikality.com"
+echo "  API: https://platform.logikality.com/api/v1/health"
 echo "  SSH: ssh -i $KEY_FILE ${EC2_USER}@${EC2_HOST}"
 echo ""

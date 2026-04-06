@@ -1,4 +1,4 @@
-:80 {
+platform.logikality.com {
 	handle /api/* {
 		reverse_proxy backend:8000 {
 			flush_interval -1

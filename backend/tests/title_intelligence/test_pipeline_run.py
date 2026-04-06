@@ -140,9 +140,13 @@ def test_collect_version_info_returns_required_keys():
         PIPELINE_BACKEND="background_tasks",
         PIPELINE_MODE="legacy",
         AI_PROVIDER="gemini",
+        GOOGLE_API_KEY="test-key",
+        VERTEX_AI=False,
         DEBUG=True,
     )
-    info = collect_version_info(settings)
+    from unittest.mock import patch
+    with patch("app.ai.gemini_provider.get_settings", return_value=settings):
+        info = collect_version_info(settings)
 
     required_keys = {
         "ai_platform",

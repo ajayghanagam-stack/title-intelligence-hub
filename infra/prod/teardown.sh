@@ -57,17 +57,15 @@ else
   warn "No running EC2 instance found with name '$INSTANCE_NAME'"
 fi
 
-# ── 2. Release Elastic IP ────────────────────────────────────────────────
-ALLOC_IDS=$(aws ec2 describe-addresses --region "$REGION" \
+# ── 2. Elastic IP (KEPT — permanent reservation for DNS stability) ─────
+EIP_INFO=$(aws ec2 describe-addresses --region "$REGION" \
   --filters "Name=tag:Project,Values=$PREFIX" \
-  --query "Addresses[*].AllocationId" --output text 2>/dev/null)
-
-for alloc_id in $ALLOC_IDS; do
-  if [ "$alloc_id" != "None" ] && [ -n "$alloc_id" ]; then
-    aws ec2 release-address --region "$REGION" --allocation-id "$alloc_id" 2>/dev/null || true
-    log "Released Elastic IP: $alloc_id"
-  fi
-done
+  --query "Addresses[0].PublicIp" --output text 2>/dev/null)
+if [ "$EIP_INFO" != "None" ] && [ -n "$EIP_INFO" ]; then
+  warn "Elastic IP $EIP_INFO kept (permanent — DNS points here). Disassociated from terminated instance."
+else
+  warn "No Elastic IP found for $PREFIX"
+fi
 
 # ── 3. Delete EC2 Security Group ─────────────────────────────────────────
 SG_NAME="${PREFIX}-ec2-sg"
@@ -156,6 +154,6 @@ fi
 echo ""
 echo -e "${GREEN}EC2 teardown complete.${NC}"
 echo ""
-echo "Resources removed: EC2 instance, Elastic IP, security group, IAM role, key pair"
-echo "Resources kept: RDS, S3, SSM parameters (unless you chose to delete them)"
+echo "Resources removed: EC2 instance, security group, IAM role, key pair"
+echo "Resources kept: Elastic IP (permanent), RDS, S3, SSM parameters (unless you chose to delete them)"
 echo ""

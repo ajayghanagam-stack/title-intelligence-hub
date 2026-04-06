@@ -119,9 +119,18 @@ def test_claude_specific_examiner_settings():
 
 
 def test_model_for_gemini_provider():
-    """_get_model_for_provider('gemini') returns Gemini model."""
+    """_get_model_for_provider('gemini') returns Gemini model (AI Studio)."""
     from app.ai.base_service import _get_model_for_provider
-    assert _get_model_for_provider("gemini") == "gemini/gemini-2.5-flash"
+    ai_studio_settings = Settings(
+        DATABASE_URL="sqlite+aiosqlite:///./test.db",
+        JWT_SECRET="test-secret",
+        DEBUG=True,
+        AI_PROVIDER="gemini",
+        GOOGLE_API_KEY="test-key",
+        VERTEX_AI=False,
+    )
+    with patch("app.ai.gemini_provider.get_settings", return_value=ai_studio_settings):
+        assert _get_model_for_provider("gemini") == "gemini/gemini-2.5-flash"
 
 
 def test_model_for_claude_provider():
@@ -149,10 +158,12 @@ def test_base_service_gemini_init():
         DEBUG=True,
         AI_PROVIDER="gemini",
         GOOGLE_API_KEY="test-key",
+        VERTEX_AI=False,
     )
     # Reset configured state
     mod._configured_providers = set()
-    with patch("app.ai.base_service.get_settings", return_value=gemini_settings):
+    with patch("app.ai.base_service.get_settings", return_value=gemini_settings), \
+         patch("app.ai.gemini_provider.get_settings", return_value=gemini_settings):
         service = BaseAIService(org_id=uuid.UUID("00000000-0000-0000-0000-000000000010"))
         assert service._provider == "gemini"
         assert service.model == "gemini/gemini-2.5-flash"
@@ -214,7 +225,7 @@ def test_configure_claude_sets_env():
 
 
 def test_version_info_gemini():
-    """collect_version_info returns Gemini platform/model for gemini provider."""
+    """collect_version_info returns Gemini platform/model for gemini provider (AI Studio)."""
     from app.micro_apps.title_intelligence.pipeline.version_tracker import collect_version_info
 
     settings = Settings(
@@ -222,9 +233,12 @@ def test_version_info_gemini():
         JWT_SECRET="test-secret",
         DEBUG=True,
         AI_PROVIDER="gemini",
+        GOOGLE_API_KEY="test-key",
         PIPELINE_MODE="legacy",
+        VERTEX_AI=False,
     )
-    info = collect_version_info(settings)
+    with patch("app.ai.gemini_provider.get_settings", return_value=settings):
+        info = collect_version_info(settings)
     assert info["ai_platform"] == "gemini"
     assert info["ai_model"] == "gemini/gemini-2.5-flash"
     assert info["ocr_engine"] == "gemini_vision"
@@ -634,7 +648,7 @@ def test_hybrid_forces_native_pdf_mode():
 
 
 def test_hybrid_requires_google_api_key():
-    """Hybrid mode raises ValueError if GOOGLE_API_KEY is missing."""
+    """Hybrid mode raises ValueError if GOOGLE_API_KEY is missing (non-Vertex)."""
     with pytest.raises(ValueError, match="GOOGLE_API_KEY"):
         Settings(
             DATABASE_URL="sqlite+aiosqlite:///./test.db",
@@ -643,6 +657,7 @@ def test_hybrid_requires_google_api_key():
             AI_PROVIDER="hybrid",
             GOOGLE_API_KEY="",
             ANTHROPIC_API_KEY="sk-ant-test",
+            VERTEX_AI=False,
         )
 
 
@@ -679,9 +694,19 @@ def test_hybrid_does_not_coerce_render_dpi():
 
 
 def test_model_for_hybrid_provider():
-    """_get_model_for_provider('hybrid') returns Gemini model (vision pass)."""
+    """_get_model_for_provider('hybrid') returns Gemini model (vision pass, AI Studio)."""
     from app.ai.base_service import _get_model_for_provider
-    assert _get_model_for_provider("hybrid") == "gemini/gemini-2.5-flash"
+    ai_studio_settings = Settings(
+        DATABASE_URL="sqlite+aiosqlite:///./test.db",
+        JWT_SECRET="test-secret",
+        DEBUG=True,
+        AI_PROVIDER="hybrid",
+        GOOGLE_API_KEY="test-key",
+        ANTHROPIC_API_KEY="sk-ant-test",
+        VERTEX_AI=False,
+    )
+    with patch("app.ai.gemini_provider.get_settings", return_value=ai_studio_settings):
+        assert _get_model_for_provider("hybrid") == "gemini/gemini-2.5-flash"
 
 
 def test_get_claude_model_helper():
@@ -697,7 +722,7 @@ def test_get_claude_model_helper():
 
 
 def test_base_service_hybrid_init():
-    """BaseAIService uses Gemini model when AI_PROVIDER='hybrid'."""
+    """BaseAIService uses Gemini model when AI_PROVIDER='hybrid' (AI Studio)."""
     from app.ai.base_service import BaseAIService
     import app.ai.base_service as mod
 
@@ -708,9 +733,11 @@ def test_base_service_hybrid_init():
         AI_PROVIDER="hybrid",
         GOOGLE_API_KEY="test-key",
         ANTHROPIC_API_KEY="sk-ant-test",
+        VERTEX_AI=False,
     )
     mod._configured_providers = set()
-    with patch("app.ai.base_service.get_settings", return_value=settings):
+    with patch("app.ai.base_service.get_settings", return_value=settings), \
+         patch("app.ai.gemini_provider.get_settings", return_value=settings):
         service = BaseAIService(org_id=uuid.UUID("00000000-0000-0000-0000-000000000010"))
         assert service._provider == "hybrid"
         assert service.model == "gemini/gemini-2.5-flash"
@@ -1037,7 +1064,7 @@ def test_ti_chat_provider_claude_requires_key():
 
 
 def test_ti_chat_provider_gemini_requires_key():
-    """TI_CHAT_PROVIDER='gemini' raises if GOOGLE_API_KEY is missing."""
+    """TI_CHAT_PROVIDER='gemini' raises if GOOGLE_API_KEY is missing (non-Vertex)."""
     with pytest.raises(ValueError, match="GOOGLE_API_KEY"):
         Settings(
             DATABASE_URL="sqlite+aiosqlite:///./test.db",
@@ -1047,6 +1074,7 @@ def test_ti_chat_provider_gemini_requires_key():
             ANTHROPIC_API_KEY="sk-ant-test",
             TI_CHAT_PROVIDER="gemini",
             GOOGLE_API_KEY="",
+            VERTEX_AI=False,
         )
 
 
@@ -1095,7 +1123,7 @@ def test_chat_agent_uses_override_provider():
 
 
 def test_chat_agent_falls_back_to_ai_provider():
-    """ChatAgent uses AI_PROVIDER when TI_CHAT_PROVIDER is empty."""
+    """ChatAgent uses AI_PROVIDER when TI_CHAT_PROVIDER is empty (AI Studio)."""
     from app.micro_apps.title_intelligence.ai.chat_agent import ChatAgent
     import app.ai.base_service as mod
 
@@ -1106,9 +1134,11 @@ def test_chat_agent_falls_back_to_ai_provider():
         AI_PROVIDER="gemini",
         GOOGLE_API_KEY="test-key",
         TI_CHAT_PROVIDER="",
+        VERTEX_AI=False,
     )
     mod._configured_providers = set()
     with patch("app.ai.base_service.get_settings", return_value=settings), \
+         patch("app.ai.gemini_provider.get_settings", return_value=settings), \
          patch("app.micro_apps.title_intelligence.ai.chat_agent.get_settings", return_value=settings):
         agent = ChatAgent(org_id=uuid.UUID("00000000-0000-0000-0000-000000000010"))
         assert agent._provider == "gemini"

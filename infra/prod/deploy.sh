@@ -71,15 +71,9 @@ GCP_REGION="${GCP_REGION:-us-central1}"
 
 S3_BUCKET="${PREFIX}-storage-$(aws sts get-caller-identity --query Account --output text)"
 
-# Domain for HTTPS (set DOMAIN env var, or falls back to EC2_HOST with http)
-DOMAIN="${DOMAIN:-}"
-if [ -n "$DOMAIN" ]; then
-  APP_URL="https://${DOMAIN}"
-  CORS_VALUE="[\"https://${DOMAIN}\"]"
-else
-  APP_URL="http://${EC2_HOST}"
-  CORS_VALUE="[\"http://${EC2_HOST}\"]"
-fi
+# Domain
+APP_URL="https://platform.logikality.com"
+CORS_VALUE="[\"https://platform.logikality.com\"]"
 
 # Determine Vertex AI settings
 VERTEX_AI_ENABLED="false"
