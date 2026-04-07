@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     # Per-agent provider overrides (empty string = use AI_PROVIDER)
     TI_CHAT_PROVIDER: Literal["gemini", "claude", ""] = ""
-    TA_AI_PROVIDER: Literal["gemini", "claude", ""] = ""
+    TA_AI_PROVIDER: Literal["gemini", "claude", ""] = "claude"
 
     # Gemini / Vertex AI
     GOOGLE_API_KEY: str = ""  # AI Studio API key (used when VERTEX_AI=false)

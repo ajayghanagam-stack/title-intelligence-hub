@@ -430,7 +430,7 @@ The second micro app. Automates county record searches, document parsing, chain-
 - **Gemini**: `gemini/gemini-2.5-flash` via Google AI. Supports `native_pdf` mode (sends PDF chunks directly). Uses `google-genai` SDK for context caching (TTL 10 min). Set `GOOGLE_API_KEY`.
 - **Hybrid** (Gemini vision + Claude extraction): Two-pass pipeline — Gemini reads PDF/images into transcriptions (no content filtering issues), then Claude analyzes text for sections/extractions/flags (excels at schema-following). Falls back to Gemini-only if Claude hits content policy errors. Requires both `GOOGLE_API_KEY` and `ANTHROPIC_API_KEY`. Forces `PIPELINE_MODE=native_pdf`. Uses `TRANSCRIPTION_ONLY_JSON_SCHEMA` + `TRANSCRIPTION_SYSTEM_PROMPT` for minimal Gemini pass, then `call_json_structured_claude()` for extraction.
 
-**Per-agent overrides**: `TI_CHAT_PROVIDER` and `TA_AI_PROVIDER` (empty string = use global `AI_PROVIDER`) allow overriding the provider for specific agents without changing the whole app.
+**Per-agent overrides**: `TI_CHAT_PROVIDER` (empty string = use global `AI_PROVIDER`) and `TA_AI_PROVIDER` (defaults to `claude` — TSA always uses Anthropic/Claude) allow overriding the provider for specific agents without changing the whole app.
 
 Tool definitions use Anthropic format (auto-converted to OpenAI format by `_convert_tools`). Provider modules: `ai/gemini_provider.py`, `ai/claude_provider.py`. `base_service.py` dispatches to the correct provider.
 
@@ -511,7 +511,7 @@ All storage paths are tenant-scoped by org_id at the top level.
 | `GOOGLE_API_KEY` | `""` | Google AI API key (required if `AI_PROVIDER=gemini`) |
 | `ANTHROPIC_API_KEY` | `""` | Anthropic API key (required if `AI_PROVIDER=claude` or `hybrid`) |
 | `TI_CHAT_PROVIDER` | `""` | Override AI provider for TI chat agent (empty = use `AI_PROVIDER`) |
-| `TA_AI_PROVIDER` | `""` | Override AI provider for TSA agents (empty = use `AI_PROVIDER`) |
+| `TA_AI_PROVIDER` | `"claude"` | AI provider for TSA agents (always Claude — requires `ANTHROPIC_API_KEY`) |
 | `STORAGE_PROVIDER` | `local` | Storage backend: local/s3 |
 | `STORAGE_PATH` | `./storage` | Local storage base path |
 | `PIPELINE_BACKEND` | `temporal` | Pipeline executor: background_tasks/temporal (both TI and TSA) |

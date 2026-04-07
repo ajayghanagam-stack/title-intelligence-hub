@@ -21,8 +21,19 @@ TEST_ORG_ID = uuid.UUID("00000000-0000-0000-0000-000000000010")
 # ---------------------------------------------------------------------------
 
 
-def test_ta_ai_provider_defaults_empty():
-    """TA_AI_PROVIDER defaults to empty string (use AI_PROVIDER)."""
+def test_ta_ai_provider_defaults_claude():
+    """TA_AI_PROVIDER defaults to 'claude' (TSA always uses Anthropic)."""
+    settings = Settings(
+        DATABASE_URL="sqlite+aiosqlite:///./test.db",
+        JWT_SECRET="test-secret",
+        DEBUG=True,
+        ANTHROPIC_API_KEY="sk-ant-test",
+    )
+    assert settings.TA_AI_PROVIDER == "claude"
+
+
+def test_ta_ai_provider_empty_overrides_to_fallback():
+    """TA_AI_PROVIDER='' falls back to AI_PROVIDER."""
     settings = Settings(
         DATABASE_URL="sqlite+aiosqlite:///./test.db",
         JWT_SECRET="test-secret",
@@ -57,6 +68,7 @@ def test_ta_ai_provider_gemini_requires_key():
             ANTHROPIC_API_KEY="sk-ant-test",
             TA_AI_PROVIDER="gemini",
             GOOGLE_API_KEY="",
+            VERTEX_AI=False,
         )
 
 
@@ -89,6 +101,7 @@ def _make_settings(ta_provider: str = "claude", ai_provider: str = "gemini") -> 
         GOOGLE_API_KEY="test-key",
         ANTHROPIC_API_KEY="sk-ant-test",
         TA_AI_PROVIDER=ta_provider,
+        VERTEX_AI=False,
     )
 
 
@@ -98,7 +111,8 @@ def _create_agent(agent_cls, settings):
 
     mod._configured_providers = set()
     with patch("app.config.get_settings", return_value=settings), \
-         patch("app.ai.base_service.get_settings", return_value=settings):
+         patch("app.ai.base_service.get_settings", return_value=settings), \
+         patch("app.ai.gemini_provider.get_settings", return_value=settings):
         agent = agent_cls(org_id=TEST_ORG_ID)
     mod._configured_providers = set()
     return agent
@@ -155,6 +169,39 @@ def test_title_research_agent_uses_ta_provider():
 
     settings = _make_settings(ta_provider="claude")
     agent = _create_agent(TitleResearchAgent, settings)
+    assert agent._provider == "claude"
+    assert agent.model == CLAUDE_MODEL
+
+
+def test_package_agent_uses_ta_provider():
+    """PackageAgent uses TA_AI_PROVIDER when set."""
+    from app.micro_apps.title_search.ai.package_agent import PackageAgent
+    from app.ai.claude_provider import CLAUDE_MODEL
+
+    settings = _make_settings(ta_provider="claude")
+    agent = _create_agent(PackageAgent, settings)
+    assert agent._provider == "claude"
+    assert agent.model == CLAUDE_MODEL
+
+
+def test_chain_builder_agent_uses_ta_provider():
+    """ChainBuilderAgent uses TA_AI_PROVIDER when set."""
+    from app.micro_apps.title_search.ai.chain_builder_agent import ChainBuilderAgent
+    from app.ai.claude_provider import CLAUDE_MODEL
+
+    settings = _make_settings(ta_provider="claude")
+    agent = _create_agent(ChainBuilderAgent, settings)
+    assert agent._provider == "claude"
+    assert agent.model == CLAUDE_MODEL
+
+
+def test_anomaly_detector_agent_uses_ta_provider():
+    """AnomalyDetectorAgent uses TA_AI_PROVIDER when set."""
+    from app.micro_apps.title_search.ai.anomaly_detector_agent import AnomalyDetectorAgent
+    from app.ai.claude_provider import CLAUDE_MODEL
+
+    settings = _make_settings(ta_provider="claude")
+    agent = _create_agent(AnomalyDetectorAgent, settings)
     assert agent._provider == "claude"
     assert agent.model == CLAUDE_MODEL
 

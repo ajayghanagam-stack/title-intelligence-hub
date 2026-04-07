@@ -60,6 +60,12 @@ ANOMALY_TOOL = {
 
 
 class AnomalyDetectorAgent(BaseAIService):
+    def __init__(self, org_id: uuid.UUID):
+        from app.config import get_settings
+        settings = get_settings()
+        provider_override = settings.TA_AI_PROVIDER or None
+        super().__init__(org_id, provider_override=provider_override)
+
     async def detect(self, chain_links: list[dict], documents: list[dict]) -> list[dict]:
         """Detect anomalies in chain of title and documents.
 

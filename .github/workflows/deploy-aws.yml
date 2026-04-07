@@ -57,6 +57,7 @@ jobs:
             echo "TEMPORAL_ADDRESS=temporal:7233"
             echo "TSA_TEMPORAL_TASK_QUEUE=title-search"
             echo "AI_PROVIDER=gemini"
+            echo "TA_AI_PROVIDER=claude"
             echo "NATIVE_PDF_CONCURRENCY=12"
             echo "NATIVE_PDF_BATCH_SIZE=20"
             echo "TRIAGE_CONCURRENCY=4"

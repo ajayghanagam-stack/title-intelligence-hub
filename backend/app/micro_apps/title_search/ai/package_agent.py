@@ -18,6 +18,12 @@ Write in professional, concise legal style.
 
 
 class PackageAgent(BaseAIService):
+    def __init__(self, org_id: uuid.UUID):
+        from app.config import get_settings
+        settings = get_settings()
+        provider_override = settings.TA_AI_PROVIDER or None
+        super().__init__(org_id, provider_override=provider_override)
+
     async def generate_narrative(
         self,
         property_summary: dict,
