@@ -52,7 +52,7 @@ export default function TitleSearchPage() {
                 Title Search & Abstracting
               </h1>
               <p className="mt-1 text-sm text-white/70">
-                AI-powered county record searches and chain-of-title analysis
+                Logikality-powered county record searches and chain-of-title analysis
               </p>
             </div>
           </div>
