@@ -5,7 +5,7 @@ import { useOrgStore } from "@/stores/org-store";
 import { apiFetch, apiFetchBlob } from "@/lib/api";
 
 export function useOrg() {
-  const { currentOrgId, currentOrgName, setCurrentOrg, clearOrg } =
+  const { currentOrgId, currentOrgName, currentOrgLogoUrl, setCurrentOrg, clearOrg } =
     useOrgStore();
 
   // Use a ref so orgFetch always sees the latest orgId without being recreated
@@ -29,6 +29,7 @@ export function useOrg() {
   return {
     currentOrgId,
     currentOrgName,
+    currentOrgLogoUrl,
     setCurrentOrg,
     clearOrg,
     orgFetch,

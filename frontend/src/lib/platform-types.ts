@@ -8,6 +8,7 @@ export interface Org {
   id: string;
   name: string;
   slug: string;
+  logo_url: string | null;
 }
 
 export interface MicroApp {

@@ -32,7 +32,7 @@ export default function LoginPage() {
       const data = await login(email, password);
 
       if (data.orgs.length > 0) {
-        setCurrentOrg(data.orgs[0].id, data.orgs[0].name, data.orgs[0].slug);
+        setCurrentOrg(data.orgs[0].id, data.orgs[0].name, data.orgs[0].slug, data.orgs[0].logo_url);
         setOrgSlugCookie(data.orgs[0].slug);
       }
       if (data.is_platform_admin) {

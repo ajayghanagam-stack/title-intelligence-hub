@@ -72,7 +72,7 @@ export default function CustomerLoginPage() {
 
       const org = userOrg || data.orgs[0];
       if (org) {
-        setCurrentOrg(org.id, org.name, org.slug);
+        setCurrentOrg(org.id, org.name, org.slug, orgInfo?.logo_url);
         setOrgSlugCookie(org.slug);
       }
 

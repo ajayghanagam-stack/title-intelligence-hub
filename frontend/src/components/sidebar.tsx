@@ -47,10 +47,6 @@ interface RecentOrder {
   created_at: string;
 }
 
-const ORG_LOGOS: Record<string, string> = {
-  "6cc2b64a-d3ab-4b98-8246-96c6e98efedf": "/grid151-logo.jpeg",      // Grid151
-  "5e704ee4-fc88-4d1e-855f-50d379ea6c0f": "/society-title-logo.jpeg", // Society Title
-};
 
 function PackStatusIcon({ status }: { status: string }) {
   switch (status) {
@@ -96,7 +92,7 @@ function formatRelativeDate(dateStr: string): string {
 export function Sidebar() {
   const pathname = usePathname();
   const { isPlatformAdmin } = useAuth();
-  const { orgFetch, currentOrgId } = useOrg();
+  const { orgFetch, currentOrgId, currentOrgName, currentOrgLogoUrl } = useOrg();
   const { orgPath } = useOrgSlug();
   const [recentPacks, setRecentPacks] = useState<RecentPack[]>([]);
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
@@ -257,22 +253,29 @@ export function Sidebar() {
                   border: "1px solid rgba(255,255,255,0.12)",
                 }}
               >
-                <Image
-                  src={
-                    currentOrgId && ORG_LOGOS[currentOrgId]
-                      ? ORG_LOGOS[currentOrgId]
-                      : "/society-title-logo.jpeg"
-                  }
-                  alt="Organization Logo"
-                  width={224}
-                  height={224}
-                  priority
-                  style={{
-                    height: 56,
-                    width: "auto",
-                    display: "block",
-                  }}
-                />
+                {currentOrgLogoUrl ? (
+                  <Image
+                    src={currentOrgLogoUrl}
+                    alt={currentOrgName || "Organization Logo"}
+                    width={224}
+                    height={224}
+                    priority
+                    style={{
+                      height: 56,
+                      width: "auto",
+                      display: "block",
+                    }}
+                  />
+                ) : (
+                  <div
+                    className="flex items-center justify-center px-4"
+                    style={{ height: 56 }}
+                  >
+                    <span className="text-lg font-bold text-foreground">
+                      {currentOrgName || "Organization"}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </Link>

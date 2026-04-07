@@ -30,7 +30,7 @@ export function OrgSwitcher({ variant = "default" }: OrgSwitcherProps) {
   // Auto-select first org if none selected
   useEffect(() => {
     if (!currentOrgId && orgs.length > 0) {
-      setCurrentOrg(orgs[0].id, orgs[0].name, orgs[0].slug);
+      setCurrentOrg(orgs[0].id, orgs[0].name, orgs[0].slug, orgs[0].logo_url);
     }
   }, [orgs, currentOrgId, setCurrentOrg]);
 
@@ -66,7 +66,7 @@ export function OrgSwitcher({ variant = "default" }: OrgSwitcherProps) {
       onChange={(e) => {
         const org = orgs.find((o) => o.id === e.target.value);
         if (org) {
-          setCurrentOrg(org.id, org.name, org.slug);
+          setCurrentOrg(org.id, org.name, org.slug, org.logo_url);
           setOrgSlugCookie(org.slug);
           // Navigate to the new org's dashboard
           if (isOrgRoute) {

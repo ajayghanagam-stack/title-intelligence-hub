@@ -59,7 +59,7 @@ async def login(
         "access_token": token,
         "token_type": "bearer",
         "user": UserInfo(id=str(user.id), email=user.email, full_name=user.full_name),
-        "orgs": [OrgInfo(id=str(o.id), name=o.name, slug=o.slug) for o in orgs],
+        "orgs": [OrgInfo(id=str(o.id), name=o.name, slug=o.slug, logo_url=o.logo_url) for o in orgs],
         "is_platform_admin": user.is_platform_admin,
     }
 
@@ -89,7 +89,7 @@ async def me(
 
     return {
         "user": UserInfo(id=str(user.id), email=user.email, full_name=user.full_name),
-        "orgs": [OrgInfo(id=str(o.id), name=o.name, slug=o.slug) for o in orgs],
+        "orgs": [OrgInfo(id=str(o.id), name=o.name, slug=o.slug, logo_url=o.logo_url) for o in orgs],
         "is_platform_admin": user.is_platform_admin,
     }
 

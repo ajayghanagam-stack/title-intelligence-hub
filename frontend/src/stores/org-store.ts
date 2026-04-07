@@ -5,7 +5,8 @@ interface OrgState {
   currentOrgId: string | null;
   currentOrgName: string | null;
   currentOrgSlug: string | null;
-  setCurrentOrg: (orgId: string, orgName: string, orgSlug?: string) => void;
+  currentOrgLogoUrl: string | null;
+  setCurrentOrg: (orgId: string, orgName: string, orgSlug?: string, logoUrl?: string | null) => void;
   clearOrg: () => void;
 }
 
@@ -15,9 +16,16 @@ export const useOrgStore = create<OrgState>()(
       currentOrgId: null,
       currentOrgName: null,
       currentOrgSlug: null,
-      setCurrentOrg: (orgId, orgName, orgSlug) =>
-        set({ currentOrgId: orgId, currentOrgName: orgName, currentOrgSlug: orgSlug ?? null }),
-      clearOrg: () => set({ currentOrgId: null, currentOrgName: null, currentOrgSlug: null }),
+      currentOrgLogoUrl: null,
+      setCurrentOrg: (orgId, orgName, orgSlug, logoUrl) =>
+        set({
+          currentOrgId: orgId,
+          currentOrgName: orgName,
+          currentOrgSlug: orgSlug ?? null,
+          currentOrgLogoUrl: logoUrl ?? null,
+        }),
+      clearOrg: () =>
+        set({ currentOrgId: null, currentOrgName: null, currentOrgSlug: null, currentOrgLogoUrl: null }),
     }),
     { name: "org-store" }
   )

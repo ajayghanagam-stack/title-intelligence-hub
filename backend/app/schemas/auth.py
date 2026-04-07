@@ -32,6 +32,7 @@ class OrgInfo(BaseModel):
     id: str
     name: str
     slug: str
+    logo_url: str | None = None
 
     model_config = {"from_attributes": True}
 

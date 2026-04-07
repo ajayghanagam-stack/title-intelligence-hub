@@ -44,7 +44,7 @@ export async function login(
 ): Promise<{
   access_token: string;
   user: { id: string; email: string; full_name: string | null };
-  orgs: { id: string; name: string; slug: string }[];
+  orgs: { id: string; name: string; slug: string; logo_url: string | null }[];
   is_platform_admin: boolean;
 }> {
   const res = await fetch(`${API_URL}/api/v1/auth/login`, {
@@ -80,7 +80,7 @@ export function signOut(orgSlug?: string): void {
 
 export async function fetchMe(): Promise<{
   user: { id: string; email: string; full_name: string | null };
-  orgs: { id: string; name: string; slug: string }[];
+  orgs: { id: string; name: string; slug: string; logo_url: string | null }[];
   is_platform_admin: boolean;
 } | null> {
   const token = getToken();

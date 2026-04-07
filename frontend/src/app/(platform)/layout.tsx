@@ -96,7 +96,7 @@ export default function PlatformLayout({
     apiFetch<Org[]>("/api/v1/organizations/me")
       .then((orgs) => {
         if (orgs.length > 0) {
-          setCurrentOrg(orgs[0].id, orgs[0].name, orgs[0].slug);
+          setCurrentOrg(orgs[0].id, orgs[0].name, orgs[0].slug, orgs[0].logo_url);
           setHasOrg(true);
         } else {
           setHasOrg(false);

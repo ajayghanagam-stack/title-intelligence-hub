@@ -102,7 +102,7 @@ export default function ProtectedOrgLayout({
         const matchingOrg = orgs.find((o) => o.slug === urlSlug);
 
         if (matchingOrg) {
-          setCurrentOrg(matchingOrg.id, matchingOrg.name, matchingOrg.slug);
+          setCurrentOrg(matchingOrg.id, matchingOrg.name, matchingOrg.slug, matchingOrg.logo_url);
           setOrgSlugCookie(matchingOrg.slug);
         } else if (isPlatformAdmin) {
           // Platform admin can view any org — use current org or first
@@ -111,7 +111,7 @@ export default function ProtectedOrgLayout({
             return;
           }
           if (orgs.length > 0) {
-            setCurrentOrg(orgs[0].id, orgs[0].name, orgs[0].slug);
+            setCurrentOrg(orgs[0].id, orgs[0].name, orgs[0].slug, orgs[0].logo_url);
           }
         } else {
           // User doesn't belong to this org

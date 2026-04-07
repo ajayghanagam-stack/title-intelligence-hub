@@ -44,7 +44,7 @@ export function Onboarding() {
       }
 
       // Set org in store
-      setCurrentOrg(org.id, org.name, org.slug);
+      setCurrentOrg(org.id, org.name, org.slug, org.logo_url);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to create organization");
     } finally {
