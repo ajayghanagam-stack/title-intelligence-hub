@@ -140,11 +140,15 @@ async def seed(session: AsyncSession) -> None:
     )
     customer_org = result.scalar_one_or_none()
     if customer_org is None:
-        customer_org = Organization(name=CUSTOMER_ORG_NAME, slug=CUSTOMER_ORG_SLUG)
+        customer_org = Organization(name=CUSTOMER_ORG_NAME, slug=CUSTOMER_ORG_SLUG, logo_url="/society-title-logo.jpeg")
         session.add(customer_org)
         await session.flush()
         print(f"  Created customer org: {CUSTOMER_ORG_NAME} (id={customer_org.id})")
     else:
+        # Ensure logo_url is set
+        if not customer_org.logo_url:
+            customer_org.logo_url = "/society-title-logo.jpeg"
+            print(f"  Updated logo for: {CUSTOMER_ORG_NAME}")
         print(f"  Customer org already exists: {CUSTOMER_ORG_NAME} (id={customer_org.id})")
 
     result = await session.execute(
