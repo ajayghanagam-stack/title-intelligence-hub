@@ -21,7 +21,8 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // --- Vanity URLs: /<slug> → /org/<slug>/login or /org/<slug>/dashboard ---
+  // --- Vanity URLs: /<slug> is the canonical customer login URL ---
+  // Rewrite (not redirect) so the URL stays as /<slug> in the browser.
   const RESERVED_PREFIXES = new Set([
     "/login", "/manage-customers", "/forgot-password", "/reset-password",
     "/dashboard", "/profile", "/admin", "/apps", "/org", "/error",
@@ -32,7 +33,7 @@ export function middleware(request: NextRequest) {
     if (hasSession) {
       return NextResponse.redirect(new URL(`/org/${slug}/dashboard`, request.url));
     }
-    return NextResponse.redirect(new URL(`/org/${slug}/login`, request.url));
+    return NextResponse.rewrite(new URL(`/org/${slug}/login`, request.url));
   }
 
   // --- Customer org routes: /org/{slug}/... ---
@@ -41,9 +42,9 @@ export function middleware(request: NextRequest) {
     const slug = orgMatch[1];
     const rest = orgMatch[3] || "";
 
-    // /org/{slug}/login → always public
+    // /org/{slug}/login → redirect to canonical /{slug}
     if (rest === "login") {
-      return NextResponse.next();
+      return NextResponse.redirect(new URL(`/${slug}`, request.url));
     }
 
     // /org/{slug} (exact) → redirect based on session
@@ -51,13 +52,12 @@ export function middleware(request: NextRequest) {
       if (hasSession) {
         return NextResponse.redirect(new URL(`/org/${slug}/dashboard`, request.url));
       }
-      return NextResponse.redirect(new URL(`/org/${slug}/login`, request.url));
+      return NextResponse.redirect(new URL(`/${slug}`, request.url));
     }
 
     // /org/{slug}/* (other routes) → require session
     if (!hasSession) {
-      const loginUrl = new URL(`/org/${slug}/login`, request.url);
-      return NextResponse.redirect(loginUrl);
+      return NextResponse.redirect(new URL(`/${slug}`, request.url));
     }
 
     return NextResponse.next();

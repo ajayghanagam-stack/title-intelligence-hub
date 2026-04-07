@@ -6,10 +6,10 @@ export { API_URL };
 function handleUnauthorized() {
   clearToken();
   if (typeof window !== "undefined") {
-    // If we're on an org-scoped URL, redirect to org login
+    // If we're on an org-scoped URL, redirect to org login (canonical /{slug})
     const orgMatch = window.location.pathname.match(/^\/org\/([^/]+)/);
     if (orgMatch) {
-      window.location.href = `/org/${orgMatch[1]}/login`;
+      window.location.href = `/${orgMatch[1]}`;
     } else {
       window.location.href = "/login";
     }

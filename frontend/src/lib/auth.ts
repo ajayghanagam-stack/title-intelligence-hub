@@ -72,7 +72,7 @@ export function signOut(orgSlug?: string): void {
   if (wasAdmin) {
     window.location.href = "/manage-customers";
   } else if (orgSlug) {
-    window.location.href = `/org/${orgSlug}/login`;
+    window.location.href = `/${orgSlug}`;
   } else {
     window.location.href = "/login";
   }

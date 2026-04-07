@@ -130,7 +130,7 @@ export default function ProtectedOrgLayout({
   // Redirect unauthenticated users to org login
   useEffect(() => {
     if (!authLoading && !user) {
-      router.push(`/org/${urlSlug}/login`);
+      router.push(`/${urlSlug}`);
     }
   }, [authLoading, user, router, urlSlug]);
 
