@@ -197,7 +197,7 @@ async def seed(session: AsyncSession) -> None:
     ALLIANCE_ORG_SLUG = "alliancetitle"
     ALLIANCE_EMAIL = "admin@alliancetitle.com"
     ALLIANCE_PASSWORD = "admin123"
-    ALLIANCE_FULL_NAME = "Alliance Title Admin"
+    ALLIANCE_FULL_NAME = "Jane Smith"
 
     result = await session.execute(
         select(Organization).where(Organization.slug == ALLIANCE_ORG_SLUG)
@@ -231,7 +231,12 @@ async def seed(session: AsyncSession) -> None:
         await session.flush()
         print(f"  Created customer admin: {ALLIANCE_FULL_NAME} <{ALLIANCE_EMAIL}> (id={alliance_user.id})")
     else:
-        print(f"  Customer admin already exists: {ALLIANCE_FULL_NAME} <{ALLIANCE_EMAIL}> (id={alliance_user.id})")
+        # Ensure full_name is up to date
+        if alliance_user.full_name != ALLIANCE_FULL_NAME:
+            alliance_user.full_name = ALLIANCE_FULL_NAME
+            print(f"  Updated customer admin name to: {ALLIANCE_FULL_NAME}")
+        else:
+            print(f"  Customer admin already exists: {ALLIANCE_FULL_NAME} <{ALLIANCE_EMAIL}> (id={alliance_user.id})")
 
     # Subscribe Alliance Title Co. to both micro apps
     for app_obj in [ti_app, ts_app]:
