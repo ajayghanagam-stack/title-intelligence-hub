@@ -82,6 +82,13 @@ class TestHeuristicPreTriage:
 
         mock_storage = AsyncMock()
         mock_storage.read = AsyncMock(return_value=pdf_bytes)
+        mock_storage.save = AsyncMock()
+        mock_storage.make_page_path = MagicMock(
+            side_effect=lambda oid, pid, pn, **kw: f"{oid}/{pid}/pages/page_{pn:04d}.jpg"
+        )
+        mock_storage.make_thumb_path = MagicMock(
+            side_effect=lambda oid, pid, pn: f"{oid}/{pid}/thumbs/page_{pn:04d}.jpg"
+        )
 
         await _stage_render_native_pdf(TEST_PACK_ID, TEST_ORG_ID, db_session, mock_storage)
 
@@ -122,6 +129,13 @@ class TestHeuristicPreTriage:
 
         mock_storage = AsyncMock()
         mock_storage.read = AsyncMock(return_value=pdf_bytes)
+        mock_storage.save = AsyncMock()
+        mock_storage.make_page_path = MagicMock(
+            side_effect=lambda oid, pid, pn, **kw: f"{oid}/{pid}/pages/page_{pn:04d}.jpg"
+        )
+        mock_storage.make_thumb_path = MagicMock(
+            side_effect=lambda oid, pid, pn: f"{oid}/{pid}/thumbs/page_{pn:04d}.jpg"
+        )
 
         await _stage_render_native_pdf(TEST_PACK_ID, TEST_ORG_ID, db_session, mock_storage)
 

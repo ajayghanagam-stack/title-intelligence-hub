@@ -170,11 +170,11 @@ async def pack_with_native_pages(db_session: AsyncSession, seed_data):
 
 
 class TestNativePdfRenderStage:
-    """Test _stage_render_native_pdf creates Page records without images."""
+    """Test _stage_render_native_pdf creates Page records with viewer images."""
 
     @pytest.mark.asyncio
-    async def test_render_creates_page_records(self, db_session: AsyncSession, seed_data):
-        """Native PDF render should create page records with empty image URIs."""
+    async def test_render_creates_page_records_with_images(self, db_session: AsyncSession, seed_data):
+        """Native PDF render should create page records with viewer image URIs."""
         from app.micro_apps.title_intelligence.pipeline.stages import _stage_render_native_pdf
 
         # Create pack and file
@@ -200,6 +200,13 @@ class TestNativePdfRenderStage:
         pdf_bytes = _create_test_pdf(5)
         mock_storage = AsyncMock()
         mock_storage.read = AsyncMock(return_value=pdf_bytes)
+        mock_storage.save = AsyncMock()
+        mock_storage.make_page_path = MagicMock(
+            side_effect=lambda oid, pid, pn, **kw: f"{oid}/{pid}/pages/page_{pn:04d}.jpg"
+        )
+        mock_storage.make_thumb_path = MagicMock(
+            side_effect=lambda oid, pid, pn: f"{oid}/{pid}/thumbs/page_{pn:04d}.jpg"
+        )
 
         await _stage_render_native_pdf(TEST_PACK_ID, TEST_ORG_ID, db_session, mock_storage)
 
@@ -210,9 +217,13 @@ class TestNativePdfRenderStage:
         assert len(pages) == 5
         for i, page in enumerate(pages, 1):
             assert page.page_number == i
-            assert page.image_uri == ""
-            assert page.thumb_uri == ""
-            assert page.ocr_text is None
+            assert page.image_uri != ""
+            assert page.thumb_uri != ""
+            assert "pages/" in page.image_uri
+            assert "thumbs/" in page.thumb_uri
+
+        # Verify images were saved to storage (2 saves per page: image + thumb)
+        assert mock_storage.save.call_count == 10  # 5 pages * 2
 
         # Verify page_count was set on PackFile
         pf = (await db_session.execute(
@@ -247,6 +258,13 @@ class TestNativePdfRenderStage:
         pdf_bytes = _create_test_pdf(3)
         mock_storage = AsyncMock()
         mock_storage.read = AsyncMock(return_value=pdf_bytes)
+        mock_storage.save = AsyncMock()
+        mock_storage.make_page_path = MagicMock(
+            side_effect=lambda oid, pid, pn, **kw: f"{oid}/{pid}/pages/page_{pn:04d}.jpg"
+        )
+        mock_storage.make_thumb_path = MagicMock(
+            side_effect=lambda oid, pid, pn: f"{oid}/{pid}/thumbs/page_{pn:04d}.jpg"
+        )
 
         await _stage_render_native_pdf(TEST_PACK_ID, TEST_ORG_ID, db_session, mock_storage)
         await _stage_render_native_pdf(TEST_PACK_ID, TEST_ORG_ID, db_session, mock_storage)

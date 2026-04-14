@@ -341,12 +341,16 @@ async def _clone_pages_from_donor(
 async def _stage_render_native_pdf(
     pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, storage: StorageProvider
 ):
-    """Lightweight render stage for native_pdf mode.
+    """Render stage for native_pdf mode.
 
-    Creates minimal Page records (page_number, file_id) with no images or OCR text.
-    Page text will be populated later by the examine stage from LLM transcriptions.
+    Creates Page records with embedded text metadata AND rendered JPEG images
+    for the document viewer. The examine stage still sends raw PDF chunks
+    directly to Gemini (images are for viewer display only).
     """
-    import fitz
+    import fitz  # PyMuPDF
+
+    VIEWER_DPI = 150   # full-size page images for document viewer
+    THUMB_DPI = 72     # thumbnail images for sidebar/grid
 
     log = get_logger(__name__, org_id=org_id, pack_id=pack_id, stage="render")
 
@@ -360,50 +364,80 @@ async def _stage_render_native_pdf(
 
     global_page_num = 0
     heuristic_blanks = 0
+    sem = asyncio.Semaphore(RENDER_CONCURRENCY)
+
     for pack_file in files:
         pdf_data = await storage.read(pack_file.storage_path)
         doc = fitz.open(stream=pdf_data, filetype="pdf")
         pack_file.page_count = len(doc)
 
+        page_tasks: list[tuple[int, int]] = []
         for page_idx in range(len(doc)):
             global_page_num += 1
-            fitz_page = doc.load_page(page_idx)
-            embedded_text = _sanitize_extracted_text(fitz_page.get_text("text").strip())
+            page_tasks.append((page_idx, global_page_num))
 
-            # Determine page_type and ocr_text from embedded text.
-            # Pages with images but no text are scanned pages — classify as
-            # "content" so the LLM examiner processes them via vision.
+        def _render_page(page_idx: int, doc_ref: Any) -> tuple[str, str | None, bytes, bytes]:
+            """CPU-bound: extract text + render images for viewer. Runs in a thread."""
+            page = doc_ref.load_page(page_idx)
+            embedded_text = _sanitize_extracted_text(page.get_text("text").strip())
+
             page_type = None
-            ocr_text = None
             if len(embedded_text) >= MIN_EMBEDDED_TEXT_LEN:
-                ocr_text = embedded_text
+                pass  # content page with text
             elif len(embedded_text) < HEURISTIC_BLANK_THRESHOLD:
-                has_images = len(fitz_page.get_images()) > 0
-                if has_images:
-                    # Scanned page — no extractable text but has image content
-                    page_type = None  # treated as content by examiner
-                else:
+                has_images = len(page.get_images()) > 0
+                if not has_images:
                     page_type = "blank"
-                    heuristic_blanks += 1
+
+            # Render page images for the document viewer
+            pix = page.get_pixmap(dpi=VIEWER_DPI)
+            img_data = pix.tobytes("jpeg")
+            thumb_pix = page.get_pixmap(dpi=THUMB_DPI)
+            thumb_data = thumb_pix.tobytes("jpeg")
+
+            return embedded_text, page_type, img_data, thumb_data
+
+        async def _process_page(page_idx: int, gpn: int) -> None:
+            nonlocal heuristic_blanks
+            async with sem:
+                embedded_text, page_type, img_data, thumb_data = await asyncio.to_thread(
+                    _render_page, page_idx, doc
+                )
+
+            if page_type == "blank":
+                heuristic_blanks += 1
+
+            ocr_text = embedded_text if len(embedded_text) >= MIN_EMBEDDED_TEXT_LEN else None
+
+            # Store images for viewer
+            image_path = storage.make_page_path(org_id, pack_id, gpn)
+            thumb_path = storage.make_thumb_path(org_id, pack_id, gpn)
+            await asyncio.gather(
+                storage.save(image_path, img_data),
+                storage.save(thumb_path, thumb_data),
+            )
 
             db.add(Page(
                 pack_id=pack_id,
                 file_id=pack_file.id,
                 org_id=org_id,
-                page_number=global_page_num,
-                # Placeholder URIs — native_pdf mode doesn't render images.
-                # image_uri/thumb_uri are NOT NULL in the schema; empty string signals "no image".
-                image_uri="",
-                thumb_uri="",
+                page_number=gpn,
+                image_uri=image_path,
+                thumb_uri=thumb_path,
                 ocr_text=ocr_text,
                 page_type=page_type,
             ))
+
+        await asyncio.gather(*[
+            _process_page(pidx, gpn)
+            for pidx, gpn in page_tasks
+        ])
 
         doc.close()
 
     await db.commit()
     log.info(
-        f"Native PDF render: created {global_page_num} page records "
+        f"Native PDF render: created {global_page_num} page records with viewer images "
         f"({heuristic_blanks} heuristic blanks)"
     )
 
@@ -411,8 +445,9 @@ async def _stage_render_native_pdf(
 async def stage_render(pack_id: uuid.UUID, org_id: uuid.UUID, db: AsyncSession, storage: StorageProvider):
     """Convert PDF files to JPEG page images + thumbnails.
 
-    In native_pdf mode, creates lightweight Page records (metadata only, no images).
-    In legacy mode, renders PDFs to JPEG images + thumbnails and extracts embedded text.
+    Both native_pdf and legacy modes render page images for the document viewer.
+    In native_pdf mode, the examine stage sends raw PDF chunks to Gemini (images are viewer-only).
+    In legacy mode, images are also used for AI analysis via vision.
 
     Fast path: if a previously completed pack in the same org has identical
     file content, clone its pages instead of re-rendering from scratch.
