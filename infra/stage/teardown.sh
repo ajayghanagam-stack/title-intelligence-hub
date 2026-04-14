@@ -7,7 +7,7 @@ export AWS_PAGER=""
 # Removes EC2-specific resources. RDS + S3 + SSM are optionally kept.
 # ============================================================================
 
-PREFIX="ti-hub"
+PREFIX="ti-hub-stage"
 REGION="us-east-1"
 
 RED='\033[0;31m'

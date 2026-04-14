@@ -8,7 +8,7 @@ export AWS_PAGER=""
 # Idempotent — safe to re-run (skips existing resources).
 # ============================================================================
 
-PREFIX="ti-hub"
+PREFIX="ti-hub-stage"
 REGION="us-east-1"
 INSTANCE_TYPE="t4g.xlarge"   # 4 vCPU, 16 GB RAM (ARM64)
 KEY_NAME="${PREFIX}-key"
