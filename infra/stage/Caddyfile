@@ -1,18 +1,4 @@
-https://3.214.63.150 {
-	tls internal
-
-	handle /api/* {
-		reverse_proxy backend:8000 {
-			flush_interval -1
-		}
-	}
-
-	handle {
-		reverse_proxy frontend:3000
-	}
-}
-
-http://3.214.63.150 {
+:80 {
 	handle /api/* {
 		reverse_proxy backend:8000 {
 			flush_interval -1
