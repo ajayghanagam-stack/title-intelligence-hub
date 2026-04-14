@@ -13,8 +13,7 @@ TARGET="${1:-both}"
 KEY_FILE="${EC2_KEY_FILE:-$HOME/.ssh/${PREFIX}-key.pem}"
 EC2_USER="ec2-user"
 APP_DIR="/opt/ti-hub"
-# sslip.io provides free wildcard DNS: x-x-x-x.sslip.io → x.x.x.x
-STAGE_DOMAIN="${EC2_HOST//./-}.sslip.io"
+STAGE_DOMAIN="stage.logikality.ai"
 COMPOSE_FILE="infra/stage/docker-compose.prod.yml"
 
 # Colors

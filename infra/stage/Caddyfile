@@ -1,4 +1,4 @@
-3-214-63-150.sslip.io {
+stage.logikality.ai {
 	handle /api/* {
 		reverse_proxy backend:8000 {
 			flush_interval -1
