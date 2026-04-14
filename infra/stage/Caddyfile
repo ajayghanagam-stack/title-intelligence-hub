@@ -1,4 +1,4 @@
-:80 {
+3-214-63-150.sslip.io {
 	handle /api/* {
 		reverse_proxy backend:8000 {
 			flush_interval -1

@@ -13,6 +13,8 @@ TARGET="${1:-both}"
 KEY_FILE="${EC2_KEY_FILE:-$HOME/.ssh/${PREFIX}-key.pem}"
 EC2_USER="ec2-user"
 APP_DIR="/opt/ti-hub"
+# sslip.io provides free wildcard DNS: x-x-x-x.sslip.io → x.x.x.x
+STAGE_DOMAIN="${EC2_HOST//./-}.sslip.io"
 COMPOSE_FILE="infra/stage/docker-compose.prod.yml"
 
 # Colors
@@ -121,7 +123,7 @@ NATIVE_PDF_CONCURRENCY=12
 NATIVE_PDF_BATCH_SIZE=20
 TRIAGE_CONCURRENCY=4
 EXAMINER_MAX_OUTPUT_TOKENS=65536
-CORS_ORIGINS=[\"http://${EC2_HOST}\"]
+CORS_ORIGINS=[\"https://${STAGE_DOMAIN}\"]
 DEBUG=false"
 
 log "Uploading .env.stage to EC2..."
@@ -152,7 +154,7 @@ SERVICES="$SERVICES caddy"
 
 log "Building and starting: $SERVICES"
 $SSH_CMD "cd ${APP_DIR} && \
-  NEXT_PUBLIC_API_URL=http://${EC2_HOST} \
+  NEXT_PUBLIC_API_URL=https://${STAGE_DOMAIN} \
   docker compose -f ${COMPOSE_FILE} up -d --build $SERVICES"
 
 # ── 4. Run migrations (skip with --no-migrate) ──────────────────────────
@@ -201,7 +203,7 @@ else
   echo -e "${YELLOW}  DEPLOYED in ${ELAPSED}s (health check warning)${NC}"
 fi
 echo "============================================================"
-echo "  URL: http://$EC2_HOST"
-echo "  API: http://$EC2_HOST/api/v1/health"
+echo "  URL: https://$STAGE_DOMAIN"
+echo "  API: https://$STAGE_DOMAIN/api/v1/health"
 echo "  SSH: ssh -i $KEY_FILE ${EC2_USER}@${EC2_HOST}"
 echo ""
