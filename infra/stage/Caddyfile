@@ -1,4 +1,21 @@
-:80, :443 {
+{
+	auto_https off
+	local_certs
+}
+
+:80 {
+	handle /api/* {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}
+
+:443 {
 	tls internal
 
 	handle /api/* {
