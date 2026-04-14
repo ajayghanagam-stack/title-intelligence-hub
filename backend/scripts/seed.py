@@ -132,7 +132,7 @@ async def seed(session: AsyncSession) -> None:
     CUSTOMER_ORG_NAME = "Society Title"
     CUSTOMER_ORG_SLUG = "societytitle"
     CUSTOMER_EMAIL = "admin@societytitle.com"
-    CUSTOMER_PASSWORD = "admin123"
+    CUSTOMER_PASSWORD = "password123"
     CUSTOMER_FULL_NAME = "Society Title Admin"
 
     result = await session.execute(
@@ -171,7 +171,13 @@ async def seed(session: AsyncSession) -> None:
         await session.flush()
         print(f"  Created customer admin: {CUSTOMER_FULL_NAME} <{CUSTOMER_EMAIL}> (id={customer_user.id})")
     else:
-        print(f"  Customer admin already exists: {CUSTOMER_FULL_NAME} <{CUSTOMER_EMAIL}> (id={customer_user.id})")
+        # Ensure password is up to date
+        from app.services.auth_service import verify_password
+        if not verify_password(CUSTOMER_PASSWORD, customer_user.password_hash):
+            customer_user.password_hash = hash_password(CUSTOMER_PASSWORD)
+            print(f"  Updated customer admin password: {CUSTOMER_FULL_NAME} <{CUSTOMER_EMAIL}>")
+        else:
+            print(f"  Customer admin already exists: {CUSTOMER_FULL_NAME} <{CUSTOMER_EMAIL}> (id={customer_user.id})")
 
     # Subscribe Society Title to both micro apps
     for app_obj in [ti_app, ts_app]:
@@ -196,7 +202,7 @@ async def seed(session: AsyncSession) -> None:
     ALLIANCE_ORG_NAME = "Alliance Title Co."
     ALLIANCE_ORG_SLUG = "alliancetitle"
     ALLIANCE_EMAIL = "admin@alliancetitle.com"
-    ALLIANCE_PASSWORD = "admin123"
+    ALLIANCE_PASSWORD = "password123"
     ALLIANCE_FULL_NAME = "Jane Smith"
 
     result = await session.execute(
@@ -231,10 +237,17 @@ async def seed(session: AsyncSession) -> None:
         await session.flush()
         print(f"  Created customer admin: {ALLIANCE_FULL_NAME} <{ALLIANCE_EMAIL}> (id={alliance_user.id})")
     else:
-        # Ensure full_name is up to date
+        # Ensure full_name and password are up to date
+        updated = False
         if alliance_user.full_name != ALLIANCE_FULL_NAME:
             alliance_user.full_name = ALLIANCE_FULL_NAME
-            print(f"  Updated customer admin name to: {ALLIANCE_FULL_NAME}")
+            updated = True
+        from app.services.auth_service import verify_password
+        if not verify_password(ALLIANCE_PASSWORD, alliance_user.password_hash):
+            alliance_user.password_hash = hash_password(ALLIANCE_PASSWORD)
+            updated = True
+        if updated:
+            print(f"  Updated customer admin: {ALLIANCE_FULL_NAME} <{ALLIANCE_EMAIL}>")
         else:
             print(f"  Customer admin already exists: {ALLIANCE_FULL_NAME} <{ALLIANCE_EMAIL}> (id={alliance_user.id})")
 
