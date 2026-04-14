@@ -1,4 +1,6 @@
-http:// {
+https://3.214.63.150 {
+	tls internal
+
 	handle /api/* {
 		reverse_proxy backend:8000 {
 			flush_interval -1
@@ -10,9 +12,7 @@ http:// {
 	}
 }
 
-https:// {
-	tls internal
-
+http://3.214.63.150 {
 	handle /api/* {
 		reverse_proxy backend:8000 {
 			flush_interval -1
