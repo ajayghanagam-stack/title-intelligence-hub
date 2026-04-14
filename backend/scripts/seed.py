@@ -192,7 +192,67 @@ async def seed(session: AsyncSession) -> None:
             print(f"  Subscription already exists: {CUSTOMER_ORG_NAME} → {app_obj.name}")
     await session.flush()
 
-    # ── 6. Seed county sources for testing ──────────────────────
+    # ── 6. Alliance Title Co. customer account ─────────────────
+    ALLIANCE_ORG_NAME = "Alliance Title Co."
+    ALLIANCE_ORG_SLUG = "alliancetitle"
+    ALLIANCE_EMAIL = "admin@alliancetitle.com"
+    ALLIANCE_PASSWORD = "admin123"
+    ALLIANCE_FULL_NAME = "Alliance Title Admin"
+
+    result = await session.execute(
+        select(Organization).where(Organization.slug == ALLIANCE_ORG_SLUG)
+    )
+    alliance_org = result.scalar_one_or_none()
+    if alliance_org is None:
+        alliance_org = Organization(name=ALLIANCE_ORG_NAME, slug=ALLIANCE_ORG_SLUG)
+        session.add(alliance_org)
+        await session.flush()
+        print(f"  Created customer org: {ALLIANCE_ORG_NAME} (id={alliance_org.id})")
+    else:
+        print(f"  Customer org already exists: {ALLIANCE_ORG_NAME} (id={alliance_org.id})")
+
+    result = await session.execute(
+        select(User).where(User.email == ALLIANCE_EMAIL)
+    )
+    alliance_user = result.scalar_one_or_none()
+    if alliance_user is None:
+        alliance_user_id = uuid.uuid4()
+        alliance_user = User(
+            id=alliance_user_id,
+            auth_user_id=alliance_user_id,
+            email=ALLIANCE_EMAIL,
+            full_name=ALLIANCE_FULL_NAME,
+            password_hash=hash_password(ALLIANCE_PASSWORD),
+            org_id=alliance_org.id,
+            role="admin",
+            is_platform_admin=False,
+        )
+        session.add(alliance_user)
+        await session.flush()
+        print(f"  Created customer admin: {ALLIANCE_FULL_NAME} <{ALLIANCE_EMAIL}> (id={alliance_user.id})")
+    else:
+        print(f"  Customer admin already exists: {ALLIANCE_FULL_NAME} <{ALLIANCE_EMAIL}> (id={alliance_user.id})")
+
+    # Subscribe Alliance Title Co. to both micro apps
+    for app_obj in [ti_app, ts_app]:
+        result = await session.execute(
+            select(Subscription).where(
+                Subscription.org_id == alliance_org.id,
+                Subscription.app_id == app_obj.id,
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            session.add(Subscription(
+                org_id=alliance_org.id,
+                app_id=app_obj.id,
+                status="active",
+            ))
+            print(f"  Subscribed {ALLIANCE_ORG_NAME} to {app_obj.name}")
+        else:
+            print(f"  Subscription already exists: {ALLIANCE_ORG_NAME} → {app_obj.name}")
+    await session.flush()
+
+    # ── 7. Seed county sources for testing ──────────────────────
     # Create digital county sources so the TSA pipeline can run end-to-end.
     test_counties = [
         ("Cook", "IL"),
