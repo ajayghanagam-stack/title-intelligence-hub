@@ -70,3 +70,26 @@ export interface AccountDetail {
   users: AccountUser[];
   subscriptions: AccountSubscription[];
 }
+
+export interface UsageItem {
+  name: string;
+  filenames?: string[] | null;
+  status: string;
+  created_at: string;
+}
+
+export interface AppUsage {
+  app_slug: string;
+  app_name: string;
+  completed_count: number;
+  total_count: number;
+  items: UsageItem[];
+}
+
+export interface OrgUsage {
+  org_id: string;
+  org_name: string;
+  start_date: string;
+  end_date: string;
+  apps: AppUsage[];
+}

@@ -8,15 +8,17 @@ The Logikality Admin uses these to:
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_platform_admin
 from app.models.user import User
-from app.services import admin_service
+from app.services import admin_service, billing_service
+from app.services.billing_pdf_service import generate_billing_report_pdf
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -107,6 +109,29 @@ class ToggleSubscriptionRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     new_password: str = Field(min_length=6)
+
+
+class UsageItem(BaseModel):
+    name: str
+    filenames: list[str] | None = None
+    status: str
+    created_at: str
+
+
+class AppUsage(BaseModel):
+    app_slug: str
+    app_name: str
+    completed_count: int
+    total_count: int
+    items: list[UsageItem] = []
+
+
+class OrgUsageResponse(BaseModel):
+    org_id: str
+    org_name: str
+    start_date: str
+    end_date: str
+    apps: list[AppUsage]
 
 
 # ── Account management ──────────────────────────────────────────
@@ -261,4 +286,61 @@ async def update_app(
         id=str(app.id), name=app.name, slug=app.slug,
         description=app.description, icon=app.icon,
         is_active=app.is_active, created_at=app.created_at,
+    )
+
+
+# ── Billing / Usage reports ────────────────────────────────────
+
+
+def _default_start() -> date:
+    """First day of the current month."""
+    today = date.today()
+    return today.replace(day=1)
+
+
+@router.get("/billing/{org_id}", response_model=OrgUsageResponse)
+async def get_billing(
+    org_id: uuid.UUID,
+    start_date: date = Query(default=None),
+    end_date: date = Query(default=None),
+    admin: User = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get usage data for a single organization within a date range."""
+    if start_date is None:
+        start_date = _default_start()
+    if end_date is None:
+        end_date = date.today()
+
+    data = await billing_service.get_org_usage(db, org_id, start_date, end_date)
+    return OrgUsageResponse(**data)
+
+
+@router.get("/billing/{org_id}/pdf")
+async def get_billing_pdf(
+    org_id: uuid.UUID,
+    start_date: date = Query(default=None),
+    end_date: date = Query(default=None),
+    admin: User = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a PDF usage report for a single organization."""
+    if start_date is None:
+        start_date = _default_start()
+    if end_date is None:
+        end_date = date.today()
+
+    data = await billing_service.get_org_usage(db, org_id, start_date, end_date)
+    pdf_bytes = generate_billing_report_pdf(
+        org_name=data["org_name"],
+        start_date=data["start_date"],
+        end_date=data["end_date"],
+        apps_usage=data["apps"],
+    )
+
+    filename = f"usage_report_{data['org_name'].replace(' ', '_')}_{start_date}_{end_date}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

@@ -21,6 +21,7 @@ import {
   XCircle,
   X,
   FileText,
+  Receipt,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
@@ -116,6 +117,7 @@ export function Sidebar() {
   const platformAdminItems = [
     { href: "/admin/accounts", label: "Accounts", icon: Building2 },
     { href: "/admin/apps", label: "Micro Apps", icon: Blocks },
+    { href: "/admin/billing", label: "Billing", icon: Receipt },
   ];
 
   const tiNavItems = [
