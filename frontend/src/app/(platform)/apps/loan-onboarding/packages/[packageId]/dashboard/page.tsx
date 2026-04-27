@@ -43,7 +43,6 @@ import {
   ConfidenceBreakdown,
   blendOverallNoSplit,
 } from "@/components/loan-onboarding/confidence-breakdown";
-import { ExtractedFieldsPanel } from "@/components/loan-onboarding/extracted-fields-panel";
 import { cn } from "@/lib/utils";
 
 const TERMINAL = new Set(["completed", "failed", "awaiting_review"]);
@@ -219,38 +218,51 @@ export default function LoanPackageDashboardPage() {
           total_count: fields.length,
         }))
     : [];
-  const extractionsWithFields = [
+  const allExtractions = [
     ...realExtractionsWithFields,
     ...placeholderExtractions,
   ];
   const placeholderStackIds = new Set(
     placeholderExtractions.map((e) => e.stack_id)
   );
-  const extractionsTotalPages = Math.max(
-    1,
-    Math.ceil(extractionsWithFields.length / EXTRACTIONS_PAGE_SIZE)
-  );
-  const extractionsSafePage = Math.min(
-    Math.max(0, extractionsPage),
-    extractionsTotalPages - 1
-  );
-  const extractionsPageStart = extractionsSafePage * EXTRACTIONS_PAGE_SIZE;
-  const pagedExtractions = extractionsWithFields.slice(
-    extractionsPageStart,
-    extractionsPageStart + EXTRACTIONS_PAGE_SIZE
+
+  // Flatten to one row per extracted field — the dashboard renders a tile
+  // per field, mirroring the Stack-level scores layout but scoped to
+  // individual fields rather than stacks.
+  type FieldRow = {
+    key: string;
+    fieldName: string;
+    docType: string;
+    stackIndex: number;
+    isPlaceholder: boolean;
+    confidence: number;
+    status: "located" | "low_confidence" | "missing";
+  };
+  const fieldRows: FieldRow[] = allExtractions.flatMap((e) =>
+    e.fields.map((f, fi) => ({
+      key: `${e.stack_id}-${fi}-${f.name}`,
+      fieldName: f.name,
+      docType: e.doc_type,
+      stackIndex: e.stack_index,
+      isPlaceholder: placeholderStackIds.has(e.stack_id),
+      confidence: f.confidence ?? 0,
+      status: f.status,
+    }))
   );
 
-  // Average confidence over *located* fields per extraction stack, rounded
-  // to a percent. Returns null when no fields were located so callers can
-  // show a neutral state rather than 0%.
-  const avgConfidencePct = (e: LoanStackExtraction): number | null => {
-    const located = e.fields.filter(
-      (f) => f.status === "located" || f.status === "low_confidence"
-    );
-    if (located.length === 0) return null;
-    const total = located.reduce((acc, f) => acc + (f.confidence ?? 0), 0);
-    return Math.round((total / located.length) * 100);
-  };
+  const fieldsTotalPages = Math.max(
+    1,
+    Math.ceil(fieldRows.length / EXTRACTIONS_PAGE_SIZE)
+  );
+  const fieldsSafePage = Math.min(
+    Math.max(0, extractionsPage),
+    fieldsTotalPages - 1
+  );
+  const fieldsPageStart = fieldsSafePage * EXTRACTIONS_PAGE_SIZE;
+  const pagedFields = fieldRows.slice(
+    fieldsPageStart,
+    fieldsPageStart + EXTRACTIONS_PAGE_SIZE
+  );
 
   // Subtitle — prototype shows "{loan_ref} · {borrower}". Fall back to
   // package name if neither is set.
@@ -450,7 +462,7 @@ export default function LoanPackageDashboardPage() {
                   <div className="font-serif text-[20px] font-semibold text-foreground">
                     Extracted fields
                   </div>
-                  <span className="font-mono text-[9px] tracking-[0.15em] uppercase px-2 py-0.5 rounded bg-sky-500 text-white tabular-nums">
+                  <span className="font-mono text-[9px] tracking-[0.15em] uppercase px-2 py-0.5 rounded bg-amber-500 text-white tabular-nums">
                     {locatedFields}/{totalFields} located
                   </span>
                 </div>
@@ -651,14 +663,17 @@ export default function LoanPackageDashboardPage() {
         ))}
       </div>
 
-      {/* Extracted-fields confidence grid — per-stack avg confidence + the
-          full per-field rows (name · value · confidence%). Renders whenever
-          extraction was enabled on the package OR we already have rows
-          (legacy packages). When the package has the toggle on but the grid
-          is empty, render a diagnostic placeholder so the user can see why
-          (no fields configured, or no stacks matched the doc-type keys)
-          rather than just nothing. */}
-      {(pkg.extraction_enabled || extractionsWithFields.length > 0) && (
+      {/* Extracted-fields confidence grid — per-stack avg confidence only,
+          rendered as a compact 2-column tile grid that visually matches the
+          Stack-level scores section above. We deliberately do NOT show the
+          extracted values here; the structured feed is downloadable from
+          the Extracted-fields card and the Results tab carries per-field
+          detail. Renders whenever extraction was enabled on the package OR
+          we already have rows (legacy packages). When the package has the
+          toggle on but the grid is empty, render a diagnostic placeholder
+          so the user can see why (no fields configured, or no stacks
+          matched the doc-type keys) rather than just nothing. */}
+      {(pkg.extraction_enabled || fieldRows.length > 0) && (
         <div
           className="bg-card border border-border rounded-md overflow-hidden"
           data-testid="extraction-scores-grid"
@@ -686,21 +701,21 @@ export default function LoanPackageDashboardPage() {
               </div>
             </div>
             <span className="font-mono text-[10px] text-muted-foreground tabular-nums">
-              {extractionsWithFields.length === 0
+              {fieldRows.length === 0
                 ? "no data"
                 : extractionsOpen
-                  ? `${extractionsPageStart + 1}–${Math.min(
-                      extractionsPageStart + EXTRACTIONS_PAGE_SIZE,
-                      extractionsWithFields.length
-                    )} of ${extractionsWithFields.length} stack${
-                      extractionsWithFields.length === 1 ? "" : "s"
+                  ? `${fieldsPageStart + 1}–${Math.min(
+                      fieldsPageStart + EXTRACTIONS_PAGE_SIZE,
+                      fieldRows.length
+                    )} of ${fieldRows.length} field${
+                      fieldRows.length === 1 ? "" : "s"
                     }`
-                  : `${extractionsWithFields.length} stack${
-                      extractionsWithFields.length === 1 ? "" : "s"
+                  : `${fieldRows.length} field${
+                      fieldRows.length === 1 ? "" : "s"
                     }`}
             </span>
           </button>
-          {extractionsOpen && extractionsWithFields.length === 0 && (
+          {extractionsOpen && fieldRows.length === 0 && (
             <div
               className="px-6 py-8 text-center text-[12px] text-muted-foreground"
               data-testid="extraction-scores-empty"
@@ -710,12 +725,13 @@ export default function LoanPackageDashboardPage() {
                 : "No extracted fields to show."}
             </div>
           )}
-          {extractionsOpen && extractionsWithFields.length > 0 && (
+          {extractionsOpen && fieldRows.length > 0 && (
           <>
-          <div>
-            {pagedExtractions.map((e, i) => {
-              const isPlaceholder = placeholderStackIds.has(e.stack_id);
-              const pct = avgConfidencePct(e);
+          <div className="grid grid-cols-1 md:grid-cols-2">
+            {pagedFields.map((f, i) => {
+              const found =
+                f.status === "located" || f.status === "low_confidence";
+              const pct = found ? Math.round(f.confidence * 100) : null;
               const dot =
                 pct == null
                   ? "bg-muted-foreground/40"
@@ -724,33 +740,54 @@ export default function LoanPackageDashboardPage() {
                     : pct >= 75
                       ? "bg-amber-500"
                       : "bg-red-500";
-              const bar =
+              // Donut arc color — mirror the dot scheme so the visual reading
+              // (green = good, amber = caution, red = weak) is consistent
+              // with the status dot in the tile header.
+              const ringColor =
                 pct == null
-                  ? "bg-muted-foreground/30"
+                  ? "oklch(0.85 0.02 250)"
                   : pct >= 90
-                    ? "bg-emerald-500"
+                    ? "oklch(0.670 0.170 145)" // emerald
                     : pct >= 75
-                      ? "bg-amber-500"
-                      : "bg-red-500";
+                      ? "oklch(0.720 0.170 65)" // amber
+                      : "oklch(0.620 0.220 25)"; // red
+              const ringBg =
+                pct == null
+                  ? "oklch(0.93 0.01 250)"
+                  : pct >= 90
+                    ? "oklch(0.920 0.040 145)"
+                    : pct >= 75
+                      ? "oklch(0.940 0.045 65)"
+                      : "oklch(0.940 0.045 25)";
+              const radius = 40;
+              const circumference = 2 * Math.PI * radius;
+              const filled = circumference * ((pct ?? 0) / 100);
+              const col = i % 2;
+              const row = Math.floor(i / 2);
+              const lastRow = Math.floor((pagedFields.length - 1) / 2);
               return (
                 <div
-                  key={e.stack_id}
+                  key={f.key}
                   className={cn(
                     "p-5 border-border",
-                    i !== pagedExtractions.length - 1 && "border-b",
+                    col !== 1 && "md:border-r",
+                    row !== lastRow && "border-b",
                     // Faint amber wash on placeholder rows so they read as
-                    // "informational" instead of looking like a failed stack.
-                    isPlaceholder && "bg-amber-50/30"
+                    // "informational" instead of looking like a failed field.
+                    f.isPlaceholder && "bg-amber-50/30"
                   )}
-                  data-testid={`extraction-tile-${e.stack_index}`}
+                  data-testid={`extraction-field-tile-${f.stackIndex}-${i}`}
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <div className="font-serif text-[14px] text-foreground leading-tight truncate">
-                          {labelFor(e.doc_type)}
+                        <div
+                          className="font-serif text-[14px] text-foreground leading-tight truncate"
+                          title={f.fieldName}
+                        >
+                          {f.fieldName}
                         </div>
-                        {isPlaceholder && (
+                        {f.isPlaceholder && (
                           <span
                             className="font-mono text-[8px] tracking-[0.15em] uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200"
                             data-testid="extraction-tile-placeholder-badge"
@@ -759,20 +796,8 @@ export default function LoanPackageDashboardPage() {
                           </span>
                         )}
                       </div>
-                      <div className="font-mono text-[10px] text-muted-foreground mt-1 tabular-nums">
-                        {isPlaceholder
-                          ? `0/${e.total_count} field${e.total_count === 1 ? "" : "s"} — no pages classified as this doc type`
-                          : (() => {
-                              // Recompute from rows so the count agrees with
-                              // the per-field rendering below (located OR
-                              // low_confidence both carry a value).
-                              const found = e.fields.filter(
-                                (f) =>
-                                  f.status === "located" ||
-                                  f.status === "low_confidence"
-                              ).length;
-                              return `${found}/${e.fields.length} field${e.fields.length === 1 ? "" : "s"} located`;
-                            })()}
+                      <div className="font-mono text-[10px] text-muted-foreground mt-1 truncate">
+                        {labelFor(f.docType)}
                       </div>
                     </div>
                     <span
@@ -783,29 +808,53 @@ export default function LoanPackageDashboardPage() {
                       aria-hidden
                     />
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className={cn("h-full rounded-full", bar)}
-                        style={{ width: `${pct ?? 0}%` }}
-                      />
+                  <div className="flex items-center gap-4">
+                    <div className="relative shrink-0 h-24 w-24">
+                      <svg
+                        viewBox="0 0 100 100"
+                        className="-rotate-90 h-full w-full"
+                      >
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r={radius}
+                          fill="none"
+                          stroke={ringBg}
+                          strokeWidth="10"
+                        />
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r={radius}
+                          fill="none"
+                          stroke={ringColor}
+                          strokeWidth="10"
+                          strokeDasharray={`${filled} ${circumference}`}
+                          strokeLinecap="butt"
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="font-bold tabular-nums text-base">
+                          {pct == null ? "0%" : `${pct}%`}
+                        </span>
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          Overall
+                        </span>
+                      </div>
                     </div>
-                    <span className="font-mono text-[11px] text-foreground tabular-nums shrink-0">
-                      {pct == null ? "—" : `${pct}%`}
-                    </span>
+                    <div className="font-mono text-[9px] tracking-[0.2em] text-muted-foreground uppercase">
+                      {found
+                        ? f.status === "low_confidence"
+                          ? "Confidence · low"
+                          : "Confidence"
+                        : "Not found"}
+                    </div>
                   </div>
-                  <div className="font-mono text-[9px] tracking-[0.2em] text-muted-foreground uppercase mt-2">
-                    Avg confidence
-                  </div>
-                  {/* Per-field rows: name · value · confidence%. Reuses the
-                      same panel rendered on the Results screen so the two
-                      surfaces stay in sync. */}
-                  <ExtractedFieldsPanel extraction={e} />
                 </div>
               );
             })}
           </div>
-          {extractionsTotalPages > 1 && (
+          {fieldsTotalPages > 1 && (
             <div
               className="px-4 py-2 border-t border-border bg-muted/30 flex items-center justify-between gap-2"
               data-testid="extraction-scores-pagination"
@@ -813,9 +862,9 @@ export default function LoanPackageDashboardPage() {
               <button
                 type="button"
                 onClick={() =>
-                  setExtractionsPage(Math.max(0, extractionsSafePage - 1))
+                  setExtractionsPage(Math.max(0, fieldsSafePage - 1))
                 }
-                disabled={extractionsSafePage === 0}
+                disabled={fieldsSafePage === 0}
                 className="px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
                 aria-label="Previous page"
                 data-testid="extraction-scores-page-prev"
@@ -823,16 +872,16 @@ export default function LoanPackageDashboardPage() {
                 <ChevronLeft className="h-3 w-3" /> Prev
               </button>
               <span className="font-mono text-[9px] tracking-[0.15em] text-muted-foreground uppercase tabular-nums">
-                {extractionsSafePage + 1} / {extractionsTotalPages}
+                {fieldsSafePage + 1} / {fieldsTotalPages}
               </span>
               <button
                 type="button"
                 onClick={() =>
                   setExtractionsPage(
-                    Math.min(extractionsTotalPages - 1, extractionsSafePage + 1)
+                    Math.min(fieldsTotalPages - 1, fieldsSafePage + 1)
                   )
                 }
-                disabled={extractionsSafePage >= extractionsTotalPages - 1}
+                disabled={fieldsSafePage >= fieldsTotalPages - 1}
                 className="px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
                 aria-label="Next page"
                 data-testid="extraction-scores-page-next"
