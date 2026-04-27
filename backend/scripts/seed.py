@@ -46,6 +46,11 @@ TS_APP_SLUG = "title-search"
 TS_APP_DESC = "Automated county record searches, chain-of-title construction, and abstract package generation."
 TS_APP_ICON = "search"
 
+LO_APP_NAME = "Loan Onboarding"
+LO_APP_SLUG = "loan-onboarding"
+LO_APP_DESC = "Mortgage loan package processing — per-page classification, stacking, validation, and HITL review."
+LO_APP_ICON = "folder-open"
+
 
 async def seed(session: AsyncSession) -> None:
     # ── 1. Logikality organization ──────────────────────────────
@@ -127,6 +132,24 @@ async def seed(session: AsyncSession) -> None:
     else:
         print(f"  Micro app already exists: {TS_APP_NAME} (id={ts_app.id})")
 
+    # ── 4b. Loan Onboarding micro app ─────────────────────────
+    result = await session.execute(
+        select(MicroApp).where(MicroApp.slug == LO_APP_SLUG)
+    )
+    lo_app = result.scalar_one_or_none()
+    if lo_app is None:
+        lo_app = MicroApp(
+            name=LO_APP_NAME,
+            slug=LO_APP_SLUG,
+            description=LO_APP_DESC,
+            icon=LO_APP_ICON,
+        )
+        session.add(lo_app)
+        await session.flush()
+        print(f"  Created micro app: {LO_APP_NAME} (id={lo_app.id})")
+    else:
+        print(f"  Micro app already exists: {LO_APP_NAME} (id={lo_app.id})")
+
     # ── 5. Society Title customer account ──────────────────────
     # Create the Society Title org + admin user with subscriptions to both apps
     CUSTOMER_ORG_NAME = "Society Title"
@@ -180,7 +203,7 @@ async def seed(session: AsyncSession) -> None:
             print(f"  Customer admin already exists: {CUSTOMER_FULL_NAME} <{CUSTOMER_EMAIL}> (id={customer_user.id})")
 
     # Subscribe Society Title to both micro apps
-    for app_obj in [ti_app, ts_app]:
+    for app_obj in [ti_app, ts_app, lo_app]:
         result = await session.execute(
             select(Subscription).where(
                 Subscription.org_id == customer_org.id,
@@ -252,7 +275,7 @@ async def seed(session: AsyncSession) -> None:
             print(f"  Customer admin already exists: {ALLIANCE_FULL_NAME} <{ALLIANCE_EMAIL}> (id={alliance_user.id})")
 
     # Subscribe Alliance Title Co. to both micro apps
-    for app_obj in [ti_app, ts_app]:
+    for app_obj in [ti_app, ts_app, lo_app]:
         result = await session.execute(
             select(Subscription).where(
                 Subscription.org_id == alliance_org.id,

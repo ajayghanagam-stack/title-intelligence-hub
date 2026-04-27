@@ -55,13 +55,31 @@ if [ -n "$STALE_PIDS" ]; then
   fi
 fi
 
-# Kill any orphaned uvicorn processes on port 8000
-STALE_UVICORN=$(lsof -ti :8000 2>/dev/null || true)
-if [ -n "$STALE_UVICORN" ]; then
-  echo -e "${YELLOW}       Killing stale process(es) on port 8000: $STALE_UVICORN${NC}"
-  echo "$STALE_UVICORN" | xargs kill 2>/dev/null || true
+# Kill any orphaned processes holding our dev ports. Send SIGTERM first, then
+# verify the port actually cleared and force-kill with SIGKILL if it didn't —
+# uvicorn's reloader child + Next.js dev both sometimes survive plain TERM.
+# Port 8000: backend / Port 3000: frontend.
+free_port() {
+  local port="$1"
+  local label="$2"
+  local pids
+  pids=$(lsof -ti ":$port" 2>/dev/null || true)
+  if [ -z "$pids" ]; then
+    return
+  fi
+  echo -e "${YELLOW}       Killing stale $label process(es) on port $port: $pids${NC}"
+  echo "$pids" | xargs kill 2>/dev/null || true
   sleep 1
-fi
+  local remaining
+  remaining=$(lsof -ti ":$port" 2>/dev/null || true)
+  if [ -n "$remaining" ]; then
+    echo -e "${YELLOW}       Force-killing stubborn process(es) on port $port: $remaining${NC}"
+    echo "$remaining" | xargs kill -9 2>/dev/null || true
+    sleep 1
+  fi
+}
+free_port 8000 "backend"
+free_port 3000 "frontend"
 
 # Clear Python bytecode caches to ensure fresh imports
 echo -e "${CYAN}       Clearing __pycache__...${NC}"

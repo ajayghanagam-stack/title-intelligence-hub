@@ -60,7 +60,7 @@ cd frontend && npm run lint     # ESLint
 ```bash
 ./start-dev.sh                  # starts Postgres, Temporal, backend, unified worker, frontend
 docker-compose up               # full stack via Docker (db:5436 on host, backend:8000, frontend:3001 on host)
-python -m app.pipeline.unified_worker  # unified Temporal worker (polls both TI and TSA queues)
+python -m app.pipeline.unified_worker  # unified Temporal worker (polls TI, TSA, and LO queues)
 ```
 
 **Dev port mapping** (docker-compose): PostgreSQL is exposed on host port **5436** (not 5432), frontend on **3001** (not 3000). Use `psql -h localhost -p 5436` for local DB access. `start-dev.sh` runs frontend on `:3000` and Temporal UI on `http://localhost:8085`. Temporal uses a dedicated `temporal-db` container (postgres:16-alpine) for its state, separate from the app database.
@@ -413,6 +413,70 @@ The second micro app. Automates county record searches, document parsing, chain-
 - `pipeline/temporal_activities.py` — per-stage Temporal activity wrappers
 - `tests/title_search/test_determinism.py` — golden-set regression tests
 - `tests/title_search/test_flag_rules.py` — rules engine unit tests
+
+### Loan Onboarding Micro App
+
+The third micro app. Processes mortgage loan packages (mixed PDFs: 1003, paystubs, W-2s, appraisals, etc.) through a **5-stage pipeline**: `ingest → classify → stack → validate → review`. Flags stacks with confidence < `hitl_threshold` (default 0.75) for human review.
+
+**Directory**: `backend/app/micro_apps/loan_onboarding/`
+
+**Slug**: `loan-onboarding` — mounted at `/api/v1/apps/loan-onboarding/*`. Config is **per-order**: each package carries its own `LODocTypeConfig` (expected doc types) and `LOValidationRule` rows (preset + custom NL rules), chosen by the loan officer at upload time.
+
+**Models** (all prefixed `lo_`):
+| Table | Purpose | Tenant-scoped |
+|-------|---------|:---:|
+| `lo_packages` | Upload container with pipeline status + `hitl_threshold` + progress | Yes |
+| `lo_package_files` | Uploaded PDF metadata + storage path | Yes |
+| `lo_pages` | Page metadata + heuristic text per ingested page | Yes |
+| `lo_doc_type_configs` | Per-package expected doc-type list (JSONB) | Yes |
+| `lo_classifications` | Per-page `predicted_doc_type`, `page_role`, `detected_fields` | Yes |
+| `lo_stacks` | Contiguous same-doc-type page groups with confidence + HITL flag | Yes |
+| `lo_validation_rules` | Preset + custom NL rules configured per package | Yes |
+| `lo_validation_results` | Per-stack rule evaluations + `confidence_breakdown` JSONB | Yes |
+| `lo_hitl_reviews` | Human decisions (accept/reject/reclassify) on flagged stacks | Yes |
+| `lo_pipeline_runs` | Version snapshot per pipeline execution | Yes |
+
+**AI Agents** (all subclass `BaseAIService`, all `temperature=0`):
+| Agent | Provider | Purpose |
+|-------|----------|---------|
+| `PageClassifierAgent` | Gemini on Vertex AI (`LO_CLASSIFIER_MODEL`, default `gemini-2.5-flash`) | Per-page classification: `predicted_doc_type`, `page_role` (`first_page`/`continuation`/`last_page`/`signature_page`), `detected_fields` |
+| `StackValidatorAgent` | Claude (`LO_VALIDATOR_MODEL`, default `claude-sonnet-4-6`) | Evaluates custom NL validation rules per stack |
+| `ReasoningAgent` | Claude (`LO_REASONER_MODEL`, default `claude-opus-4-6`) | Cross-document reasoning + package-level issue detection; emits per-stack `accept`/`needs_review`/`reject` decisions (HITL floor preserved from earlier stages) |
+
+**Deterministic layers**:
+- `services/stacking.py` — groups contiguous same-doc-type pages into `LOStack` rows; `page_role="first_page"` always starts a new stack; Others bucket is always HITL
+- `services/validation_presets.py` — preset rule engine (`RULES_VERSION="lo_validation_rules_v1"`): `missing_signatures`, `missing_pages`, `missing_fields`, `min_page_count`, `max_page_count`. Others stacks short-circuit to passed=True (HITL is already forced upstream)
+- `services/confidence_scorer.py` — weighted blend: 0.4 × classification + 0.25 × split_accuracy + 0.35 × validation
+
+**Pipeline** (`pipeline/orchestrator.py`):
+- 5 stages: `ingest → classify → stack → validate → review`
+- Dual backend: `PIPELINE_BACKEND` selects `background_tasks` or `temporal` (Temporal uses `LO_TEMPORAL_TASK_QUEUE`, default `loan-onboarding`)
+- Ingest: PyMuPDF splits uploads into `LOPage` rows (no LLM)
+- Classify: parallel per-page LLM calls, Gemini context caching
+- Stack: deterministic grouping (no LLM)
+- Validate: preset rules evaluated deterministically; custom NL rules dispatched in parallel via `asyncio.Semaphore(4)`
+- Review: `ReasoningAgent` produces per-stack decisions + package-level issues; HITL floor override — a stack previously flagged HITL cannot be auto-accepted by the reasoner
+- Package status transitions: `uploading → processing → completed | failed | awaiting_review`
+- Stack status transitions: `pending → classified → validated → needs_review | accepted | rejected`
+
+**Key files**:
+- `ai/page_classifier_agent.py` — `OTHERS_KEY="Others"` for the reserved unmatched bucket
+- `services/stacking.py` — `build_stacks()` pure function + `StackDraft` dataclass
+- `services/validation_presets.py` — `RULES_VERSION`, `PRESET_IDS`, `evaluate_preset()`, `evaluate_all_presets()`
+- `services/confidence_scorer.py` — `WEIGHT_CLASSIFICATION/SPLIT/VALIDATION` weights + `blend_confidence()`
+- `pipeline/temporal_workflows.py` — `ProcessLoanWorkflow` (ingest/classify/stack/validate/review + mark_completed/mark_failed)
+- `pipeline/temporal_activities.py` — `configure_lo_activities()` wires the session factory + storage at worker startup
+- `tests/loan_onboarding/test_determinism.py` — golden-set regression tests for stacking + presets + confidence blend
+
+**Config**:
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `LO_AI_PROVIDER` | `hybrid` | Gemini for classify, Claude for validate/reason |
+| `LO_CLASSIFIER_MODEL` | `gemini-2.5-flash` | Per-page classifier (bump to `gemini-3-flash` when released) |
+| `LO_VALIDATOR_MODEL` | `claude-sonnet-4-6` | Custom NL rule validation |
+| `LO_REASONER_MODEL` | `claude-opus-4-6` | Cross-doc reasoning |
+| `LO_HITL_THRESHOLD` | `0.75` | Global floor; per-package override via `LOPackage.hitl_threshold` |
+| `LO_TEMPORAL_TASK_QUEUE` | `loan-onboarding` | Temporal queue name |
 
 ### AI Integration
 

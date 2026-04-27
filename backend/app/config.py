@@ -73,6 +73,21 @@ class Settings(BaseSettings):
     TEMPORAL_NAMESPACE: str = "default"
     TEMPORAL_TASK_QUEUE: str = "title-intelligence"
     TSA_TEMPORAL_TASK_QUEUE: str = "title-search"
+    LO_TEMPORAL_TASK_QUEUE: str = "loan-onboarding"
+
+    # --- Loan Onboarding micro-app settings ---
+    # Model IDs are configurable so they can be bumped (e.g. to gemini-3-flash,
+    # claude-opus-4-7) when those models become available without code changes.
+    LO_CLASSIFIER_MODEL: str = "gemini-2.5-flash"       # runs on Vertex AI
+    LO_VALIDATOR_MODEL: str = "claude-sonnet-4-6"
+    LO_REASONER_MODEL: str = "claude-opus-4-6"
+    # Stacks with overall_confidence below this threshold go to HITL review.
+    # Can be overridden per-package at creation time.
+    LO_HITL_THRESHOLD: float = 0.96
+    # Max upload size for loan bundles (default 500 MB). Mortgage packets
+    # routinely exceed the platform-wide 100 MB cap, so this overrides
+    # FILE_UPLOAD_MAX_SIZE for the loan-onboarding upload route only.
+    LO_FILE_UPLOAD_MAX_SIZE: int = 524288000  # 500 MB
 
     # Pipeline mode: native_pdf sends PDF chunks directly to Gemini; legacy renders to JPEG first
     PIPELINE_MODE: Literal["native_pdf", "legacy"] = "native_pdf"

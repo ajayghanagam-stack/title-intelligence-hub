@@ -6,9 +6,13 @@ import { Upload, FileUp } from "lucide-react";
 export function UploadDropzone({
   onFilesSelected,
   uploading,
+  title = "Upload a Title Commitment Package",
+  buttonLabel = "Select File",
 }: {
   onFilesSelected: (files: File[]) => void;
   uploading: boolean;
+  title?: string;
+  buttonLabel?: string;
 }) {
   const [dragActive, setDragActive] = useState(false);
 
@@ -59,7 +63,7 @@ export function UploadDropzone({
         <FileUp className="h-7 w-7 text-sky-500" />
       </div>
       <p className="mt-4 text-sm font-semibold">
-        Upload a Title Search Package
+        {title}
       </p>
       <p className="mt-1.5 text-xs text-muted-foreground">
         Supports PDF, PNG, and JPEG files. Upload all documents for a single package together.
@@ -79,7 +83,7 @@ export function UploadDropzone({
         onClick={() => document.getElementById("file-upload")?.click()}
         disabled={uploading}
       >
-        {uploading ? "Uploading..." : "Select Files"}
+        {uploading ? "Uploading..." : buttonLabel}
       </button>
     </div>
   );

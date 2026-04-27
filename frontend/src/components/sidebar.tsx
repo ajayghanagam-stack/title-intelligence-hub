@@ -21,6 +21,7 @@ import {
   XCircle,
   X,
   FileText,
+  FileStack,
   Receipt,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -45,6 +46,16 @@ interface RecentOrder {
   borrower_name: string | null;
   status: string;
   pipeline_stage: string | null;
+  created_at: string;
+}
+
+interface RecentLoanPackage {
+  id: string;
+  name: string;
+  borrower_name: string | null;
+  status: string;
+  pipeline_stage: string | null;
+  updated_at: string;
   created_at: string;
 }
 
@@ -97,13 +108,19 @@ export function Sidebar() {
   const { orgPath } = useOrgSlug();
   const [recentPacks, setRecentPacks] = useState<RecentPack[]>([]);
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
+  const [recentLoanPackages, setRecentLoanPackages] = useState<
+    RecentLoanPackage[]
+  >([]);
 
   // Strip /org/{slug} prefix for path matching
   const normalizedPath = pathname.replace(/^\/org\/[^/]+/, "");
 
   const isInsideTI = normalizedPath.startsWith("/apps/title-intelligence");
   const isInsideTSA = normalizedPath.startsWith("/apps/title-search");
-  const isInsideApp = isInsideTI || isInsideTSA;
+  const isInsideLoanOnboarding = normalizedPath.startsWith(
+    "/apps/loan-onboarding"
+  );
+  const isInsideApp = isInsideTI || isInsideTSA || isInsideLoanOnboarding;
 
   const customerNavItems = [
     { href: orgPath("/dashboard"), label: "Your Apps", icon: LayoutGrid },
@@ -139,6 +156,20 @@ export function Sidebar() {
     },
   ];
 
+  const loanOnboardingNavItems = [
+    {
+      href: orgPath("/apps/loan-onboarding/packages/new"),
+      label: "New Package",
+      icon: Plus,
+      isButton: true,
+    },
+    {
+      href: orgPath("/apps/loan-onboarding"),
+      label: "Packages",
+      icon: FileStack,
+    },
+  ];
+
   const fetchRecentPacks = useCallback(() => {
     if (!isInsideTI || isPlatformAdmin) return;
     orgFetch<{ packs: RecentPack[] }>("/api/v1/apps/title-intelligence/packs?limit=5")
@@ -159,6 +190,21 @@ export function Sidebar() {
       .catch(() => {});
   }, [isInsideTSA, isPlatformAdmin, orgFetch]);
 
+  const fetchRecentLoanPackages = useCallback(() => {
+    if (!isInsideLoanOnboarding || isPlatformAdmin) return;
+    orgFetch<RecentLoanPackage[]>("/api/v1/apps/loan-onboarding/packages")
+      .then((data) => {
+        const pkgs = Array.isArray(data) ? data : [];
+        const sorted = [...pkgs].sort(
+          (a, b) =>
+            new Date(b.updated_at || b.created_at).getTime() -
+            new Date(a.updated_at || a.created_at).getTime()
+        );
+        setRecentLoanPackages(sorted.slice(0, 5));
+      })
+      .catch(() => {});
+  }, [isInsideLoanOnboarding, isPlatformAdmin, orgFetch]);
+
   useEffect(() => {
     fetchRecentPacks();
   }, [fetchRecentPacks]);
@@ -166,6 +212,10 @@ export function Sidebar() {
   useEffect(() => {
     fetchRecentOrders();
   }, [fetchRecentOrders]);
+
+  useEffect(() => {
+    fetchRecentLoanPackages();
+  }, [fetchRecentLoanPackages]);
 
   // Poll while any pack is still processing so status updates in real time
   const hasProcessing = recentPacks.some((p) => p.status === "processing");
@@ -185,6 +235,15 @@ export function Sidebar() {
     const interval = setInterval(fetchRecentOrders, 5000);
     return () => clearInterval(interval);
   }, [hasProcessingOrders, fetchRecentOrders]);
+
+  const hasProcessingLoanPackages = recentLoanPackages.some(
+    (p) => p.status === "processing" || p.status === "uploading"
+  );
+  useEffect(() => {
+    if (!hasProcessingLoanPackages) return;
+    const interval = setInterval(fetchRecentLoanPackages, 5000);
+    return () => clearInterval(interval);
+  }, [hasProcessingLoanPackages, fetchRecentLoanPackages]);
 
   useEffect(() => {
     const handler = () => fetchRecentPacks();
@@ -212,12 +271,28 @@ export function Sidebar() {
     };
   }, [fetchRecentOrders]);
 
+  useEffect(() => {
+    const handler = () => fetchRecentLoanPackages();
+    window.addEventListener("loan-package-created", handler);
+    window.addEventListener("loan-package-deleted", handler);
+    window.addEventListener("loan-package-completed", handler);
+    return () => {
+      window.removeEventListener("loan-package-created", handler);
+      window.removeEventListener("loan-package-deleted", handler);
+      window.removeEventListener("loan-package-completed", handler);
+    };
+  }, [fetchRecentLoanPackages]);
+
   const handleDismissRecentPack = useCallback((packId: string) => {
     setRecentPacks((prev) => prev.filter((p) => p.id !== packId));
   }, []);
 
   const handleDismissRecentOrder = useCallback((orderId: string) => {
     setRecentOrders((prev) => prev.filter((o) => o.id !== orderId));
+  }, []);
+
+  const handleDismissRecentLoanPackage = useCallback((packageId: string) => {
+    setRecentLoanPackages((prev) => prev.filter((p) => p.id !== packageId));
   }, []);
 
   let navItems;
@@ -233,6 +308,9 @@ export function Sidebar() {
   } else if (isInsideTSA) {
     navItems = tsaNavItems;
     appLabel = "Title Search";
+  } else if (isInsideLoanOnboarding) {
+    navItems = loanOnboardingNavItems;
+    appLabel = "Loan Onboarding";
   } else {
     navItems = customerNavItems;
     adminItems = customerAdminItems;
@@ -328,7 +406,8 @@ export function Sidebar() {
             const itemNormalized = item.href.replace(/^\/org\/[^/]+/, "");
             const isActive =
               itemNormalized === "/apps/title-intelligence" ||
-              itemNormalized === "/apps/title-search"
+              itemNormalized === "/apps/title-search" ||
+              itemNormalized === "/apps/loan-onboarding"
                 ? normalizedPath === itemNormalized
                 : normalizedPath === itemNormalized || normalizedPath.startsWith(itemNormalized + "/");
             return (
@@ -484,6 +563,84 @@ export function Sidebar() {
                     </Link>
                     <button
                       onClick={() => handleDismissRecentOrder(order.id)}
+                      className="shrink-0 opacity-0 group-hover:opacity-100 p-0.5 rounded text-sidebar-foreground/30 hover:text-red-500 hover:bg-red-50 transition-all"
+                      title="Dismiss from recents"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Recent Loan Packages */}
+        {isInsideLoanOnboarding && recentLoanPackages.length > 0 && (
+          <div className="mt-5 pt-4 border-t border-sidebar-border/60">
+            <div className="flex items-center justify-between px-3 mb-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
+                Recent
+              </p>
+              <Link
+                href={orgPath("/apps/loan-onboarding")}
+                className="text-[10px] font-medium text-amber-600/70 hover:text-amber-700 transition-colors"
+              >
+                View all
+              </Link>
+            </div>
+            <div className="space-y-0.5">
+              {recentLoanPackages.map((pkg) => {
+                const isActive = pathname.includes(pkg.id);
+                const sublabel = pkg.borrower_name || "";
+                return (
+                  <div
+                    key={pkg.id}
+                    className={cn(
+                      "group flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs transition-all",
+                      isActive
+                        ? "bg-amber-50 text-amber-800 ring-1 ring-amber-200/60"
+                        : "text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                    )}
+                  >
+                    <Link
+                      href={orgPath(
+                        `/apps/loan-onboarding/packages/${pkg.id}`
+                      )}
+                      className="flex items-center gap-2.5 min-w-0 flex-1"
+                    >
+                      <div className="shrink-0">
+                        <PackStatusIcon status={pkg.status} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p
+                          className={cn(
+                            "font-medium truncate leading-tight",
+                            isActive
+                              ? "text-amber-800"
+                              : "text-sidebar-foreground/80 group-hover:text-sidebar-foreground"
+                          )}
+                        >
+                          {pkg.name}
+                        </p>
+                        <p
+                          className={cn(
+                            "text-[10px] mt-0.5 truncate",
+                            isActive
+                              ? "text-amber-600/60"
+                              : "text-sidebar-foreground/35"
+                          )}
+                        >
+                          {sublabel
+                            ? `${sublabel} · ${formatRelativeDate(pkg.updated_at || pkg.created_at)}`
+                            : formatRelativeDate(
+                                pkg.updated_at || pkg.created_at
+                              )}
+                        </p>
+                      </div>
+                    </Link>
+                    <button
+                      onClick={() => handleDismissRecentLoanPackage(pkg.id)}
                       className="shrink-0 opacity-0 group-hover:opacity-100 p-0.5 rounded text-sidebar-foreground/30 hover:text-red-500 hover:bg-red-50 transition-all"
                       title="Dismiss from recents"
                     >

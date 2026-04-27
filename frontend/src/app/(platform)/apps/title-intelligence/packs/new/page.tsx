@@ -61,7 +61,7 @@ export default function NewPackPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Upload Documents</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Upload your title search package files for analysis.
+          Upload your title commitment package file for analysis.
         </p>
       </div>
 
@@ -83,7 +83,7 @@ export default function NewPackPage() {
             {files.map((f, i) => (
               <div
                 key={i}
-                className="flex items-center justify-between rounded-lg bg-muted/40 px-4 py-2.5 text-sm group"
+                className="flex items-center justify-between rounded-lg bg-muted/40 px-4 py-2.5 text-sm"
               >
                 <div className="flex items-center gap-2.5">
                   <FileText className="h-4 w-4 text-muted-foreground" />
@@ -93,9 +93,10 @@ export default function NewPackPage() {
                   </span>
                 </div>
                 <button
+                  type="button"
                   onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
                   aria-label={`Remove ${f.name}`}
-                  className="rounded-full p-1.5 text-muted-foreground hover:bg-background hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                  className="rounded-full p-1.5 text-muted-foreground hover:bg-background hover:text-red-500 transition-colors"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
