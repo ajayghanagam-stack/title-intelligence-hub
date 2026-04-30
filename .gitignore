@@ -56,3 +56,5 @@ backend/storage/
 
 # GCP service account keys (sensitive)
 gcp-sa-key.json
+frontend/tsconfig.tsbuildinfo
+/package-lock.json
