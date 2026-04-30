@@ -1,45 +1,35 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { getToken, fetchMe, signOut as authSignOut } from "@/lib/auth";
+import { useCallback } from "react";
+import { getToken, signOut as authSignOut } from "@/lib/auth";
 import { useOrgStore } from "@/stores/org-store";
-import type { AuthUser } from "@/lib/platform-types";
+import { useMe } from "@/hooks/use-me";
 
 /**
  * Auth hook returns { user, isPlatformAdmin, loading, signOut } instead of the
  * standard { data, loading } shape — intentional since auth state is a singleton
  * with role flags and an action (signOut), not a fetchable resource.
+ *
+ * Backed by `useMe`, so the `/auth/me` round trip is shared with any other
+ * component that needs orgs/subscriptions (platform layout, dashboard).
  */
 export function useAuth() {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
-  const [loading, setLoading] = useState(true);
   const { currentOrgSlug } = useOrgStore();
+  const hasToken = typeof window !== "undefined" && !!getToken();
+  const { data, isLoading, isFetching } = useMe();
 
-  useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
-
-    fetchMe()
-      .then((data) => {
-        setUser(data?.user ?? null);
-        setIsPlatformAdmin(data?.is_platform_admin ?? false);
-      })
-      .catch(() => {
-        setUser(null);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, []);
+  // Without a token the query is disabled (never runs), so `isLoading` stays
+  // true forever. Treat "no token" as fully resolved → not authenticated.
+  const loading = hasToken ? isLoading || isFetching : false;
 
   const signOut = useCallback(() => {
     authSignOut(currentOrgSlug ?? undefined);
   }, [currentOrgSlug]);
 
-  return { user, isPlatformAdmin, loading, signOut };
+  return {
+    user: data?.user ?? null,
+    isPlatformAdmin: data?.is_platform_admin ?? false,
+    loading,
+    signOut,
+  };
 }

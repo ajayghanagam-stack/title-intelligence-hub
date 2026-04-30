@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Request
+import uuid
+
+from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,11 +15,13 @@ from app.schemas.auth import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
+    MeResponse,
     ResetPasswordRequest,
     AuthResponse,
     UserInfo,
     OrgInfo,
 )
+from app.services import subscription_service
 from app.services.auth_service import (
     authenticate_user,
     change_password,
@@ -64,10 +68,11 @@ async def login(
     }
 
 
-@router.get("/me")
+@router.get("/me", response_model=MeResponse)
 async def me(
     auth_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
 ):
     result = await db.execute(
         select(User).where(
@@ -79,19 +84,35 @@ async def me(
         # JWT is valid but user was deleted/deactivated — treat as invalid session
         raise AuthenticationError("User account no longer exists")
 
-    # Get all orgs
+    # Get all orgs the user is a member of
     result = await db.execute(
-        select(Organization)
+        select(Organization, User.org_id)
         .join(User, User.org_id == Organization.id)
         .where(User.auth_user_id == auth_user.auth_user_id, User.is_active == True)
     )
-    orgs = result.scalars().all()
+    rows = result.all()
+    orgs = [row[0] for row in rows]
+    member_org_ids = {row[1] for row in rows}
 
-    return {
-        "user": UserInfo(id=str(user.id), email=user.email, full_name=user.full_name),
-        "orgs": [OrgInfo(id=str(o.id), name=o.name, slug=o.slug, logo_url=o.logo_url) for o in orgs],
-        "is_platform_admin": user.is_platform_admin,
-    }
+    # Optional: bundle subscriptions for the active org so a freshly-loaded
+    # tab can paint the dashboard without a second round trip. Silently skip
+    # if the header is missing/invalid or the user isn't a member of that org —
+    # the dashboard hook still falls back to GET /subscriptions in that case.
+    subscriptions = None
+    if x_org_id:
+        try:
+            org_uuid = uuid.UUID(x_org_id)
+        except ValueError:
+            org_uuid = None
+        if org_uuid is not None and org_uuid in member_org_ids:
+            subscriptions = await subscription_service.list_subscriptions(db, org_uuid)
+
+    return MeResponse(
+        user=UserInfo(id=str(user.id), email=user.email, full_name=user.full_name),
+        orgs=[OrgInfo(id=str(o.id), name=o.name, slug=o.slug, logo_url=o.logo_url) for o in orgs],
+        is_platform_admin=user.is_platform_admin,
+        subscriptions=subscriptions,
+    )
 
 
 @router.post("/change-password")

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOrg } from "@/hooks/use-org";
 import {
   createPackage,
@@ -8,53 +9,60 @@ import {
   getPackage,
   listPackages,
 } from "@/lib/loan-onboarding/api";
-import type {
-  CreateLoanPackageInput,
-} from "@/lib/loan-onboarding/api";
+import type { CreateLoanPackageInput } from "@/lib/loan-onboarding/api";
 import type {
   LoanPackage,
   LoanPackageListItem,
 } from "@/lib/loan-onboarding/types";
 
+/**
+ * Cache keys are exported so other hooks/components can invalidate after
+ * mutations they own (e.g. process/cancel buttons in the package detail view).
+ */
+export const loanPackageKeys = {
+  all: ["loan-packages"] as const,
+  list: (orgId: string | null) => ["loan-packages", "list", orgId] as const,
+  detail: (orgId: string | null, packageId: string | null | undefined) =>
+    ["loan-packages", "detail", orgId, packageId] as const,
+};
+
 export function useLoanPackages() {
   const { currentOrgId } = useOrg();
-  const [packages, setPackages] = useState<LoanPackageListItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
-  const fetchPackages = useCallback(async () => {
-    if (!currentOrgId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await listPackages(currentOrgId);
-      setPackages(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load packages");
-      setPackages([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [currentOrgId]);
+  const query = useQuery<LoanPackageListItem[]>({
+    queryKey: loanPackageKeys.list(currentOrgId),
+    queryFn: () => listPackages(currentOrgId as string),
+    enabled: !!currentOrgId,
+  });
 
-  useEffect(() => {
-    fetchPackages();
-  }, [fetchPackages]);
-
-  const create = useCallback(
-    async (data: CreateLoanPackageInput) => {
+  const createMutation = useMutation({
+    mutationFn: (data: CreateLoanPackageInput) => {
       if (!currentOrgId) throw new Error("No organization selected");
       return createPackage(currentOrgId, data);
     },
-    [currentOrgId]
-  );
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: loanPackageKeys.list(currentOrgId),
+      });
+    },
+  });
 
-  const remove = useCallback(
-    async (packageId: string) => {
+  const deleteMutation = useMutation({
+    mutationFn: async (packageId: string) => {
       if (!currentOrgId) throw new Error("No organization selected");
       await deletePackage(currentOrgId, packageId);
+      return packageId;
+    },
+    onSuccess: (packageId) => {
       // Optimistic local update so the row disappears immediately.
-      setPackages((prev) => prev.filter((p) => p.id !== packageId));
+      queryClient.setQueryData<LoanPackageListItem[] | undefined>(
+        loanPackageKeys.list(currentOrgId),
+        (prev) => prev?.filter((p) => p.id !== packageId)
+      );
+      queryClient.invalidateQueries({
+        queryKey: loanPackageKeys.list(currentOrgId),
+      });
       // Notify the sidebar (and any other listeners) so its "Recents" list
       // drops the deleted package without a manual refresh. The matching
       // handler is registered in `components/sidebar.tsx`.
@@ -66,38 +74,50 @@ export function useLoanPackages() {
         );
       }
     },
-    [currentOrgId]
+  });
+
+  const create = useCallback(
+    (data: CreateLoanPackageInput) => createMutation.mutateAsync(data),
+    [createMutation]
   );
 
-  return { packages, loading, error, refetch: fetchPackages, create, remove };
+  const remove = useCallback(
+    (packageId: string) => deleteMutation.mutateAsync(packageId).then(() => undefined),
+    [deleteMutation]
+  );
+
+  const refetch = useCallback(async () => {
+    await query.refetch();
+  }, [query]);
+
+  return {
+    packages: query.data ?? [],
+    loading: query.isLoading,
+    error: query.error instanceof Error ? query.error.message : null,
+    refetch,
+    create,
+    remove,
+  };
 }
 
 export function useLoanPackage(packageId: string | null | undefined) {
   const { currentOrgId } = useOrg();
-  const [pkg, setPkg] = useState<LoanPackage | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
-  const fetchPackage = useCallback(async (): Promise<LoanPackage | null> => {
-    if (!currentOrgId || !packageId) return null;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await getPackage(currentOrgId, packageId);
-      setPkg(data);
-      return data;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load package");
-      setPkg(null);
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  }, [currentOrgId, packageId]);
+  const query = useQuery<LoanPackage | null>({
+    queryKey: loanPackageKeys.detail(currentOrgId, packageId),
+    queryFn: () => getPackage(currentOrgId as string, packageId as string),
+    enabled: !!currentOrgId && !!packageId,
+  });
 
-  useEffect(() => {
-    fetchPackage();
-  }, [fetchPackage]);
+  const refetch = useCallback(async (): Promise<LoanPackage | null> => {
+    const result = await query.refetch();
+    return result.data ?? null;
+  }, [query]);
 
-  return { package: pkg, loading, error, refetch: fetchPackage };
+  return {
+    package: query.data ?? null,
+    loading: query.isLoading,
+    error: query.error instanceof Error ? query.error.message : null,
+    refetch,
+  };
 }

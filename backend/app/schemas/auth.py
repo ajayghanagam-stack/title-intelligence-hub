@@ -1,5 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field
 
+from app.schemas.subscription import SubscriptionResponse
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -43,3 +45,15 @@ class AuthResponse(BaseModel):
     user: UserInfo
     orgs: list[OrgInfo]
     is_platform_admin: bool = False
+
+
+class MeResponse(BaseModel):
+    """Bootstrap payload — collapses /auth/me + /organizations/me + /subscriptions
+    into a single round trip when the client passes an active X-Org-Id header.
+    Subscriptions is None when the header is absent or the user isn't a member
+    of that org (no error — caller should fall back to /subscriptions)."""
+
+    user: UserInfo
+    orgs: list[OrgInfo]
+    is_platform_admin: bool = False
+    subscriptions: list[SubscriptionResponse] | None = None

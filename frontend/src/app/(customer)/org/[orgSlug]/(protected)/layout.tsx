@@ -4,13 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname, useParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
+import { useMe } from "@/hooks/use-me";
 import { useOrgStore } from "@/stores/org-store";
 import { useOrgSlug } from "@/hooks/use-org-slug";
-import { apiFetch } from "@/lib/api";
 import { setOrgSlugCookie } from "@/lib/auth";
 import { Sidebar } from "@/components/sidebar";
 import { ToastProvider } from "@/components/ui/toast";
-import type { Org } from "@/lib/platform-types";
 import { Button } from "@/components/ui/button";
 import { LogOut, User, KeyRound, ChevronRight } from "lucide-react";
 
@@ -83,6 +82,7 @@ export default function ProtectedOrgLayout({
   const params = useParams();
   const urlSlug = params.orgSlug as string;
   const { user, isPlatformAdmin, loading: authLoading, signOut } = useAuth();
+  const { data: me } = useMe();
   const { currentOrgId, setCurrentOrg } = useOrgStore();
   const { orgPath } = useOrgSlug();
   const [checkingOrg, setCheckingOrg] = useState(true);
@@ -94,38 +94,38 @@ export default function ProtectedOrgLayout({
   useEffect(() => {
     if (authLoading || !user) return;
     if (checkedRef.current) return;
+
+    // Wait for the cached /auth/me payload — it bundles the org list, so no
+    // separate /organizations/me fetch is needed here.
+    if (!me) return;
+
     checkedRef.current = true;
+    const orgs = me.orgs ?? [];
 
-    apiFetch<Org[]>("/api/v1/organizations/me")
-      .then((orgs) => {
-        // Check if user belongs to the org matching the URL slug
-        const matchingOrg = orgs.find((o) => o.slug === urlSlug);
+    // Check if user belongs to the org matching the URL slug
+    const matchingOrg = orgs.find((o) => o.slug === urlSlug);
 
-        if (matchingOrg) {
-          setCurrentOrg(matchingOrg.id, matchingOrg.name, matchingOrg.slug, matchingOrg.logo_url);
-          setOrgSlugCookie(matchingOrg.slug);
-        } else if (isPlatformAdmin) {
-          // Platform admin can view any org — use current org or first
-          if (currentOrgId) {
-            setCheckingOrg(false);
-            return;
-          }
-          if (orgs.length > 0) {
-            setCurrentOrg(orgs[0].id, orgs[0].name, orgs[0].slug, orgs[0].logo_url);
-          }
-        } else {
-          // User doesn't belong to this org
-          setAccessDenied(true);
-          if (orgs.length > 0) {
-            setCorrectSlug(orgs[0].slug);
-          }
-        }
-      })
-      .catch(() => {
-        setAccessDenied(true);
-      })
-      .finally(() => setCheckingOrg(false));
-  }, [authLoading, user, isPlatformAdmin, urlSlug, currentOrgId, setCurrentOrg]);
+    if (matchingOrg) {
+      setCurrentOrg(matchingOrg.id, matchingOrg.name, matchingOrg.slug, matchingOrg.logo_url);
+      setOrgSlugCookie(matchingOrg.slug);
+    } else if (isPlatformAdmin) {
+      // Platform admin can view any org — use current org or first
+      if (currentOrgId) {
+        setCheckingOrg(false);
+        return;
+      }
+      if (orgs.length > 0) {
+        setCurrentOrg(orgs[0].id, orgs[0].name, orgs[0].slug, orgs[0].logo_url);
+      }
+    } else {
+      // User doesn't belong to this org
+      setAccessDenied(true);
+      if (orgs.length > 0) {
+        setCorrectSlug(orgs[0].slug);
+      }
+    }
+    setCheckingOrg(false);
+  }, [authLoading, user, isPlatformAdmin, urlSlug, currentOrgId, setCurrentOrg, me]);
 
   // Redirect unauthenticated users to org login
   useEffect(() => {

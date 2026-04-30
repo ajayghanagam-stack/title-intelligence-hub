@@ -1,31 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { apiFetch } from "@/lib/api";
+import { useMe } from "@/hooks/use-me";
 import { useOrgStore } from "@/stores/org-store";
 import { useOrgSlug } from "@/hooks/use-org-slug";
 import { setOrgSlugCookie } from "@/lib/auth";
 import { cn } from "@/lib/utils";
-import type { Org } from "@/lib/platform-types";
 
 interface OrgSwitcherProps {
   variant?: "default" | "sidebar";
 }
 
 export function OrgSwitcher({ variant = "default" }: OrgSwitcherProps) {
-  const [orgs, setOrgs] = useState<Org[]>([]);
+  const { data: me } = useMe();
+  // Memoize so the auto-select effect's deps don't change identity each render.
+  const orgs = useMemo(() => me?.orgs ?? [], [me?.orgs]);
   const { currentOrgId, setCurrentOrg } = useOrgStore();
   const { isOrgRoute } = useOrgSlug();
   const router = useRouter();
-
-  useEffect(() => {
-    apiFetch<Org[]>("/api/v1/organizations/me")
-      .then(setOrgs)
-      .catch(() => {
-        /* Auth redirect handles 401; org list is fetched elsewhere too */
-      });
-  }, []);
 
   // Auto-select first org if none selected
   useEffect(() => {

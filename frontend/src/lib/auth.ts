@@ -78,17 +78,28 @@ export function signOut(orgSlug?: string): void {
   }
 }
 
-export async function fetchMe(): Promise<{
+export interface MeResponse {
   user: { id: string; email: string; full_name: string | null };
   orgs: { id: string; name: string; slug: string; logo_url: string | null }[];
   is_platform_admin: boolean;
-} | null> {
+  /**
+   * Bundled subscriptions for the active org when X-Org-Id is passed.
+   * `null` when the header is absent or the user isn't a member of that org —
+   * callers should fall back to GET /subscriptions in that case.
+   */
+  subscriptions: import("@/lib/platform-types").Subscription[] | null;
+}
+
+export async function fetchMe(orgId?: string | null): Promise<MeResponse | null> {
   const token = getToken();
   if (!token) return null;
 
-  const res = await fetch(`${API_URL}/api/v1/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+  };
+  if (orgId) headers["X-Org-Id"] = orgId;
+
+  const res = await fetch(`${API_URL}/api/v1/auth/me`, { headers });
 
   if (!res.ok) {
     if (res.status === 401) {

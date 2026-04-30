@@ -4,13 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
+import { useMe } from "@/hooks/use-me";
 import { useOrgStore } from "@/stores/org-store";
-import { apiFetch } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { useOrgSlug } from "@/hooks/use-org-slug";
 import { Onboarding } from "@/components/onboarding";
 import { ToastProvider } from "@/components/ui/toast";
-import type { Org } from "@/lib/platform-types";
 import { Button } from "@/components/ui/button";
 import { LogOut, User, KeyRound, ChevronRight } from "lucide-react";
 
@@ -65,6 +64,7 @@ export default function PlatformLayout({
 }) {
   const router = useRouter();
   const { user, isPlatformAdmin, loading: authLoading, signOut } = useAuth();
+  const { data: me } = useMe();
   const { currentOrgId, setCurrentOrg } = useOrgStore();
   const [checkingOrg, setCheckingOrg] = useState(true);
   const [hasOrg, setHasOrg] = useState(!!currentOrgId);
@@ -91,22 +91,21 @@ export default function PlatformLayout({
       return;
     }
 
-    checkedRef.current = true;
+    // Orgs are bundled in the /auth/me bootstrap payload (cached by useMe), so
+    // no extra round trip is needed. Wait until the /me query resolves before
+    // deciding whether to show onboarding.
+    if (!me) return;
 
-    apiFetch<Org[]>("/api/v1/organizations/me")
-      .then((orgs) => {
-        if (orgs.length > 0) {
-          setCurrentOrg(orgs[0].id, orgs[0].name, orgs[0].slug, orgs[0].logo_url);
-          setHasOrg(true);
-        } else {
-          setHasOrg(false);
-        }
-      })
-      .catch(() => {
-        setHasOrg(false);
-      })
-      .finally(() => setCheckingOrg(false));
-  }, [authLoading, user, isPlatformAdmin]);
+    checkedRef.current = true;
+    const orgs = me.orgs ?? [];
+    if (orgs.length > 0) {
+      setCurrentOrg(orgs[0].id, orgs[0].name, orgs[0].slug, orgs[0].logo_url);
+      setHasOrg(true);
+    } else {
+      setHasOrg(false);
+    }
+    setCheckingOrg(false);
+  }, [authLoading, user, isPlatformAdmin, me, currentOrgId, setCurrentOrg]);
 
   // Listen for org store changes (from onboarding)
   useEffect(() => {

@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
 import Link from "next/link";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOrg } from "@/hooks/use-org";
+import { useMe } from "@/hooks/use-me";
 import { useOrgSlug } from "@/hooks/use-org-slug";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,46 +27,52 @@ const APP_ICON_COLORS: Record<string, string> = {
   "title-search": "text-blue-700",
 };
 
+const subsKey = (orgId: string | null) => ["subscriptions", orgId] as const;
+
 export default function DashboardPage() {
   const { currentOrgId, orgFetch } = useOrg();
   const { orgPath } = useOrgSlug();
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  const [toggling, setToggling] = useState<string | null>(null);
 
-  const fetchSubscriptions = useCallback(async () => {
-    if (!currentOrgId) return;
-    try {
-      const subs = await orgFetch<Subscription[]>("/api/v1/subscriptions");
-      setSubscriptions(subs);
-      setError(null);
-    } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "Failed to load subscriptions"
-      );
-    }
-    setLoading(false);
-  }, [currentOrgId, orgFetch]);
+  // Seed the subscription cache from the /auth/me bootstrap payload when
+  // available — eliminates the cold-load round trip on first dashboard paint.
+  const { data: me } = useMe();
+  const initialSubs = me?.subscriptions ?? undefined;
 
-  useEffect(() => {
-    fetchSubscriptions();
-  }, [fetchSubscriptions]);
+  const subsQuery = useQuery<Subscription[]>({
+    queryKey: subsKey(currentOrgId),
+    queryFn: () => orgFetch<Subscription[]>("/api/v1/subscriptions"),
+    enabled: !!currentOrgId,
+    initialData: initialSubs,
+  });
 
-  const toggleApp = async (subId: string, currentStatus: string) => {
-    setToggling(subId);
-    try {
+  const subscriptions = subsQuery.data ?? [];
+  const loading = subsQuery.isLoading && !initialSubs;
+  const queryError =
+    subsQuery.error instanceof Error ? subsQuery.error.message : null;
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ subId, currentStatus }: { subId: string; currentStatus: string }) => {
       const action = currentStatus === "active" ? "disable" : "enable";
-      await orgFetch<unknown>(`/api/v1/subscriptions/${subId}/${action}`, {
+      return orgFetch<unknown>(`/api/v1/subscriptions/${subId}/${action}`, {
         method: "PATCH",
       });
-      await fetchSubscriptions();
-    } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "Failed to update subscription"
-      );
-    }
-    setToggling(null);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: subsKey(currentOrgId) });
+      // The /me bootstrap also embeds subscriptions for the active org —
+      // refetch so the layout / sidebar see the new state on their next read.
+      queryClient.invalidateQueries({ queryKey: ["me"] });
+      setError(null);
+    },
+    onError: (e) => {
+      setError(e instanceof Error ? e.message : "Failed to update subscription");
+    },
+  });
+
+  const toggleApp = (subId: string, currentStatus: string) => {
+    toggleMutation.mutate({ subId, currentStatus });
   };
 
   if (loading) {
@@ -76,11 +84,13 @@ export default function DashboardPage() {
     );
   }
 
+  const displayedError = error ?? queryError;
+
   return (
     <div className="space-y-8">
-      {error && (
+      {displayedError && (
         <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-          {error}
+          {displayedError}
         </div>
       )}
       <div className="flex items-center gap-4">
@@ -116,6 +126,8 @@ export default function DashboardPage() {
             const Icon = APP_ICONS[slug] || Sparkles;
             const gradient = APP_GRADIENTS[slug] || "from-muted to-muted";
             const iconColor = APP_ICON_COLORS[slug] || "text-muted-foreground";
+            const isToggling =
+              toggleMutation.isPending && toggleMutation.variables?.subId === sub.id;
 
             return (
               <div
@@ -161,11 +173,11 @@ export default function DashboardPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={toggling === sub.id}
+                    disabled={isToggling}
                     onClick={() => toggleApp(sub.id, sub.status)}
                     className="text-xs h-8"
                   >
-                    {toggling === sub.id
+                    {isToggling
                       ? "Updating..."
                       : isActive
                         ? "Disable"
