@@ -185,6 +185,91 @@ async def apply_override(
     return override
 
 
+async def apply_overrides_batch(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    package_id: uuid.UUID,
+    items: list,
+    *,
+    reviewer_id: uuid.UUID,
+) -> list[LOPageOverride]:
+    """Apply many overrides in one DB transaction.
+
+    Differs from `apply_override` in two ways:
+    - No-ops are silently skipped (drag-drop UIs frequently emit "page dropped
+      onto its current stack" events; failing the whole batch on those is
+      hostile UX).
+    - Allowed-doc-type lookup runs once for the whole batch instead of per
+      page.
+
+    Caller is responsible for invoking `rebuild_stacks_and_validation` after
+    this returns. Returns only the overrides that were actually
+    inserted/updated.
+    """
+    await package_service.get_package_or_raise(db, org_id, package_id)
+    allowed = await _load_allowed_doc_types(db, org_id, package_id)
+
+    applied: list[LOPageOverride] = []
+    for item in items:
+        assigned = item.assigned_doc_type
+        if assigned not in allowed:
+            raise ValidationError(
+                f"Target doc_type '{assigned}' is not in this package's "
+                f"configured set. Allowed: {sorted(allowed)}"
+            )
+        await _find_page(db, org_id, package_id, item.page_id)
+        clf = await _find_classification(db, org_id, package_id, item.page_id)
+
+        existing = (
+            await db.execute(
+                select(LOPageOverride).where(
+                    LOPageOverride.page_id == item.page_id,
+                    LOPageOverride.package_id == package_id,
+                    LOPageOverride.org_id == org_id,
+                )
+            )
+        ).scalar_one_or_none()
+
+        current_doc_type = (
+            existing.assigned_doc_type if existing else clf.predicted_doc_type
+        )
+        current_effective_role = (
+            existing.page_role_override
+            if existing and existing.page_role_override
+            else clf.page_role
+        )
+        proposed_role = item.page_role_override or clf.page_role
+        if assigned == current_doc_type and proposed_role == current_effective_role:
+            # Silent skip — see docstring.
+            continue
+
+        if existing is not None:
+            existing.assigned_doc_type = assigned
+            existing.page_role_override = item.page_role_override
+            existing.reviewer_id = reviewer_id
+            existing.note = item.note
+            await db.flush()
+            await db.refresh(existing)
+            applied.append(existing)
+        else:
+            override = LOPageOverride(
+                org_id=org_id,
+                package_id=package_id,
+                page_id=item.page_id,
+                assigned_doc_type=assigned,
+                previous_doc_type=clf.predicted_doc_type,
+                page_role_override=item.page_role_override,
+                reviewer_id=reviewer_id,
+                note=item.note,
+            )
+            db.add(override)
+            await db.flush()
+            await db.refresh(override)
+            applied.append(override)
+
+    return applied
+
+
 async def remove_override(
     db: AsyncSession,
     org_id: uuid.UUID,

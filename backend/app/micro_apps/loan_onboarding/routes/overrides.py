@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_member, get_db, get_org_id
 from app.micro_apps.loan_onboarding.schemas.override import (
+    BatchOverrideRequest,
+    BatchOverrideResponse,
     PageOverrideRequest,
     PageOverrideResponse,
     PageOverrideWithRebuild,
@@ -80,6 +82,59 @@ async def create_or_update_override(
     await db.refresh(override)
     return PageOverrideWithRebuild(
         override=PageOverrideResponse.model_validate(override),
+        rebuild=RebuildSummary(**rebuild),
+    )
+
+
+@router.post(
+    "/packages/{package_id}/pages/overrides:batch",
+    response_model=BatchOverrideResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def batch_apply_overrides(
+    package_id: uuid.UUID,
+    body: BatchOverrideRequest,
+    db: AsyncSession = Depends(get_db),
+    member: User = Depends(get_current_member),
+    org_id: uuid.UUID = Depends(get_org_id),
+    storage: StorageProvider = Depends(get_storage),
+):
+    """Apply many "Move to…" decisions atomically and rebuild **once**.
+
+    Used by the drag-and-drop thumbnail strip — dragging multiple pages from
+    one stack to another emits a single batch instead of N round trips, so
+    the user sees the new grouping after only one re-stack/re-validate.
+
+    No-op moves (page already in the target doc_type with the same role) are
+    silently skipped. Invalid doc_types fail the whole batch.
+    """
+    overrides = await page_override_service.apply_overrides_batch(
+        db,
+        org_id,
+        package_id,
+        body.overrides,
+        reviewer_id=member.id,
+    )
+    rebuild = await page_override_service.rebuild_stacks_and_validation(
+        db, org_id, package_id, storage
+    )
+    if overrides:
+        await log_event(
+            db,
+            org_id,
+            action="lo_page_override_batch_applied",
+            target_type="lo_package",
+            target_id=package_id,
+            actor_id=member.id,
+            metadata={
+                "package_id": str(package_id),
+                "override_count": len(overrides),
+                "page_ids": [str(o.page_id) for o in overrides],
+            },
+        )
+    await db.commit()
+    return BatchOverrideResponse(
+        overrides=[PageOverrideResponse.model_validate(o) for o in overrides],
         rebuild=RebuildSummary(**rebuild),
     )
 

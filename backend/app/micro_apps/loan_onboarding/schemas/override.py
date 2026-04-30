@@ -56,3 +56,34 @@ class PageOverrideWithRebuild(BaseModel):
     model_config = ConfigDict(extra="forbid")
     override: PageOverrideResponse | None
     rebuild: RebuildSummary
+
+
+class BatchOverrideItem(BaseModel):
+    """Single item in a `POST /pages/overrides:batch` payload.
+
+    Same validation rules as the single-page request, but `page_id` is in the
+    body (not the URL) so multiple pages can be moved in one transaction.
+    """
+    model_config = ConfigDict(extra="forbid")
+    page_id: uuid.UUID
+    assigned_doc_type: str = Field(..., max_length=100)
+    page_role_override: PageRoleOverride | None = None
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class BatchOverrideRequest(BaseModel):
+    """Body for `POST /packages/{pid}/pages/overrides:batch`.
+
+    Drag-and-drop UIs frequently emit multiple page moves in quick succession
+    (a whole stack split, or several pages moved to the same target). Sending
+    them as a batch lets the backend run re-stack/re-validate **once** at the
+    end instead of N times.
+    """
+    model_config = ConfigDict(extra="forbid")
+    overrides: list[BatchOverrideItem] = Field(..., min_length=1, max_length=200)
+
+
+class BatchOverrideResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    overrides: list[PageOverrideResponse]
+    rebuild: RebuildSummary

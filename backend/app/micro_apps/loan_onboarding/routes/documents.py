@@ -116,6 +116,79 @@ async def get_page_image(
     )
 
 
+@router.get("/packages/{package_id}/pages/{page_id}/thumb")
+async def get_page_thumb(
+    package_id: uuid.UUID,
+    page_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    member: User = Depends(get_current_member),
+    org_id: uuid.UUID = Depends(get_org_id),
+    storage: StorageProvider = Depends(get_storage),
+):
+    """Render a low-DPI JPEG thumbnail (~150px wide) for the page strip.
+
+    The Results-tab stack viewer shows a vertical thumb strip; full-quality
+    `/image` renders would be wasteful (~80KB+ per page at DPI=100). This
+    handler renders at DPI=30 with JPEG quality 70 — typically <10KB per
+    thumb, fast enough to render the strip on stack expand without lag.
+    Same `Cache-Control: immutable` story as `/image`: source PDF doesn't
+    change, page renders are deterministic.
+    """
+    page = (await db.execute(
+        select(LOPage).where(
+            LOPage.id == page_id,
+            LOPage.package_id == package_id,
+            LOPage.org_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+
+    file_row = (await db.execute(
+        select(LOPackageFile).where(
+            LOPackageFile.id == page.file_id,
+            LOPackageFile.org_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if not file_row:
+        raise HTTPException(status_code=404, detail="Source file not found")
+
+    pdf_bytes = await storage.get_object(file_row.storage_path)
+
+    def _render() -> bytes:
+        import io
+        import fitz  # PyMuPDF
+        from PIL import Image
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            idx = max(0, min(page.source_page_number - 1, len(doc) - 1))
+            # DPI=30 puts a US Letter page at ~255×330 px; we resample to
+            # 150px wide so the thumb strip stays crisp on retina without
+            # blowing up payload size. PIL gives us JPEG quality control
+            # (PyMuPDF's tobytes("jpeg") doesn't honor quality on all
+            # versions), so we route through it.
+            pix = doc[idx].get_pixmap(dpi=30, alpha=False)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            target_w = 150
+            if img.width > target_w:
+                ratio = target_w / float(img.width)
+                target_h = max(1, int(img.height * ratio))
+                img = img.resize((target_w, target_h), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=70, optimize=True)
+            return buf.getvalue()
+        finally:
+            doc.close()
+
+    jpeg = await asyncio.to_thread(_render)
+    return Response(
+        content=jpeg,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
+
+
 @router.get("/packages/{package_id}/pages/{page_id}/words")
 async def get_page_words(
     package_id: uuid.UUID,
