@@ -104,7 +104,16 @@ async def get_page_image(
             doc.close()
 
     jpeg = await asyncio.to_thread(_render)
-    return Response(content=jpeg, media_type="image/jpeg")
+    # Page bytes are immutable per (package_id, page_id) — source PDF doesn't
+    # change once uploaded, page renders are deterministic. `private` because the
+    # path is tenant-scoped; one-year max-age + `immutable` skips revalidation.
+    # This is especially valuable here because the current handler re-reads the
+    # PDF from S3 and re-renders on every miss.
+    return Response(
+        content=jpeg,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
 
 
 @router.get("/packages/{package_id}/pages/{page_id}/words")

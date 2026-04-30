@@ -12,6 +12,14 @@ from app.micro_apps.title_intelligence.services import page_service
 
 router = APIRouter()
 
+# Page images and thumbs are immutable per (pack_id, page_number) — once rendered,
+# the bytes never change. `private` keeps the response in the user's browser cache
+# only (not shared proxies — each page is tenant-scoped). `immutable` tells the
+# browser to skip revalidation entirely. One year is the conventional max.
+_IMMUTABLE_IMAGE_HEADERS = {
+    "Cache-Control": "private, max-age=31536000, immutable",
+}
+
 
 @router.get("/packs/{pack_id}/pages", response_model=list[PageResponse])
 async def list_pages(
@@ -33,7 +41,7 @@ async def get_page_image(
     storage: StorageProvider = Depends(get_storage),
 ):
     data = await page_service.get_page_image_data_or_raise(db, org_id, pack_id, page_number, storage)
-    return Response(content=data, media_type="image/jpeg")
+    return Response(content=data, media_type="image/jpeg", headers=_IMMUTABLE_IMAGE_HEADERS)
 
 
 @router.get("/packs/{pack_id}/pages/{page_number}/thumb")
@@ -46,7 +54,7 @@ async def get_page_thumb(
     storage: StorageProvider = Depends(get_storage),
 ):
     data = await page_service.get_page_thumb_data_or_raise(db, org_id, pack_id, page_number, storage)
-    return Response(content=data, media_type="image/jpeg")
+    return Response(content=data, media_type="image/jpeg", headers=_IMMUTABLE_IMAGE_HEADERS)
 
 
 @router.post("/packs/{pack_id}/pages/prerender")
