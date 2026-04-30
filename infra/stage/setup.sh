@@ -209,6 +209,36 @@ else
   log "Generated and stored JWT secret in SSM"
 fi
 
+# ── 4b. GitHub deploy key (read-only) ─────────────────────────────────────
+# The EC2 instance clones the repo via SSH on first boot. We can't ship a
+# private key in user-data (visible in the AWS console), so we stash it in
+# SSM as a SecureString and fetch it at boot via the instance role (which
+# already has ssm:GetParameter on /${PREFIX}/*).
+#
+# This is a one-time bootstrap — once the key is in SSM, every future
+# `setup.sh` and `deploy.sh` run reuses it.
+if aws ssm get-parameter --region "$REGION" \
+     --name "/${PREFIX}/github-deploy-key" >/dev/null 2>&1; then
+  info "GitHub deploy key already exists in SSM"
+else
+  err "GitHub deploy key not found in SSM at /${PREFIX}/github-deploy-key"
+  err ""
+  err "One-time setup required:"
+  err "  1. Generate a deploy keypair locally:"
+  err "       ssh-keygen -t ed25519 -f /tmp/${PREFIX}-deploy-key -N '' -C '${PREFIX}-deploy'"
+  err "  2. Add the PUBLIC key as a read-only deploy key on GitHub:"
+  err "       https://github.com/ajayghanagam-stack/title-intelligence-hub/settings/keys/new"
+  err "       (paste the contents of /tmp/${PREFIX}-deploy-key.pub, leave 'Allow write access' UNCHECKED)"
+  err "  3. Stash the PRIVATE key in SSM:"
+  err "       aws ssm put-parameter --region ${REGION} \\"
+  err "         --name /${PREFIX}/github-deploy-key --type SecureString \\"
+  err "         --value \"\$(cat /tmp/${PREFIX}-deploy-key)\" --overwrite"
+  err "  4. Delete the local copies:"
+  err "       rm /tmp/${PREFIX}-deploy-key /tmp/${PREFIX}-deploy-key.pub"
+  err "  5. Re-run this script."
+  exit 1
+fi
+
 # ── 5. SSH Key Pair ───────────────────────────────────────────────────────
 if aws ec2 describe-key-pairs --region "$REGION" --key-names "$KEY_NAME" >/dev/null 2>&1; then
   info "Key pair '$KEY_NAME' already exists"
@@ -296,13 +326,18 @@ fi
 log "AMI: $AMI_ID (Amazon Linux 2023 ARM64)"
 
 # ── 8. User Data (cloud-init) ────────────────────────────────────────────
-USER_DATA=$(cat <<'USERDATA'
+# Note: the heredoc below is single-quoted ('USERDATA'), so $PREFIX et al.
+# don't expand here. They're inlined via sed before the user-data is sent
+# to the AWS API so the instance has concrete values at boot time.
+USER_DATA_RAW=$(cat <<'USERDATA'
 #!/bin/bash
 set -e
+exec > >(tee -a /var/log/cloud-init-output.log) 2>&1
 
-# Install Docker
+# Install system packages (aws CLI is preinstalled on Amazon Linux 2023)
 dnf update -y
 dnf install -y docker git
+
 systemctl enable docker
 systemctl start docker
 usermod -aG docker ec2-user
@@ -314,13 +349,48 @@ curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}
   -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
-# Clone repository
-git clone git@github.com:ajayghanagam-stack/title-intelligence-hub.git /opt/ti-hub
+# Fetch the GitHub deploy key from SSM (instance role grants ssm:GetParameter
+# on /__PREFIX__/*) and configure SSH for the ec2-user.
+mkdir -p /home/ec2-user/.ssh
+chmod 700 /home/ec2-user/.ssh
+
+aws ssm get-parameter --region __REGION__ \
+  --name /__PREFIX__/github-deploy-key --with-decryption \
+  --query Parameter.Value --output text \
+  > /home/ec2-user/.ssh/github_deploy
+chmod 600 /home/ec2-user/.ssh/github_deploy
+
+cat > /home/ec2-user/.ssh/config <<'SSHCFG'
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/github_deploy
+  IdentitiesOnly yes
+  StrictHostKeyChecking accept-new
+SSHCFG
+chmod 600 /home/ec2-user/.ssh/config
+
+# Trust GitHub's host key (avoids the interactive prompt on first clone)
+ssh-keyscan -t ed25519,rsa github.com >> /home/ec2-user/.ssh/known_hosts 2>/dev/null
+chmod 644 /home/ec2-user/.ssh/known_hosts
+
+chown -R ec2-user:ec2-user /home/ec2-user/.ssh
+
+# Clone repository as ec2-user so the deploy key is honored
+sudo -u ec2-user git clone \
+  git@github.com:ajayghanagam-stack/title-intelligence-hub.git /opt/ti-hub || {
+    echo "git clone failed — check that the deploy key is correctly added to GitHub" >&2
+    exit 1
+}
 chown -R ec2-user:ec2-user /opt/ti-hub
 
 echo "Cloud-init complete" > /var/log/cloud-init-done
 USERDATA
 )
+
+# Inline the prefix and region so the instance script is self-contained.
+USER_DATA=${USER_DATA_RAW//__PREFIX__/$PREFIX}
+USER_DATA=${USER_DATA//__REGION__/$REGION}
 
 # ── 9. Launch EC2 Instance ────────────────────────────────────────────────
 INSTANCE_NAME="${PREFIX}-server"
