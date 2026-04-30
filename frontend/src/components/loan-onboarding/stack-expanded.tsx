@@ -705,6 +705,7 @@ function PageViewer({
                     >
                       <div className="p-2 border-b border-border/60">
                         <input
+                          // eslint-disable-next-line jsx-a11y/no-autofocus -- popover input: focusing search box on open is expected UX
                           autoFocus
                           value={pickerQuery}
                           onChange={(e) => setPickerQuery(e.target.value)}
