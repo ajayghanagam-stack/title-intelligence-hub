@@ -21,6 +21,12 @@ from typing import Any, Iterable
 from app.micro_apps.loan_onboarding.ai.page_classifier_agent import OTHERS_KEY
 
 
+# v7: every preset rule now honors a `config.applies_to_doc_keys` list. When
+# present and non-empty, a stack whose `doc_type` is NOT in the list is
+# skipped (passed=True with "rule not configured for this doc_type" evidence)
+# instead of being evaluated. Empty/missing list = legacy package-wide
+# behavior. Lets the new-package form scope each preset to specific doc
+# types via per-doc-type checkboxes rather than a single global toggle.
 # v6: confidence_scorer weights equalized — classification + validation now
 # weighted 0.5 / 0.5 so a failed validation drags the overall down by the
 # same amount a strong classification lifts it. Cached overall_confidence
@@ -31,7 +37,7 @@ from app.micro_apps.loan_onboarding.ai.page_classifier_agent import OTHERS_KEY
 # v4: missing_fields rule now scopes its required-field list per doc_type
 # via `required_fields_by_doc`. The legacy `required_fields` flat list is
 # still accepted (treated as universal) for backward compatibility.
-RULES_VERSION = "lo_validation_rules_v6"
+RULES_VERSION = "lo_validation_rules_v7"
 
 # ── Rule registry ──────────────────────────────────────────────────────────
 
@@ -223,7 +229,23 @@ def evaluate_preset(
             evidence="Rule skipped — stack is reserved 'Others' bucket",
             location_page=stack.pages[0].page_number if stack.pages else None,
         )
-    return fn(stack, config or {})
+    cfg = config or {}
+    # Per-doc-type scoping (v7): when the new-package form enables a preset
+    # for a subset of doc types, the rule emits `applies_to_doc_keys`. Skip
+    # stacks whose doc_type isn't on that list. Empty/missing list = legacy
+    # package-wide behavior, evaluated against every stack.
+    scope = cfg.get("applies_to_doc_keys")
+    if isinstance(scope, list) and scope:
+        if stack.doc_type not in scope:
+            return PresetEvaluation(
+                rule_id=rule_id,
+                passed=True,
+                evidence=(
+                    f"Rule not configured for doc_type '{stack.doc_type}'"
+                )[:200],
+                location_page=stack.pages[0].page_number if stack.pages else None,
+            )
+    return fn(stack, cfg)
 
 
 def evaluate_all_presets(

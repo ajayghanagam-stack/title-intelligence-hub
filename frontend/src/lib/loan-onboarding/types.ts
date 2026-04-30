@@ -16,6 +16,31 @@ export interface LoanDocTypeSpec {
   locked?: boolean;
 }
 
+/**
+ * Per-doc-type validation toggles selected on the new-package form. Lives in
+ * UI state only; on submit the form derives a backend `validation_rules`
+ * payload by emitting one rule per preset with `applies_to_doc_keys` listing
+ * the doc types that have it enabled. `date_consistency` has no backend
+ * evaluator yet and is stripped at submit (kept in the UI for parity with
+ * the prototype).
+ */
+export interface DocValidations {
+  missing_pages: boolean;
+  missing_signatures: boolean;
+  date_consistency: boolean;
+  missing_fields: boolean;
+  /** Required field labels for the missing_fields rule on this doc type. */
+  required_fields: string[];
+}
+
+export const EMPTY_DOC_VALIDATIONS: DocValidations = {
+  missing_pages: false,
+  missing_signatures: false,
+  date_consistency: false,
+  missing_fields: false,
+  required_fields: [],
+};
+
 export interface LoanPresetConfigField {
   name: string;
   type: "number" | "integer" | "string" | "boolean" | "string_list";
@@ -42,6 +67,24 @@ export interface LoanPackageRule {
   created_at?: string;
 }
 
+/**
+ * Loan-context snapshot captured on the new-package form and editable from the
+ * compliance page. Drives the compliance engine's rule applicability and the
+ * generated PDF report header. Wire format mirrors backend `LoanContextIn`
+ * (camelCase keys: `scenarioFlags`, `ausEngine`, etc.).
+ */
+export interface LoanContextInput {
+  program: string;
+  purpose: string;
+  occupancy: string;
+  state: string;
+  scenarioFlags: string[];
+  ausEngine: string;
+  ausWaivers: string[];
+  loanAmount: number | null;
+  propertyValue: number | null;
+}
+
 export interface LoanPackage {
   id: string;
   org_id: string;
@@ -59,6 +102,8 @@ export interface LoanPackage {
    */
   extraction_enabled: boolean;
   extraction_fields_by_doc: Record<string, string[]>;
+  /** Persisted loan context, null if the loan officer skipped the section. */
+  loan_context: LoanContextInput | null;
   created_at: string;
   updated_at: string;
 }
@@ -226,4 +271,29 @@ export interface LoanExtractionsResponse {
   package_id: string;
   extraction_enabled: boolean;
   stacks: LoanStackExtraction[];
+}
+
+export interface LoanExtractionOverride {
+  id: string;
+  package_id: string;
+  doc_type: string;
+  field_name: string;
+  /** Opaque key — UUID for real stacks, `placeholder-{doc_type}` for unmatched. */
+  stack_id: string;
+  value: string;
+  edited_by: string | null;
+  edited_at: string;
+}
+
+export interface LoanExtractionOverrideUpsert {
+  doc_type: string;
+  field_name: string;
+  stack_id: string;
+  value: string;
+}
+
+export interface LoanExtractionOverrideDelete {
+  doc_type: string;
+  field_name: string;
+  stack_id: string;
 }

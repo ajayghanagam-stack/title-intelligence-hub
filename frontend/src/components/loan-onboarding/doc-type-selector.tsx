@@ -16,13 +16,56 @@ import { Input } from "@/components/ui/input";
 import {
   SUGGESTED_DOC_TYPES,
   TOTAL_DOC_TYPE_COUNT,
+  getFieldHintsForDocType,
 } from "@/lib/loan-onboarding/constants";
-import type { LoanDocTypeSpec } from "@/lib/loan-onboarding/types";
+import {
+  EMPTY_DOC_VALIDATIONS,
+  type DocValidations,
+  type LoanDocTypeSpec,
+} from "@/lib/loan-onboarding/types";
 
 interface Props {
   value: LoanDocTypeSpec[];
   onChange: (next: LoanDocTypeSpec[]) => void;
+  /**
+   * Per-doc-type validation toggles. The picker renders an inline panel under
+   * each selected row so the LO can choose which structural checks run for
+   * that doc type, plus the required-fields chip editor when "Missing Fields"
+   * is enabled.
+   */
+  validations: Record<string, DocValidations>;
+  onValidationsChange: (next: Record<string, DocValidations>) => void;
 }
+
+const VALIDATION_PRESETS: Array<{
+  id: keyof Pick<
+    DocValidations,
+    "missing_pages" | "missing_signatures" | "date_consistency" | "missing_fields"
+  >;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "missing_pages",
+    label: "Missing Pages",
+    description: "Detect gaps in page numbering",
+  },
+  {
+    id: "missing_signatures",
+    label: "Missing Signatures",
+    description: "All signature fields must be signed",
+  },
+  {
+    id: "date_consistency",
+    label: "Date Consistency",
+    description: "Dates across documents must be within expected windows",
+  },
+  {
+    id: "missing_fields",
+    label: "Missing Fields",
+    description: "Required form fields must be populated",
+  },
+];
 
 const PAGE_SIZE = 5;
 
@@ -50,7 +93,12 @@ function matchesQuery(spec: LoanDocTypeSpec, query: string): boolean {
   );
 }
 
-export function DocTypeSelector({ value, onChange }: Props) {
+export function DocTypeSelector({
+  value,
+  onChange,
+  validations,
+  onValidationsChange,
+}: Props) {
   const [customLabel, setCustomLabel] = useState("");
   const [customDesc, setCustomDesc] = useState("");
   const [query, setQuery] = useState("");
@@ -87,25 +135,55 @@ export function DocTypeSelector({ value, onChange }: Props) {
   const startIdx = (clampedPage - 1) * PAGE_SIZE;
   const pageItems = filtered.slice(startIdx, startIdx + PAGE_SIZE);
 
+  const ensureValidationsFor = (key: string) => {
+    if (validations[key]) return;
+    onValidationsChange({ ...validations, [key]: { ...EMPTY_DOC_VALIDATIONS } });
+  };
+
+  const dropValidationsFor = (key: string) => {
+    if (!validations[key]) return;
+    const next = { ...validations };
+    delete next[key];
+    onValidationsChange(next);
+  };
+
+  const updateValidations = (key: string, patch: Partial<DocValidations>) => {
+    const current = validations[key] ?? { ...EMPTY_DOC_VALIDATIONS };
+    onValidationsChange({ ...validations, [key]: { ...current, ...patch } });
+  };
+
   const toggle = (spec: LoanDocTypeSpec) => {
     if (isLocked(spec)) return;
     if (selectedKeys.has(spec.key)) {
       onChange(value.filter((d) => d.key !== spec.key));
+      dropValidationsFor(spec.key);
     } else {
       onChange([...value, spec]);
+      ensureValidationsFor(spec.key);
     }
   };
 
   const selectAll = () => {
     const next = [...value];
+    const nextValidations = { ...validations };
     for (const spec of allSpecs) {
       if (!next.some((d) => d.key === spec.key)) next.push(spec);
+      if (!nextValidations[spec.key]) {
+        nextValidations[spec.key] = { ...EMPTY_DOC_VALIDATIONS };
+      }
     }
     onChange(next);
+    onValidationsChange(nextValidations);
   };
 
   const clearAll = () => {
+    const lockedKeys = new Set(value.filter(isLocked).map((d) => d.key));
+    const nextValidations: Record<string, DocValidations> = {};
+    for (const k of Object.keys(validations)) {
+      if (lockedKeys.has(k)) nextValidations[k] = validations[k];
+    }
     onChange(value.filter((d) => isLocked(d)));
+    onValidationsChange(nextValidations);
   };
 
   const addCustom = () => {
@@ -127,6 +205,10 @@ export function DocTypeSelector({ value, onChange }: Props) {
     const spec: LoanDocTypeSpec = { key, label, description, required: false };
     setCustomSpecs((prev) => [...prev, spec]);
     onChange([...value, spec]);
+    onValidationsChange({
+      ...validations,
+      [spec.key]: { ...EMPTY_DOC_VALIDATIONS },
+    });
     setCustomLabel("");
     setCustomDesc("");
     // Jump to the last page so the newly added row is visible.
@@ -137,6 +219,7 @@ export function DocTypeSelector({ value, onChange }: Props) {
   const removeCustomSpec = (key: string) => {
     setCustomSpecs((prev) => prev.filter((s) => s.key !== key));
     onChange(value.filter((d) => d.key !== key));
+    dropValidationsFor(key);
   };
 
   return (
@@ -211,6 +294,13 @@ export function DocTypeSelector({ value, onChange }: Props) {
               return (
                 <div
                   key={spec.key}
+                  className={cn(
+                    "transition-colors",
+                    i > 0 && "border-t border-border/60",
+                    active ? "bg-[oklch(0.750_0.170_65)]/5" : ""
+                  )}
+                >
+                <div
                   role="button"
                   tabIndex={0}
                   aria-pressed={active}
@@ -223,8 +313,7 @@ export function DocTypeSelector({ value, onChange }: Props) {
                   }}
                   className={cn(
                     "flex items-center gap-4 px-5 py-3.5 cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(0.750_0.170_65)]/40",
-                    i > 0 && "border-t border-border/60",
-                    active ? "bg-[oklch(0.750_0.170_65)]/5" : "hover:bg-muted/40"
+                    !active && "hover:bg-muted/40"
                   )}
                   data-testid={`doc-type-row-${spec.key}`}
                 >
@@ -267,11 +356,6 @@ export function DocTypeSelector({ value, onChange }: Props) {
                     )}
                   </div>
 
-                  {/* Key badge */}
-                  <div className="font-mono text-[10px] text-muted-foreground shrink-0 w-48 truncate text-right">
-                    {spec.key}
-                  </div>
-
                   {/* Remove custom */}
                   {custom && (
                     <button
@@ -287,6 +371,15 @@ export function DocTypeSelector({ value, onChange }: Props) {
                       <X className="h-3.5 w-3.5" />
                     </button>
                   )}
+                </div>
+                {active && !isLocked(spec) && (
+                  <DocValidationsPanel
+                    docKey={spec.key}
+                    docLabel={spec.label}
+                    validations={validations[spec.key] ?? EMPTY_DOC_VALIDATIONS}
+                    onChange={(patch) => updateValidations(spec.key, patch)}
+                  />
+                )}
                 </div>
               );
             })}
@@ -409,7 +502,186 @@ export function DocTypeSelector({ value, onChange }: Props) {
             Add
           </button>
         </div>
+        <p className="text-[11px] text-muted-foreground">
+          New document types appear in the list above with the same
+          per-document validation toggles (Missing Pages, Missing Signatures,
+          Date Consistency, Missing Fields).
+        </p>
       </div>
+    </div>
+  );
+}
+
+interface DocValidationsPanelProps {
+  docKey: string;
+  docLabel: string;
+  validations: DocValidations;
+  onChange: (patch: Partial<DocValidations>) => void;
+}
+
+function DocValidationsPanel({
+  docKey,
+  docLabel,
+  validations,
+  onChange,
+}: DocValidationsPanelProps) {
+  const [fieldDraft, setFieldDraft] = useState("");
+  const fields = validations.required_fields;
+
+  const addRequiredField = (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || fields.includes(trimmed)) return;
+    onChange({ required_fields: [...fields, trimmed] });
+  };
+
+  const removeRequiredField = (name: string) => {
+    onChange({ required_fields: fields.filter((f) => f !== name) });
+  };
+
+  const hints = useMemo(() => {
+    const all = getFieldHintsForDocType(docKey);
+    return all.filter((h) => !fields.includes(h));
+  }, [docKey, fields]);
+
+  return (
+    <div
+      className="px-5 pb-4 pt-1 pl-12 space-y-3 border-t border-border/30"
+      data-testid={`doc-type-validations-${docKey}`}
+    >
+      <div className="font-mono text-[9px] tracking-[0.2em] uppercase text-muted-foreground">
+        Validations for {docLabel}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {VALIDATION_PRESETS.map((preset) => {
+          const enabled = validations[preset.id];
+          const inputId = `doc-type-validation-${docKey}-${preset.id}-input`;
+          return (
+            <label
+              key={preset.id}
+              htmlFor={inputId}
+              aria-label={preset.label}
+              className={cn(
+                "flex items-start gap-2.5 rounded-md border px-3 py-2 cursor-pointer transition-colors",
+                enabled
+                  ? "border-[oklch(0.750_0.170_65)]/40 bg-[oklch(0.750_0.170_65)]/5"
+                  : "border-border/60 bg-background hover:bg-muted/40"
+              )}
+              data-testid={`doc-type-validation-${docKey}-${preset.id}`}
+            >
+              <input
+                id={inputId}
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => onChange({ [preset.id]: e.target.checked })}
+                className="mt-0.5 h-4 w-4 rounded border-input"
+              />
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-foreground">
+                  {preset.label}
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">
+                  {preset.description}
+                </div>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+
+      {validations.missing_fields && (
+        <div
+          className="rounded-md border border-border/60 bg-background p-3 space-y-2"
+          data-testid={`doc-type-required-fields-${docKey}`}
+        >
+          <div className="flex items-baseline justify-between">
+            <div className="font-mono text-[9px] tracking-[0.2em] uppercase text-muted-foreground">
+              Required fields
+            </div>
+            <div className="font-mono text-[9px] tracking-[0.15em] text-muted-foreground uppercase">
+              {fields.length} field{fields.length === 1 ? "" : "s"}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5 min-h-[24px]">
+            {fields.map((f) => (
+              <span
+                key={f}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-muted/60 border border-border/60 rounded-full text-xs font-mono"
+                data-testid={`required-field-${docKey}-${f}`}
+              >
+                {f}
+                <button
+                  type="button"
+                  onClick={() => removeRequiredField(f)}
+                  className="text-muted-foreground/70 hover:text-red-600 transition-colors"
+                  aria-label={`Remove ${f}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            {fields.length === 0 && (
+              <span className="text-[11px] text-muted-foreground italic self-center">
+                No required fields configured for {docLabel} yet.
+              </span>
+            )}
+          </div>
+
+          {hints.length > 0 && (
+            <div data-testid={`field-hints-${docKey}`}>
+              <div className="font-mono text-[9px] tracking-[0.2em] uppercase text-muted-foreground mb-1.5">
+                Suggestions for {docLabel}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {hints.map((hint) => (
+                  <button
+                    key={hint}
+                    type="button"
+                    onClick={() => addRequiredField(hint)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-mono border border-dashed border-border/70 bg-background text-muted-foreground hover:text-foreground hover:border-[oklch(0.750_0.170_65)] hover:bg-[oklch(0.750_0.170_65)]/10 transition-colors"
+                    data-testid={`field-hint-${docKey}-${hint}`}
+                    aria-label={`Add suggested field ${hint}`}
+                  >
+                    <Plus className="h-2.5 w-2.5" />
+                    {hint}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={fieldDraft}
+              onChange={(e) => setFieldDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addRequiredField(fieldDraft);
+                  setFieldDraft("");
+                }
+              }}
+              placeholder={`Add a required field for ${docLabel} · press Enter`}
+              className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-mono focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              data-testid={`required-field-input-${docKey}`}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                addRequiredField(fieldDraft);
+                setFieldDraft("");
+              }}
+              disabled={!fieldDraft.trim()}
+              className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium border border-border/60 bg-background hover:bg-muted/60 disabled:opacity-40 disabled:cursor-not-allowed"
+              data-testid={`required-field-add-${docKey}`}
+            >
+              <Plus className="h-3 w-3" />
+              Add
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

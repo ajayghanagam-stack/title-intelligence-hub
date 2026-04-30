@@ -253,8 +253,12 @@ class PageClassifierAgent(BaseAIService):
         self._json_schema = _build_json_schema(self._allowed_doc_types)
 
         # Optional model override — lets callers pin LO_CLASSIFIER_MODEL.
+        # Settings hold a bare alias ("gemini-2.5-flash"); litellm needs a
+        # provider-prefixed id, so add "gemini/" when one is missing.
         if model_override:
-            self.model = model_override
+            self.model = (
+                model_override if "/" in model_override else f"gemini/{model_override}"
+            )
 
     async def classify_pdf(
         self,

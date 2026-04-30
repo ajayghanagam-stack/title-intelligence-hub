@@ -78,9 +78,13 @@ class Settings(BaseSettings):
     # --- Loan Onboarding micro-app settings ---
     # Model IDs are configurable so they can be bumped (e.g. to gemini-3-flash,
     # claude-opus-4-7) when those models become available without code changes.
-    LO_CLASSIFIER_MODEL: str = "gemini-2.5-flash"       # runs on Vertex AI
-    LO_VALIDATOR_MODEL: str = "claude-sonnet-4-6"
-    LO_REASONER_MODEL: str = "claude-opus-4-6"
+    # Leave blank ("") to use each agent's default model (CLAUDE_MODEL from
+    # claude_provider.py for validator/reasoner; the gemini default for the
+    # classifier). Set a litellm-compatible id like "anthropic/claude-sonnet-4-6"
+    # or "gemini/gemini-2.5-flash" to override.
+    LO_CLASSIFIER_MODEL: str = ""
+    LO_VALIDATOR_MODEL: str = ""
+    LO_REASONER_MODEL: str = ""
     # Stacks with overall_confidence below this threshold go to HITL review.
     # Can be overridden per-package at creation time.
     LO_HITL_THRESHOLD: float = 0.96

@@ -40,6 +40,7 @@ async def create_package(
     hitl_threshold: float = 0.96,
     extraction_enabled: bool = True,
     extraction_fields_by_doc: dict[str, list[str]] | None = None,
+    loan_context: dict | None = None,
 ) -> LOPackage:
     if not doc_types:
         raise ValidationError("At least one expected document type is required")
@@ -64,6 +65,18 @@ async def create_package(
             if fields:
                 cleaned_extraction[k] = fields
 
+    # Validate + normalize loan context server-side (security boundary).
+    persisted_context: dict | None = None
+    if loan_context is not None:
+        # Local import to avoid a top-level cycle (compliance_rules ↔ services).
+        from app.micro_apps.loan_onboarding.services import compliance_rules as cr
+
+        ctx = cr.LoanContext.from_dict(loan_context)
+        ctx_errors = cr.validate_loan_context(ctx)
+        if ctx_errors:
+            raise ValidationError("; ".join(ctx_errors))
+        persisted_context = ctx.to_dict()
+
     package = LOPackage(
         org_id=org_id,
         created_by=created_by,
@@ -74,6 +87,7 @@ async def create_package(
         status="uploading",
         extraction_enabled=extraction_enabled,
         extraction_fields_by_doc=cleaned_extraction or None,
+        loan_context=persisted_context,
     )
     db.add(package)
     await db.flush()  # get package.id without committing

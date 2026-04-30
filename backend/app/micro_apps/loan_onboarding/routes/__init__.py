@@ -52,6 +52,22 @@ def get_lo_router() -> APIRouter:
     except ImportError:
         pass
 
+    try:
+        from app.micro_apps.loan_onboarding.routes.extraction_overrides import (
+            router as extraction_overrides_router,
+        )
+        router.include_router(extraction_overrides_router)
+    except ImportError:
+        pass
+
+    try:
+        from app.micro_apps.loan_onboarding.routes.compliance import (
+            router as compliance_router,
+        )
+        router.include_router(compliance_router)
+    except ImportError:
+        pass
+
     @router.get("/")
     async def loan_onboarding_root():
         return {"app": "Loan Onboarding", "status": "ready"}

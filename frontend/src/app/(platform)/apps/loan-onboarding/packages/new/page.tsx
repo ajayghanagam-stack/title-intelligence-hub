@@ -6,10 +6,7 @@ import { ArrowRight, FileText, X } from "lucide-react";
 import { UploadDropzone } from "@/components/title-intelligence/upload-dropzone";
 import { DocTypeSelector } from "@/components/loan-onboarding/doc-type-selector";
 import { ExtractionConfig } from "@/components/loan-onboarding/extraction-config";
-import {
-  RuleBuilder,
-  UNSUPPORTED_PRESET_IDS,
-} from "@/components/loan-onboarding/rule-builder";
+import { LoanContextForm } from "@/components/loan-onboarding/loan-context-form";
 import { useOrg } from "@/hooks/use-org";
 import { useOrgSlug } from "@/hooks/use-org-slug";
 import { useLoanPackages } from "@/hooks/use-loan-packages";
@@ -20,10 +17,18 @@ import {
   OTHERS_DOC_TYPE_KEY,
   SUGGESTED_DOC_TYPES,
 } from "@/lib/loan-onboarding/constants";
+import { DEFAULT_LOAN_CONTEXT } from "@/lib/loan-onboarding/loan-context";
 import type {
+  DocValidations,
+  LoanContextInput,
   LoanDocTypeSpec,
   LoanPackageRule,
 } from "@/lib/loan-onboarding/types";
+import { EMPTY_DOC_VALIDATIONS } from "@/lib/loan-onboarding/types";
+
+// `date_consistency` is shown in the per-doc-type panel for parity with the
+// prototype but has no backend evaluator yet — strip it before submit.
+const UNSUPPORTED_PRESET_IDS = new Set(["date_consistency"]);
 
 export default function NewLoanPackagePage() {
   const router = useRouter();
@@ -38,8 +43,19 @@ export default function NewLoanPackagePage() {
     // Others is excluded (backend reserves it implicitly and it's not shown).
     SUGGESTED_DOC_TYPES.filter((d) => d.key !== OTHERS_DOC_TYPE_KEY)
   );
-  // No validations enabled by default — loan officers opt in per package.
-  const [rules, setRules] = useState<LoanPackageRule[]>(() => []);
+  // Per-doc-type validation toggles. No validations enabled by default — loan
+  // officers opt in per package, per doc type. Seeded with an empty entry for
+  // every initially-selected doc type so the UI can render the panel inline.
+  const [validations, setValidations] = useState<Record<string, DocValidations>>(
+    () => {
+      const seed: Record<string, DocValidations> = {};
+      for (const d of SUGGESTED_DOC_TYPES) {
+        if (d.key === OTHERS_DOC_TYPE_KEY) continue;
+        seed[d.key] = { ...EMPTY_DOC_VALIDATIONS, required_fields: [] };
+      }
+      return seed;
+    }
+  );
   // Extraction config (Section D). Default OFF — loan officers opt in per
   // package. When toggled on, doc-type field maps start empty and the user
   // either picks suggestion chips or types fields explicitly.
@@ -47,6 +63,13 @@ export default function NewLoanPackagePage() {
   const [extractionFields, setExtractionFields] = useState<
     Record<string, string[]>
   >(() => ({}));
+
+  // Compliance context — defaults match `DEFAULT_LOAN_CONTEXT` (server-side
+  // defaults). Off until the loan officer expands the section so packages that
+  // skip compliance configuration land with `loan_context = null`.
+  const [complianceEnabled, setComplianceEnabled] = useState(false);
+  const [loanContext, setLoanContext] =
+    useState<LoanContextInput>(DEFAULT_LOAN_CONTEXT);
 
   const [submitting, setSubmitting] = useState(false);
   const [stageLabel, setStageLabel] = useState<string | null>(null);
@@ -76,23 +99,50 @@ export default function NewLoanPackagePage() {
       const submittableDocTypes = docTypes
         .filter((d) => d.key !== OTHERS_DOC_TYPE_KEY)
         .map(({ key, label, required }) => ({ key, label, required }));
-      // Strip prototype-only presets the backend doesn't implement yet
-      // (e.g. date_consistency). They're shown in the UI to match the
-      // prototype but must not reach the classifier.
-      const submittableRules = rules
-        .filter(
-          (r) =>
-            !(
-              r.rule_source === "preset" &&
-              UNSUPPORTED_PRESET_IDS.has(r.rule_id)
-            )
-        )
-        .map((r) => ({
-          rule_source: r.rule_source,
-          rule_id: r.rule_id,
-          description: r.description ?? null,
-          config: r.config,
-        }));
+      // Per-doc-type validations → wire-format `validation_rules`. Emit one
+      // rule per preset, with `config.applies_to_doc_keys` listing the doc
+      // types that have it enabled. For `missing_fields` we also pass the
+      // per-doc field map. `date_consistency` is stripped — no backend
+      // evaluator yet (matches prior `UNSUPPORTED_PRESET_IDS` behavior).
+      const selectedDocKeys = new Set(submittableDocTypes.map((d) => d.key));
+      const presetIds = [
+        "missing_pages",
+        "missing_signatures",
+        "missing_fields",
+      ] as const;
+      const submittableRules: Pick<
+        LoanPackageRule,
+        "rule_source" | "rule_id" | "description" | "config"
+      >[] = [];
+      for (const presetId of presetIds) {
+        if (UNSUPPORTED_PRESET_IDS.has(presetId)) continue;
+        const enabledForKeys: string[] = [];
+        const requiredFieldsByDoc: Record<string, string[]> = {};
+        for (const [docKey, v] of Object.entries(validations)) {
+          if (!selectedDocKeys.has(docKey)) continue;
+          if (!v[presetId]) continue;
+          enabledForKeys.push(docKey);
+          if (presetId === "missing_fields" && v.required_fields.length > 0) {
+            requiredFieldsByDoc[docKey] = [...v.required_fields];
+          }
+        }
+        if (enabledForKeys.length === 0) continue;
+        const config: Record<string, unknown> = {
+          applies_to_doc_keys: enabledForKeys,
+        };
+        if (
+          presetId === "missing_fields" &&
+          Object.keys(requiredFieldsByDoc).length > 0
+        ) {
+          config.required_fields_by_doc = requiredFieldsByDoc;
+        }
+        submittableRules.push({
+          rule_source: "preset",
+          rule_id: presetId,
+          description: null,
+          config,
+        });
+      }
       // Drop extraction map entries for doc types that aren't selected — keeps
       // the payload tight and prevents orphans on the server. Empty arrays
       // are also dropped (no point persisting a doc type with zero fields).
@@ -110,6 +160,9 @@ export default function NewLoanPackagePage() {
         validation_rules: submittableRules,
         extraction_enabled: extractionEnabled,
         extraction_fields_by_doc: submittableExtractionFields,
+        // Only persist the loan context when the LO explicitly opted in —
+        // submitting `null` lets the compliance engine fall back to defaults.
+        loan_context: complianceEnabled ? loanContext : undefined,
       });
 
       setStageLabel("Uploading files");
@@ -144,8 +197,8 @@ export default function NewLoanPackagePage() {
           Create Loan Onboarding Package
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Configure the expected document mix and validation rules before we
-          classify the borrower&apos;s files.
+          Configure the expected document mix and per-document validation
+          checks before we classify the borrower&apos;s files.
         </p>
       </div>
 
@@ -165,7 +218,7 @@ export default function NewLoanPackagePage() {
         </h2>
 
         <UploadDropzone
-          title="Upload a Loan Onboarding Package"
+          title="Upload a Package"
           buttonLabel="Select Package"
           onFilesSelected={(selected) =>
             setFiles((prev) => [...prev, ...selected])
@@ -215,24 +268,15 @@ export default function NewLoanPackagePage() {
             land in the catch-all bucket.
           </p>
         </div>
-        <DocTypeSelector value={docTypes} onChange={setDocTypes} />
+        <DocTypeSelector
+          value={docTypes}
+          onChange={setDocTypes}
+          validations={validations}
+          onValidationsChange={setValidations}
+        />
       </div>
 
-      {/* 4. Validation rules */}
-      <div className="section-card space-y-6">
-        <div>
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Validation Rules
-          </h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            Enable deterministic preset checks and add any bespoke
-            natural-language rules to run against each document stack.
-          </p>
-        </div>
-        <RuleBuilder value={rules} onChange={setRules} docTypes={docTypes} />
-      </div>
-
-      {/* 5. Field extraction (Section D) */}
+      {/* 3. Field extraction (Section D) */}
       <div className="section-card space-y-6">
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
@@ -251,6 +295,42 @@ export default function NewLoanPackagePage() {
           fieldsByDoc={extractionFields}
           onFieldsByDocChange={setExtractionFields}
         />
+      </div>
+
+      {/* 4. Compliance context */}
+      <div className="section-card space-y-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Compliance Context
+            </h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              Optional. Tell the compliance engine which program, purpose,
+              state, and scenario flags apply so the rule set narrows correctly
+              and the report header is accurate.
+            </p>
+          </div>
+          <label className="flex items-center gap-2 text-sm shrink-0">
+            <input
+              type="checkbox"
+              checked={complianceEnabled}
+              onChange={(e) => setComplianceEnabled(e.target.checked)}
+              className="h-4 w-4 rounded border-input"
+              data-testid="compliance-context-toggle"
+            />
+            <span>Configure now</span>
+          </label>
+        </div>
+
+        {complianceEnabled ? (
+          <LoanContextForm value={loanContext} onChange={setLoanContext} />
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Skipping for now. You can fill this in later from the package&apos;s
+            Compliance tab — but the report header and rule applicability will
+            use defaults until then.
+          </p>
+        )}
       </div>
 
       {/* Submit */}

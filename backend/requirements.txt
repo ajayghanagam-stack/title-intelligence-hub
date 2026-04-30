@@ -38,6 +38,12 @@ PyMuPDF>=1.23
 # Text matching
 rapidfuzz>=3.0
 
+# OCR (loan-onboarding /words endpoint falls back to Tesseract for scanned
+# pages where PyMuPDF finds no embedded text — needed for highlight accuracy
+# in the extraction-review workbench). Requires the Tesseract binary
+# (`brew install tesseract` on macOS).
+pytesseract>=0.3.10
+
 # Workflow orchestration
 temporalio>=1.7
 

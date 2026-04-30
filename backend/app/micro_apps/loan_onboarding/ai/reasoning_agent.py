@@ -115,7 +115,11 @@ class ReasoningAgent(BaseAIService):
     def __init__(self, org_id: uuid.UUID, model_override: str | None = None):
         super().__init__(org_id, role="reasoner", provider_override="claude")
         if model_override:
-            self.model = model_override
+            # litellm needs a provider-prefixed model id; add "anthropic/" if
+            # the caller passed a bare alias from settings.
+            self.model = (
+                model_override if "/" in model_override else f"anthropic/{model_override}"
+            )
 
     async def reason(
         self,

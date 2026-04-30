@@ -8,6 +8,7 @@
  */
 import type {
   LoanExtractionField,
+  LoanExtractionOverride,
   LoanStackExtraction,
   LoanPackage,
 } from "./types";
@@ -18,6 +19,8 @@ interface ExportField {
   confidence: number | null;
   // "extracted" mirrors the prototype's terminology for downstream parsers.
   status: "extracted" | "missing";
+  /** True iff the value was supplied by a reviewer (override). */
+  reviewed?: boolean;
 }
 
 interface ExportDocument {
@@ -28,7 +31,39 @@ interface ExportDocument {
   fields: ExportField[];
 }
 
-function _toExportField(f: LoanExtractionField): ExportField {
+/**
+ * Composite key used by both the dashboard's local `fieldSaved` map and the
+ * backend's `lo_extraction_overrides` unique constraint.
+ */
+function _overrideKey(stackId: string, docType: string, fieldName: string): string {
+  return `${stackId}::${docType}::${fieldName}`;
+}
+
+function _buildOverrideMap(
+  overrides: LoanExtractionOverride[] | undefined
+): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const o of overrides ?? []) {
+    m.set(_overrideKey(o.stack_id, o.doc_type, o.field_name), o.value);
+  }
+  return m;
+}
+
+function _toExportField(
+  f: LoanExtractionField,
+  override: string | undefined
+): ExportField {
+  // Reviewer-edited values always win and are emitted as extracted with
+  // confidence 1.0 — the AI's value/confidence are no longer authoritative.
+  if (override !== undefined) {
+    return {
+      name: f.name,
+      value: override,
+      confidence: 1,
+      status: "extracted",
+      reviewed: true,
+    };
+  }
   const found = f.status === "located" || f.status === "low_confidence";
   return {
     name: f.name,
@@ -39,8 +74,10 @@ function _toExportField(f: LoanExtractionField): ExportField {
 }
 
 export function buildExtractionPayload(
-  stacks: LoanStackExtraction[]
+  stacks: LoanStackExtraction[],
+  overrides?: LoanExtractionOverride[]
 ): ExportDocument[] {
+  const overrideMap = _buildOverrideMap(overrides);
   return stacks
     .filter((s) => s.fields && s.fields.length > 0)
     .map((s) => ({
@@ -48,7 +85,9 @@ export function buildExtractionPayload(
       documentType: s.doc_type,
       pageCount: null,
       confidence: null,
-      fields: s.fields.map(_toExportField),
+      fields: s.fields.map((f) =>
+        _toExportField(f, overrideMap.get(_overrideKey(s.stack_id, s.doc_type, f.name)))
+      ),
     }));
 }
 
@@ -63,13 +102,14 @@ function _loanIdentifier(pkg: LoanPackage | null | undefined): string {
 
 export function buildExtractionJSON(
   stacks: LoanStackExtraction[],
-  pkg?: LoanPackage | null
+  pkg?: LoanPackage | null,
+  overrides?: LoanExtractionOverride[]
 ): string {
   const payload = {
     schemaVersion: "1.0",
     generatedAt: new Date().toISOString(),
     loanNumber: _loanIdentifier(pkg),
-    documents: buildExtractionPayload(stacks),
+    documents: buildExtractionPayload(stacks, overrides),
   };
   return JSON.stringify(payload, null, 2);
 }
@@ -80,7 +120,10 @@ function _csvEscape(v: string | number | null | undefined): string {
   return /[",\n]/.test(s) ? `"${s}"` : s;
 }
 
-export function buildExtractionCSV(stacks: LoanStackExtraction[]): string {
+export function buildExtractionCSV(
+  stacks: LoanStackExtraction[],
+  overrides?: LoanExtractionOverride[]
+): string {
   const rows: string[][] = [
     [
       "document_type",
@@ -89,9 +132,10 @@ export function buildExtractionCSV(stacks: LoanStackExtraction[]): string {
       "field_value",
       "confidence",
       "status",
+      "reviewed",
     ],
   ];
-  for (const doc of buildExtractionPayload(stacks)) {
+  for (const doc of buildExtractionPayload(stacks, overrides)) {
     for (const f of doc.fields) {
       rows.push([
         _csvEscape(doc.documentType),
@@ -102,6 +146,7 @@ export function buildExtractionCSV(stacks: LoanStackExtraction[]): string {
           ? String(f.confidence)
           : "",
         f.status,
+        f.reviewed ? "true" : "false",
       ]);
     }
   }
@@ -124,9 +169,10 @@ function _xmlEscape(s: string | number | null | undefined): string {
  */
 export function buildExtractionXML(
   stacks: LoanStackExtraction[],
-  pkg?: LoanPackage | null
+  pkg?: LoanPackage | null,
+  overrides?: LoanExtractionOverride[]
 ): string {
-  const docs = buildExtractionPayload(stacks);
+  const docs = buildExtractionPayload(stacks, overrides);
   const loanId = _loanIdentifier(pkg);
   const lines: string[] = [];
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
@@ -162,6 +208,9 @@ export function buildExtractionXML(
         `                      <Confidence>${f.confidence ?? ""}</Confidence>`
       );
       lines.push(`                      <Status>${_xmlEscape(f.status)}</Status>`);
+      if (f.reviewed) {
+        lines.push("                      <Reviewed>true</Reviewed>");
+      }
       lines.push("                    </FIELD>");
     }
     lines.push("                  </EXTRACTED_FIELDS></OTHER></EXTENSION>");

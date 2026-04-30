@@ -42,7 +42,7 @@ from app.micro_apps.loan_onboarding.services.validation_presets import (
 
 def test_rules_version_is_pinned():
     """If this fails, a rule behavior change needs a RULES_VERSION bump."""
-    assert RULES_VERSION == "lo_validation_rules_v6"
+    assert RULES_VERSION == "lo_validation_rules_v7"
 
 
 def test_preset_ids_are_pinned():

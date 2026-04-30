@@ -238,6 +238,67 @@ def test_others_stacks_short_circuit_to_pass():
     assert "Others" in ev.evidence
 
 
+# ── applies_to_doc_keys scoping (v7) ──────────────────────────────────────
+
+
+def test_applies_to_doc_keys_skips_when_doc_type_not_in_scope():
+    """When the rule scope lists specific doc_types, stacks of other types
+    no-op pass — the rule is "not configured" for them."""
+    stack = _make_stack("PAYSTUB", [
+        (1, "first_page", []),
+        (2, "last_page", []),
+    ])
+    ev = evaluate_preset(
+        "missing_signatures",
+        stack,
+        config={"applies_to_doc_keys": ["URLA_1003", "W2"]},
+    )
+    assert ev.passed is True
+    assert "not configured" in ev.evidence
+    assert "PAYSTUB" in ev.evidence
+
+
+def test_applies_to_doc_keys_runs_when_doc_type_in_scope():
+    """When the stack's doc_type is in scope, the rule evaluates normally."""
+    stack = _make_stack("PAYSTUB", [
+        (1, "first_page", []),
+        (2, "last_page", []),
+    ])
+    ev = evaluate_preset(
+        "missing_signatures",
+        stack,
+        config={"applies_to_doc_keys": ["PAYSTUB"]},
+    )
+    # No signature page → fails (real evaluation)
+    assert ev.passed is False
+    assert "No signature_page" in ev.evidence
+
+
+def test_applies_to_doc_keys_empty_list_falls_through_to_legacy_behavior():
+    """Empty list = no scope = legacy package-wide evaluation."""
+    stack = _make_stack("PAYSTUB", [
+        (1, "first_page", []),
+        (2, "signature_page", []),
+    ])
+    ev = evaluate_preset(
+        "missing_signatures",
+        stack,
+        config={"applies_to_doc_keys": []},
+    )
+    assert ev.passed is True
+    assert "Signature page(s) found" in ev.evidence
+
+
+def test_applies_to_doc_keys_missing_falls_through_to_legacy_behavior():
+    """Missing key = no scope = legacy package-wide evaluation."""
+    stack = _make_stack("PAYSTUB", [
+        (1, "first_page", []),
+        (2, "last_page", []),
+    ])
+    ev = evaluate_preset("missing_pages", stack, config={})
+    assert ev.passed is True
+
+
 # ── unknown rule id ────────────────────────────────────────────────────────
 
 

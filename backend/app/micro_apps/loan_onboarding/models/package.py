@@ -41,6 +41,13 @@ class LOPackage(Base, TenantMixin, TimestampMixin):
     extraction_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     extraction_fields_by_doc: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # Loan context — drives the persona-aware compliance engine. Captured on
+    # the upload form (program/purpose/occupancy/state/scenarioFlags/ausEngine/
+    # ausWaivers/loanAmount/propertyValue) and consumed by the compliance
+    # service. Stored as a single JSONB blob so the schema can evolve without
+    # migrations as new scenario flags or AUS waivers are added.
+    loan_context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     files = relationship("LOPackageFile", back_populates="package", lazy="noload", passive_deletes=True)
     pages = relationship("LOPage", back_populates="package", lazy="noload", passive_deletes=True)
     doc_type_config = relationship(
@@ -57,3 +64,10 @@ class LOPackage(Base, TenantMixin, TimestampMixin):
     hitl_reviews = relationship("LOHITLReview", back_populates="package", lazy="noload", passive_deletes=True)
     pipeline_runs = relationship("LOPipelineRun", back_populates="package", lazy="noload", passive_deletes=True)
     extractions = relationship("LOExtraction", back_populates="package", lazy="noload", passive_deletes=True)
+    compliance_runs = relationship(
+        "LOComplianceRun",
+        back_populates="package",
+        lazy="noload",
+        passive_deletes=True,
+        order_by="LOComplianceRun.created_at.desc()",
+    )

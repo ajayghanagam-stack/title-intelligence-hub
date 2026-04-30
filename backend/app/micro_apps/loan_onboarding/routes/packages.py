@@ -5,6 +5,7 @@ All endpoints are tenant-scoped via `get_org_id` (set by TenantContextMiddleware
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -59,6 +60,7 @@ async def _serialize_package(
         "hitl_count": hitl_count,
         "extraction_enabled": package.extraction_enabled,
         "extraction_fields_by_doc": package.extraction_fields_by_doc or {},
+        "loan_context": package.loan_context or None,
         "created_at": package.created_at,
         "updated_at": package.updated_at,
     }
@@ -86,6 +88,9 @@ async def create_package(
         hitl_threshold=hitl,
         extraction_enabled=body.extraction_enabled,
         extraction_fields_by_doc=body.extraction_fields_by_doc,
+        loan_context=(
+            body.loan_context.model_dump() if body.loan_context is not None else None
+        ),
     )
     await log_event(
         db, org_id,
@@ -276,6 +281,80 @@ def _derive_stage_timings(package: LOPackage) -> list[dict]:
         }
         for stage, elapsed in timings.items()
     ]
+
+
+def _safe_filename_stem(value: str | None, fallback: str) -> str:
+    """Strip path separators and collapse whitespace for a download filename."""
+    if not value:
+        return fallback
+    cleaned = "".join(c for c in value if c not in '/\\?%*:|"<>')
+    cleaned = "-".join(cleaned.split())
+    return (cleaned[:80] or fallback)
+
+
+@router.get("/packages/{package_id}/final-packet.pdf")
+async def download_final_packet(
+    package_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    member: User = Depends(get_current_member),
+    org_id: uuid.UUID = Depends(get_org_id),
+    storage: StorageProvider = Depends(get_storage),
+):
+    """Stream the reorganized final packet as a downloadable PDF.
+
+    Pages are emitted in `stack_index` order using current `lo_stacks` /
+    `lo_pages` state — so any reviewer "Move to…" overrides are reflected
+    immediately. Top-level bookmarks label each stack with its doc-type and
+    page span. The PDF is regenerated on every request because the operation
+    is cheap (PyMuPDF page copy, no re-rastering) and avoids stale-cache
+    bugs after overrides.
+    """
+    from app.micro_apps.loan_onboarding.services.final_packet import (
+        build_final_packet_pdf,
+    )
+
+    package = await package_service.get_package_or_raise(db, org_id, package_id)
+    pdf_bytes = await build_final_packet_pdf(db, org_id, package_id, storage)
+    stem = _safe_filename_stem(
+        package.loan_reference or package.name, fallback=str(package.id)
+    )
+    filename = f"{stem}-final-packet.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/packages/{package_id}/per-stack.zip")
+async def download_per_stack_zip(
+    package_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    member: User = Depends(get_current_member),
+    org_id: uuid.UUID = Depends(get_org_id),
+    storage: StorageProvider = Depends(get_storage),
+):
+    """Stream one PDF per stack bundled in a ZIP archive.
+
+    Mirrors the same `lo_stacks` ordering as the final-packet PDF, so
+    reviewer "Move to…" overrides are reflected immediately. Filenames are
+    zero-padded by stack_index so the archive sorts naturally.
+    """
+    from app.micro_apps.loan_onboarding.services.final_packet import (
+        build_per_stack_zip,
+    )
+
+    package = await package_service.get_package_or_raise(db, org_id, package_id)
+    zip_bytes = await build_per_stack_zip(db, org_id, package_id, storage)
+    stem = _safe_filename_stem(
+        package.loan_reference or package.name, fallback=str(package.id)
+    )
+    filename = f"{stem}-per-stack.zip"
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/packages/{package_id}/pipeline", response_model=PipelineStatusResponse)

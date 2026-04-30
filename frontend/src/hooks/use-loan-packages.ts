@@ -55,6 +55,16 @@ export function useLoanPackages() {
       await deletePackage(currentOrgId, packageId);
       // Optimistic local update so the row disappears immediately.
       setPackages((prev) => prev.filter((p) => p.id !== packageId));
+      // Notify the sidebar (and any other listeners) so its "Recents" list
+      // drops the deleted package without a manual refresh. The matching
+      // handler is registered in `components/sidebar.tsx`.
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("loan-package-deleted", {
+            detail: { packageId },
+          })
+        );
+      }
     },
     [currentOrgId]
   );
@@ -68,16 +78,18 @@ export function useLoanPackage(packageId: string | null | undefined) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchPackage = useCallback(async () => {
-    if (!currentOrgId || !packageId) return;
+  const fetchPackage = useCallback(async (): Promise<LoanPackage | null> => {
+    if (!currentOrgId || !packageId) return null;
     setLoading(true);
     setError(null);
     try {
       const data = await getPackage(currentOrgId, packageId);
       setPkg(data);
+      return data;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load package");
       setPkg(null);
+      return null;
     } finally {
       setLoading(false);
     }

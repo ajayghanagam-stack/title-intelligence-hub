@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.micro_apps.loan_onboarding.schemas.compliance import LoanContextIn
+
 
 class DocTypeSpec(BaseModel):
     """One entry in the per-package list of expected document types."""
@@ -49,6 +51,10 @@ class PackageCreate(BaseModel):
     # feed (JSON / CSV / MISMO XML). The map is keyed by doc_type key.
     extraction_enabled: bool = True
     extraction_fields_by_doc: dict[str, list[str]] = Field(default_factory=dict)
+    # Optional loan context — drives the persona-aware compliance engine.
+    # When present, the backend persists it on `LOPackage.loan_context` so the
+    # compliance report can render correct program/state/scenario context.
+    loan_context: LoanContextIn | None = None
 
 
 class PackageResponse(BaseModel):
@@ -68,6 +74,7 @@ class PackageResponse(BaseModel):
     hitl_count: int = 0
     extraction_enabled: bool = True
     extraction_fields_by_doc: dict[str, list[str]] = Field(default_factory=dict)
+    loan_context: LoanContextIn | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -113,7 +113,12 @@ class ExtractionAgent(BaseAIService):
     def __init__(self, org_id: uuid.UUID, model_override: str | None = None):
         super().__init__(org_id, role="validator", provider_override="claude")
         if model_override:
-            self.model = model_override
+            # litellm needs a provider-prefixed model id (e.g.
+            # "anthropic/claude-sonnet-4-6"). Settings store the bare alias —
+            # add the prefix here so the override actually routes.
+            self.model = (
+                model_override if "/" in model_override else f"anthropic/{model_override}"
+            )
 
     async def extract_fields(
         self,

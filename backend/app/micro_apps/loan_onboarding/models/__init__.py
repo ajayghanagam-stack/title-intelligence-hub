@@ -10,6 +10,10 @@ from app.micro_apps.loan_onboarding.models.hitl_review import LOHITLReview
 from app.micro_apps.loan_onboarding.models.pipeline_run import LOPipelineRun
 from app.micro_apps.loan_onboarding.models.page_override import LOPageOverride
 from app.micro_apps.loan_onboarding.models.extraction import LOExtraction
+from app.micro_apps.loan_onboarding.models.extraction_override import (
+    LOExtractionOverride,
+)
+from app.micro_apps.loan_onboarding.models.compliance import LOComplianceRun
 
 __all__ = [
     "LOPackage",
@@ -24,4 +28,6 @@ __all__ = [
     "LOPipelineRun",
     "LOPageOverride",
     "LOExtraction",
+    "LOExtractionOverride",
+    "LOComplianceRun",
 ]

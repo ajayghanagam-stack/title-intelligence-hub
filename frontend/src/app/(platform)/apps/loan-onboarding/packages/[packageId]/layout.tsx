@@ -8,6 +8,7 @@ const TABS = [
   { href: "/processing", label: "Processing" },
   { href: "/results", label: "Results" },
   { href: "/dashboard", label: "Dashboard" },
+  { href: "/compliance", label: "Compliance" },
 ];
 
 export default function LoanPackageDetailLayout({
