@@ -11,6 +11,8 @@ import type {
   LoanPackageRule,
   LoanPage,
   LoanPageOverride,
+  LoanPageOverrideBatchRequest,
+  LoanPageOverrideBatchResult,
   LoanPageOverrideRequest,
   LoanPageOverrideResult,
   LoanPipelineStatus,
@@ -141,6 +143,27 @@ export function listPageOverrides(orgId: string, packageId: string) {
   return apiFetch<LoanPageOverride[]>(
     `${BASE}/packages/${packageId}/overrides`,
     { orgId }
+  );
+}
+
+/**
+ * Apply many page overrides in one request. The backend runs re-stack and
+ * re-validate ONCE at the end (vs. once per page for the single endpoint),
+ * so this is what drag-and-drop multi-move flows should call. No-op moves
+ * (page already in the target doc type) are silently skipped server-side.
+ */
+export function applyPageOverridesBatch(
+  orgId: string,
+  packageId: string,
+  body: LoanPageOverrideBatchRequest
+) {
+  return apiFetch<LoanPageOverrideBatchResult>(
+    `${BASE}/packages/${packageId}/pages/overrides:batch`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+      orgId,
+    }
   );
 }
 

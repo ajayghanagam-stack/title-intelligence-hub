@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -15,10 +15,10 @@ import {
 import { useOrg } from "@/hooks/use-org";
 import { useLoanPackage } from "@/hooks/use-loan-packages";
 import {
-  evaluateComplianceApi,
-  getComplianceRun,
-  updateComplianceContext,
-} from "@/lib/loan-onboarding/api";
+  useComplianceQuery,
+  useInvalidateLoanPackage,
+} from "@/hooks/use-loan-package-data";
+import { updateComplianceContext } from "@/lib/loan-onboarding/api";
 import {
   adaptComplianceReport,
   type ComplianceReport,
@@ -63,27 +63,31 @@ export default function CompliancePage() {
   const [persona, setPersona] = useState<Persona>("lo");
   const [contextModalOpen, setContextModalOpen] = useState(false);
 
-  const [report, setReport] = useState<ComplianceReport | null>(null);
-  const [loading, setLoading] = useState(true);
+  // GET /compliance returns the cached run if one exists and only re-evaluates
+  // the live regulation/doc-check layer (`get_or_evaluate`) — much cheaper than
+  // POST /compliance/evaluate, which always rebuilds + persists. The PATCH
+  // /compliance/context handler already persists a fresh run, so we just
+  // invalidate this query after edits.
+  const invalidate = useInvalidateLoanPackage();
+  const {
+    data: payload,
+    isLoading: reportLoading,
+    isError: reportError,
+  } = useComplianceQuery(currentOrgId, packageId);
 
-  const refetchReport = useCallback(async () => {
-    if (!currentOrgId || !packageId) return;
-    setLoading(true);
+  // Adapt payload + pkg → ComplianceReport view-model. Memo on stable inputs
+  // so the report identity only changes when something meaningful changes
+  // (was: pkg in the fetcher's deps, double-firing the request).
+  const report: ComplianceReport | null = useMemo(() => {
+    if (!payload) return null;
     try {
-      const payload = await evaluateComplianceApi(currentOrgId, packageId);
-      setReport(adaptComplianceReport(payload, pkg ?? null));
+      return adaptComplianceReport(payload, pkg ?? null);
     } catch {
-      setReport(null);
-    } finally {
-      setLoading(false);
+      return null;
     }
-  }, [currentOrgId, packageId, pkg]);
+  }, [payload, pkg]);
 
-  useEffect(() => {
-    void refetchReport();
-  }, [refetchReport]);
-
-  if (pkgLoading || loading) {
+  if (pkgLoading || reportLoading) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-3">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -94,7 +98,7 @@ export default function CompliancePage() {
     );
   }
 
-  if (!pkg || !report) {
+  if (!pkg || !report || reportError) {
     return (
       <p className="text-muted-foreground py-10 text-center">
         Compliance report unavailable — package not found.
@@ -124,21 +128,15 @@ export default function CompliancePage() {
           initial={pkg.loan_context ?? DEFAULT_LOAN_CONTEXT}
           onClose={() => setContextModalOpen(false)}
           onSaved={async () => {
-            // Modal stays mounted with "Saving…" button text until this
-            // resolves. Closing the modal is the modal's job (handleSave →
-            // onClose) once we return.
-            //
             // Backend's PATCH /compliance/context already persisted a fresh
-            // LOComplianceRun against the new context (compliance_service.
-            // update_loan_context calls evaluate(persist=True)). So we read
-            // that run via GET — no need to POST /evaluate and write a
-            // second redundant run.
+            // LOComplianceRun against the new context. Invalidating the
+            // cached compliance query triggers a refetch via React Query;
+            // refetching the package picks up the new loan_context payload.
             if (!currentOrgId) return;
-            const [freshPkg, payload] = await Promise.all([
+            await Promise.all([
               refetchPkg(),
-              getComplianceRun(currentOrgId, packageId),
+              invalidate(currentOrgId, packageId),
             ]);
-            setReport(adaptComplianceReport(payload, freshPkg ?? null));
           }}
         />
       )}

@@ -9,9 +9,24 @@ import {
   ChevronDown,
   Eye,
   FileSearch,
-  FileText,
+  GalleryHorizontal,
+  LayoutList,
+  Maximize2,
   Undo2,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import { cn } from "@/lib/utils";
 import { apiFetchBlob } from "@/lib/api";
 import {
@@ -26,6 +41,7 @@ import type {
   LoanStackExtraction,
   LoanValidationResult,
   LoanPageOverride,
+  LoanPageRole,
 } from "@/lib/loan-onboarding/types";
 import { ExtractedFieldsPanel } from "@/components/loan-onboarding/extracted-fields-panel";
 
@@ -134,6 +150,31 @@ export function StackExpanded({
       onMutated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to undo move");
+    } finally {
+      setBusyPageId(null);
+    }
+  };
+
+  /**
+   * Re-role a page WITHIN the current stack's doc type. Promoting a
+   * continuation to `first_page` splits the stack here; flipping a page to
+   * `signature_page` regroups it accordingly. The override keeps the
+   * page's effective doc_type unchanged — only `page_role_override` moves.
+   */
+  const handleChangeRole = async (
+    page: LoanStackPage,
+    role: LoanPageRole,
+  ) => {
+    setBusyPageId(page.page_id);
+    setError(null);
+    try {
+      await applyPageOverride(orgId, packageId, page.page_id, {
+        assigned_doc_type: stack.doc_type,
+        page_role_override: role,
+      });
+      onMutated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to change page role");
     } finally {
       setBusyPageId(null);
     }
@@ -289,6 +330,7 @@ export function StackExpanded({
           busyPageId={busyPageId}
           onMove={handleMove}
           onUndo={handleUndo}
+          onChangeRole={handleChangeRole}
         />
       )}
     </div>
@@ -342,11 +384,13 @@ function AuthImage({
   orgId,
   alt,
   className,
+  style,
 }: {
   path: string;
   orgId: string;
   alt: string;
   className?: string;
+  style?: React.CSSProperties;
 }) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<boolean>(false);
@@ -395,7 +439,7 @@ function AuthImage({
     );
   }
 
-  return <img src={src} alt={alt} className={className} />;
+  return <img src={src} alt={alt} className={className} style={style} />;
 }
 
 interface PageViewerProps {
@@ -407,6 +451,9 @@ interface PageViewerProps {
   busyPageId: string | null;
   onMove: (page: LoanStackPage, target: string) => void;
   onUndo: (page: LoanStackPage) => void;
+  /** Re-role a page within the current stack's doc type (drag onto a role
+   *  pill). Promoting `continuation → first_page` splits the stack here. */
+  onChangeRole: (page: LoanStackPage, role: LoanPageRole) => void;
 }
 
 /**
@@ -429,6 +476,7 @@ function PageViewer({
   busyPageId,
   onMove,
   onUndo,
+  onChangeRole,
 }: PageViewerProps) {
   const pages = stack.pages;
   const [activePageId, setActivePageId] = useState<string | null>(
@@ -476,6 +524,99 @@ function PageViewer({
   const currentDocType = stack.doc_type;
   const currentLabel = LOAN_DOC_TYPE_LABELS[currentDocType] ?? currentDocType;
 
+  // Track which page is currently being dragged so we can reveal the
+  // doc-type drop strip + dim non-draggable UI. Cleared on drop or cancel.
+  const [draggingPageId, setDraggingPageId] = useState<string | null>(null);
+
+  // Page-preview zoom. "fit" = scale-to-container (default — works on any
+  // resolution), numeric values are explicit zoom factors. Reset to "fit"
+  // whenever the active page changes so a fresh page always lands at a
+  // sensible default instead of inheriting the previous page's zoom.
+  const [zoom, setZoom] = useState<number | "fit">("fit");
+  useEffect(() => {
+    setZoom("fit");
+  }, [activePageId]);
+
+  // Per-user layout preference. List = vertical thumbnail rail (metadata-
+  // rich, easier triage). Filmstrip = horizontal scrolling thumbs above the
+  // preview (denser, much shorter drag distance to drop targets — the
+  // intended fast-move mode). Persisted in localStorage so the choice
+  // survives navigation / reload. SSR-safe via the lazy initializer.
+  const [viewMode, setViewMode] = useState<"list" | "strip">(() => {
+    if (typeof window === "undefined") return "list";
+    try {
+      return window.localStorage.getItem("lo-pageviewer-mode") === "strip"
+        ? "strip"
+        : "list";
+    } catch {
+      return "list";
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("lo-pageviewer-mode", viewMode);
+    } catch {
+      // localStorage unavailable (private mode, quota, etc.) — silently
+      // ignore; the in-memory state still works for this session.
+    }
+  }, [viewMode]);
+
+  // Auto-scroll the active thumb into view in filmstrip mode. Without this
+  // the user can click a thumb on the far edge and lose track of selection
+  // when navigating with arrow keys / programmatic moves.
+  const activeThumbRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (viewMode !== "strip") return;
+    activeThumbRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "center",
+    });
+  }, [activePageId, viewMode]);
+
+  // PointerSensor with a small activation distance so simple clicks on a
+  // thumb (to switch the active page) still fire normally — drag only
+  // engages once the cursor moves a few pixels.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  );
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const pageId = event.active.data.current?.pageId as string | undefined;
+    if (pageId) setDraggingPageId(pageId);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const pageId = event.active.data.current?.pageId as string | undefined;
+    const overData = event.over?.data.current as
+      | { kind: "doctype"; docType: string }
+      | { kind: "role"; role: LoanPageRole }
+      | undefined;
+    setDraggingPageId(null);
+    if (!pageId || !overData) return;
+    const page = pages.find((p) => p.page_id === pageId);
+    if (!page) return;
+
+    if (overData.kind === "doctype") {
+      // No-op: dropping a page onto its current effective doc type. The
+      // backend would reject this with 400; short-circuit here so the user
+      // doesn't see an error toast for "I dropped it where it already was."
+      const effectiveDocType =
+        overrides.get(pageId)?.assigned_doc_type ?? stack.doc_type;
+      if (overData.docType === effectiveDocType) return;
+      onMove(page, overData.docType);
+      return;
+    }
+
+    // Role drop: keep the page in the same stack's doc_type but flip its
+    // role. No-op if the effective role already matches.
+    const effectiveRole =
+      overrides.get(pageId)?.page_role_override ??
+      (page.page_role as LoanPageRole | null);
+    if (overData.role === effectiveRole) return;
+    onChangeRole(page, overData.role);
+  };
+
   if (pages.length === 0) {
     return (
       <div
@@ -488,6 +629,12 @@ function PageViewer({
   }
 
   return (
+    <DndContext
+      sensors={sensors}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setDraggingPageId(null)}
+    >
     <div data-testid={`pages-drawer-${stack.stack_index}`}>
       {/* Header row */}
       <div className="flex items-center justify-between mb-3">
@@ -500,21 +647,68 @@ function PageViewer({
             moved
           </div>
         </div>
-        <input
-          type="text"
-          inputMode="numeric"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Jump to page #"
-          className="w-32 rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          aria-label="Filter pages by number"
-        />
+        <div className="flex items-center gap-2">
+          {/* View-mode toggle. List is the existing layout; Filmstrip is
+              the horizontal-row layout for fast scanning + short drag
+              paths. Persisted in localStorage. */}
+          <div
+            className="inline-flex items-center rounded-md border border-border/60 bg-background overflow-hidden"
+            role="group"
+            aria-label="Page viewer layout"
+          >
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              aria-pressed={viewMode === "list"}
+              aria-label="List view"
+              title="List view — vertical thumbnails with metadata"
+              className={cn(
+                "px-2 py-1 transition-colors",
+                viewMode === "list"
+                  ? "bg-amber-50 text-amber-900"
+                  : "text-muted-foreground hover:bg-muted/40"
+              )}
+              data-testid="page-view-mode-list"
+            >
+              <LayoutList className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("strip")}
+              aria-pressed={viewMode === "strip"}
+              aria-label="Filmstrip view"
+              title="Filmstrip view — horizontal thumbnails for fast moves"
+              className={cn(
+                "px-2 py-1 transition-colors border-l border-border/60",
+                viewMode === "strip"
+                  ? "bg-amber-50 text-amber-900"
+                  : "text-muted-foreground hover:bg-muted/40"
+              )}
+              data-testid="page-view-mode-strip"
+            >
+              <GalleryHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Jump to page #"
+            className="w-32 rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            aria-label="Filter pages by number"
+          />
+        </div>
       </div>
 
-      <div className="grid grid-cols-[180px_1fr] bg-background border border-border/60 rounded-md overflow-hidden">
-        {/* Left: thumbnail strip */}
-        <div className="border-r border-border/60 flex flex-col">
-          <div className="px-3 py-2 bg-muted/40 border-b border-border/60 flex items-center justify-between">
+
+      {/* Filmstrip — horizontal scrolling thumb row rendered ABOVE the
+          preview in strip mode. Card-style thumbs (image-on-top, label-
+          below) at ~80px wide so 12-15 fit in view at 1280px. Drag path
+          flows naturally downward into the preview / drop overlay. */}
+      {viewMode === "strip" && (
+        <div className="mb-3 rounded-md border border-border/60 bg-background overflow-hidden">
+          <div className="px-3 py-1.5 bg-muted/40 border-b border-border/60 flex items-center justify-between">
             <span className="text-[9px] font-mono tracking-[0.2em] text-muted-foreground uppercase">
               Pages
             </span>
@@ -522,7 +716,10 @@ function PageViewer({
               {visiblePages.length}/{pages.length}
             </span>
           </div>
-          <div className="overflow-y-auto max-h-[460px]">
+          <div
+            className="flex gap-2 overflow-x-auto p-2"
+            data-testid="filmstrip"
+          >
             {visiblePages.length === 0 ? (
               <div className="px-3 py-4 text-[11px] text-muted-foreground italic">
                 No pages match.
@@ -532,59 +729,75 @@ function PageViewer({
                 const o = overrides.get(pg.page_id);
                 const isActive = activePage?.page_id === pg.page_id;
                 return (
-                  <button
+                  <FilmstripThumb
                     key={pg.page_id}
-                    type="button"
+                    orgId={orgId}
+                    packageId={packageId}
+                    pg={pg}
+                    isActive={isActive}
+                    override={o}
+                    isDraggingThis={draggingPageId === pg.page_id}
+                    activeRef={isActive ? activeThumbRef : undefined}
                     onClick={() => {
                       setActivePageId(pg.page_id);
                       closePicker();
                     }}
-                    className={cn(
-                      "w-full flex items-center gap-2 px-2 py-2 text-left border-b border-border/60 transition-colors border-l-2",
-                      isActive
-                        ? "bg-amber-50/70 border-l-amber-500"
-                        : "hover:bg-muted/40 border-l-transparent"
-                    )}
-                    data-testid={`thumb-${pg.page_number}`}
-                  >
-                    <div
-                      className={cn(
-                        "w-9 h-12 shrink-0 border rounded flex items-center justify-center",
-                        o
-                          ? "bg-amber-50 border-amber-300"
-                          : "bg-muted/40 border-border/60"
-                      )}
-                    >
-                      <FileText
-                        className="h-3.5 w-3.5 text-muted-foreground"
-                        strokeWidth={1.5}
-                      />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-mono text-[11px] tabular-nums">
-                        p. {pg.page_number}
-                      </div>
-                      {pg.page_role && (
-                        <div className="font-mono text-[9px] text-muted-foreground uppercase tracking-[0.1em] truncate">
-                          {pg.page_role.replace(/_/g, " ")}
-                        </div>
-                      )}
-                      {o && (
-                        <div className="font-mono text-[9px] text-amber-700 truncate mt-0.5">
-                          →{" "}
-                          {LOAN_DOC_TYPE_LABELS[o.assigned_doc_type] ??
-                            o.assigned_doc_type}
-                        </div>
-                      )}
-                    </div>
-                  </button>
+                  />
                 );
               })
             )}
           </div>
         </div>
+      )}
 
-        {/* Right: preview surface + move action bar */}
+      <div
+        className="grid bg-background border border-border/60 rounded-md overflow-hidden"
+        style={{
+          gridTemplateColumns: viewMode === "strip" ? "1fr" : "180px 1fr",
+        }}
+      >
+        {/* Left: thumbnail rail — only shown in list mode */}
+        {viewMode === "list" && (
+          <div className="border-r border-border/60 flex flex-col">
+            <div className="px-3 py-2 bg-muted/40 border-b border-border/60 flex items-center justify-between">
+              <span className="text-[9px] font-mono tracking-[0.2em] text-muted-foreground uppercase">
+                Pages
+              </span>
+              <span className="text-[9px] font-mono tabular-nums text-muted-foreground">
+                {visiblePages.length}/{pages.length}
+              </span>
+            </div>
+            <div className="overflow-y-auto max-h-[460px]">
+              {visiblePages.length === 0 ? (
+                <div className="px-3 py-4 text-[11px] text-muted-foreground italic">
+                  No pages match.
+                </div>
+              ) : (
+                visiblePages.map((pg) => {
+                  const o = overrides.get(pg.page_id);
+                  const isActive = activePage?.page_id === pg.page_id;
+                  return (
+                    <DraggableThumb
+                      key={pg.page_id}
+                      orgId={orgId}
+                      packageId={packageId}
+                      pg={pg}
+                      isActive={isActive}
+                      override={o}
+                      isDraggingThis={draggingPageId === pg.page_id}
+                      onClick={() => {
+                        setActivePageId(pg.page_id);
+                        closePicker();
+                      }}
+                    />
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Right (or full-width in strip mode): preview surface + action bar */}
         <div className="flex flex-col">
           <div className="px-4 py-2 bg-muted/40 border-b border-border/60 flex items-center justify-between gap-3">
             <div className="flex items-baseline gap-3 min-w-0">
@@ -614,24 +827,114 @@ function PageViewer({
             </div>
           </div>
 
-          {/* Real PDF page preview — rendered on demand via PyMuPDF. */}
-          <div className="flex-1 px-6 py-6 flex items-center justify-center bg-amber-50/30 min-h-[400px]">
-            {activePage ? (
-              <div className="bg-card border border-border shadow-sm rounded overflow-hidden">
-                <AuthImage
-                  key={activePage.page_id}
-                  path={`/api/v1/apps/loan-onboarding/packages/${packageId}/pages/${activePage.page_id}/image`}
-                  orgId={orgId}
-                  alt={`Page ${activePage.page_number}`}
-                  className="block max-h-[520px] max-w-full w-auto h-auto"
-                />
+          {/* Real PDF page preview — rendered on demand via PyMuPDF.
+              Wrapper is `relative` so the floating zoom controls anchor to
+              its bottom-right corner; the inner div is the actual scroll
+              container (overflow-auto) for zoomed pages. Container height
+              is viewport-relative so the preview adapts to screen size,
+              and "fit" mode scales the image to fully fit it. */}
+          <div
+            className="flex-1 relative bg-amber-50/30"
+            style={{
+              // Adaptive height: roughly 65vh, capped between 400 and 720
+              // so it always reserves a sensible vertical chunk regardless
+              // of monitor resolution.
+              height: "clamp(400px, 65vh, 720px)",
+            }}
+            data-testid="page-preview-container"
+          >
+            <div className="absolute inset-0 overflow-auto">
+              {activePage ? (
+                zoom === "fit" ? (
+                  <div className="absolute inset-0 flex items-center justify-center p-4">
+                    <div className="bg-card border border-border shadow-sm rounded overflow-hidden max-h-full max-w-full">
+                      <AuthImage
+                        key={activePage.page_id}
+                        path={`/api/v1/apps/loan-onboarding/packages/${packageId}/pages/${activePage.page_id}/image`}
+                        orgId={orgId}
+                        alt={`Page ${activePage.page_number}`}
+                        className="block max-h-full max-w-full w-auto h-auto"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 inline-block">
+                    <div className="bg-card border border-border shadow-sm rounded overflow-hidden">
+                      <AuthImage
+                        key={activePage.page_id}
+                        path={`/api/v1/apps/loan-onboarding/packages/${packageId}/pages/${activePage.page_id}/image`}
+                        orgId={orgId}
+                        alt={`Page ${activePage.page_number}`}
+                        className="block w-auto"
+                        // 800px ≈ "100%" anchor (a US-Letter render at DPI=100
+                        // is ~830px tall). Each zoom step scales relative to
+                        // that, so 200% ≈ 1600px, 50% ≈ 400px.
+                        style={{ height: `${800 * zoom}px` }}
+                      />
+                    </div>
+                  </div>
+                )
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground italic">
+                  Select a page from the left.
+                </div>
+              )}
+            </div>
+
+            {/* Floating zoom controls anchored to the wrapper corner so the
+                scrolling image inside never moves them offscreen. */}
+            {activePage && (
+              <div className="absolute bottom-3 right-3 z-10">
+                <ZoomControls zoom={zoom} onChange={setZoom} />
               </div>
-            ) : (
-              <div className="text-xs text-muted-foreground italic">
-                Select a page from the left.
+            )}
+
+            {/* Drop targets overlay — only rendered while a thumb is being
+                dragged. Positioned `absolute inset-0` over the preview so
+                the layout never reflows (the previous inline placements
+                shifted the source thumbnail out from under the cursor on
+                drag start). The left thumbnail column stays anchored, so
+                the user can drag straight across. Two groups: doc-type
+                targets + role targets; `handleDragEnd` branches on `kind`. */}
+            {draggingPageId && (
+              <div
+                className="absolute inset-0 z-20 bg-amber-50/95 backdrop-blur-sm overflow-y-auto p-4 space-y-4"
+                data-testid="doctype-drop-strip"
+              >
+                {moveOptions.length > 0 && (
+                  <div>
+                    <div className="font-mono text-[9px] tracking-[0.15em] text-amber-900 uppercase mb-2">
+                      Drop on a doc type to move
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {moveOptions.map((dt) => (
+                        <DocTypeDropZone
+                          key={dt}
+                          docType={dt}
+                          isActive={!!draggingPageId}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div data-testid="role-drop-strip">
+                  <div className="font-mono text-[9px] tracking-[0.15em] text-amber-900 uppercase mb-2">
+                    Or set page role within {currentLabel}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {ROLE_OPTIONS.map((role) => (
+                      <RoleDropZone
+                        key={role}
+                        role={role}
+                        isActive={!!draggingPageId}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
           </div>
+
 
           {/* Move action bar */}
           {activePage && (() => {
@@ -794,8 +1097,357 @@ function PageViewer({
 
       <div className="mt-2 flex items-center gap-1.5 text-[10px] text-muted-foreground">
         <AlertCircle className="h-3 w-3" />
-        Move targets include every doc type configured for this package.
+        Drag a thumbnail onto a doc type to move it, or onto a role to
+        re-role it within this stack (promoting to <em>first page</em>{" "}
+        splits the stack here).
       </div>
+    </div>
+    {/* Floating drag preview — without this the source thumb just dims
+        in place, which reads as "drag isn't working" to most users.
+        We portal a small chip showing the page number being moved. */}
+    <DragOverlay dropAnimation={null}>
+      {draggingPageId ? (
+        <div className="rounded-md border border-amber-400 bg-amber-100 px-3 py-1.5 shadow-lg text-xs font-mono tabular-nums text-amber-900 cursor-grabbing">
+          Moving page{" "}
+          {pages.find((p) => p.page_id === draggingPageId)?.page_number ?? "?"}
+        </div>
+      ) : null}
+    </DragOverlay>
+    </DndContext>
+  );
+}
+
+/** Discrete zoom levels for the page preview. Picked to mirror typical
+ *  PDF-viewer presets (50/75/100/125/150/200/300%) without being overwhelming. */
+const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3] as const;
+
+function ZoomControls({
+  zoom,
+  onChange,
+}: {
+  zoom: number | "fit";
+  onChange: (z: number | "fit") => void;
+}) {
+  const stepIndex =
+    typeof zoom === "number" ? ZOOM_STEPS.indexOf(zoom as (typeof ZOOM_STEPS)[number]) : -1;
+  const canZoomIn =
+    zoom === "fit" || (stepIndex >= 0 && stepIndex < ZOOM_STEPS.length - 1);
+  const canZoomOut = zoom !== "fit";
+
+  const zoomIn = () => {
+    if (zoom === "fit") return onChange(1);
+    if (stepIndex >= 0 && stepIndex < ZOOM_STEPS.length - 1) {
+      onChange(ZOOM_STEPS[stepIndex + 1]);
+    }
+  };
+  const zoomOut = () => {
+    if (zoom === "fit") return;
+    if (stepIndex <= 0) return onChange("fit");
+    onChange(ZOOM_STEPS[stepIndex - 1]);
+  };
+
+  const label = zoom === "fit" ? "Fit" : `${Math.round((zoom as number) * 100)}%`;
+
+  return (
+    <div
+      className="inline-flex items-center gap-0.5 rounded-md border border-border bg-card/95 backdrop-blur shadow-sm"
+      data-testid="page-zoom-controls"
+    >
+      <button
+        type="button"
+        onClick={zoomOut}
+        disabled={!canZoomOut}
+        className="p-1.5 rounded-l-md hover:bg-muted/60 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        aria-label="Zoom out"
+        data-testid="page-zoom-out"
+      >
+        <ZoomOut className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("fit")}
+        className={cn(
+          "px-2 py-1 text-[10px] font-mono tabular-nums hover:bg-muted/60 transition-colors min-w-[44px] text-center",
+          zoom === "fit" && "bg-amber-50 text-amber-900"
+        )}
+        aria-label="Fit page to screen"
+        data-testid="page-zoom-fit"
+      >
+        {label}
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange(1)}
+        className="p-1.5 hover:bg-muted/60 transition-colors"
+        aria-label="Reset zoom to 100%"
+        data-testid="page-zoom-reset"
+      >
+        <Maximize2 className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={zoomIn}
+        disabled={!canZoomIn}
+        className="p-1.5 rounded-r-md hover:bg-muted/60 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        aria-label="Zoom in"
+        data-testid="page-zoom-in"
+      >
+        <ZoomIn className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Draggable thumbnail rendering the real `/thumb` image from the backend.
+ * The button still functions as a click target to switch the active page —
+ * dnd-kit's PointerSensor with `distance: 5` keeps simple clicks intact.
+ */
+function DraggableThumb({
+  orgId,
+  packageId,
+  pg,
+  isActive,
+  override,
+  isDraggingThis,
+  onClick,
+}: {
+  orgId: string;
+  packageId: string;
+  pg: LoanStackPage;
+  isActive: boolean;
+  override: LoanPageOverride | undefined;
+  isDraggingThis: boolean;
+  onClick: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `lo-page-${pg.page_id}`,
+    data: { pageId: pg.page_id, pageNumber: pg.page_number },
+  });
+
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      onClick={onClick}
+      {...listeners}
+      {...attributes}
+      className={cn(
+        "w-full flex items-center gap-2 px-2 py-2 text-left border-b border-border/60 transition-colors border-l-2 cursor-grab active:cursor-grabbing",
+        isActive
+          ? "bg-amber-50/70 border-l-amber-500"
+          : "hover:bg-muted/40 border-l-transparent",
+        (isDragging || isDraggingThis) && "opacity-40"
+      )}
+      data-testid={`thumb-${pg.page_number}`}
+    >
+      <div
+        className={cn(
+          "w-9 h-12 shrink-0 border rounded overflow-hidden",
+          override
+            ? "bg-amber-50 border-amber-300"
+            : "bg-muted/40 border-border/60"
+        )}
+      >
+        <AuthImage
+          path={`/api/v1/apps/loan-onboarding/packages/${packageId}/pages/${pg.page_id}/thumb`}
+          orgId={orgId}
+          alt={`Page ${pg.page_number} thumbnail`}
+          className="w-full h-full object-cover"
+        />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="font-mono text-[11px] tabular-nums">
+          p. {pg.page_number}
+        </div>
+        {pg.page_role && (
+          <div className="font-mono text-[9px] text-muted-foreground uppercase tracking-[0.1em] truncate">
+            {pg.page_role.replace(/_/g, " ")}
+          </div>
+        )}
+        {override && (
+          <div className="font-mono text-[9px] text-amber-700 truncate mt-0.5">
+            →{" "}
+            {LOAN_DOC_TYPE_LABELS[override.assigned_doc_type] ??
+              override.assigned_doc_type}
+          </div>
+        )}
+      </div>
+    </button>
+  );
+}
+
+/**
+ * Filmstrip-mode thumbnail — card layout (image on top, label below) sized
+ * for horizontal scrolling. Same drag mechanics as `DraggableThumb`; only
+ * the visual presentation differs. The active variant accepts a ref so the
+ * parent can call `scrollIntoView` to keep the active page visible when
+ * the strip overflows horizontally.
+ */
+function FilmstripThumb({
+  orgId,
+  packageId,
+  pg,
+  isActive,
+  override,
+  isDraggingThis,
+  activeRef,
+  onClick,
+}: {
+  orgId: string;
+  packageId: string;
+  pg: LoanStackPage;
+  isActive: boolean;
+  override: LoanPageOverride | undefined;
+  isDraggingThis: boolean;
+  activeRef?: React.MutableRefObject<HTMLButtonElement | null>;
+  onClick: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `lo-page-${pg.page_id}`,
+    data: { pageId: pg.page_id, pageNumber: pg.page_number },
+  });
+
+  // Compose dnd-kit's setNodeRef with the parent-supplied activeRef so the
+  // active thumb can both participate in drag-and-drop AND be programmatic-
+  // ally scrolled into view.
+  const setRefs = (node: HTMLButtonElement | null) => {
+    setNodeRef(node);
+    if (activeRef) activeRef.current = node;
+  };
+
+  return (
+    <button
+      ref={setRefs}
+      type="button"
+      onClick={onClick}
+      {...listeners}
+      {...attributes}
+      className={cn(
+        "shrink-0 w-20 flex flex-col items-stretch gap-1 p-1 rounded-md border-2 transition-colors cursor-grab active:cursor-grabbing",
+        isActive
+          ? "border-amber-500 bg-amber-50/70"
+          : "border-transparent hover:bg-muted/40",
+        (isDragging || isDraggingThis) && "opacity-40"
+      )}
+      data-testid={`filmstrip-thumb-${pg.page_number}`}
+    >
+      <div
+        className={cn(
+          "w-full aspect-[3/4] border rounded overflow-hidden",
+          override
+            ? "bg-amber-50 border-amber-300"
+            : "bg-muted/40 border-border/60"
+        )}
+      >
+        <AuthImage
+          path={`/api/v1/apps/loan-onboarding/packages/${packageId}/pages/${pg.page_id}/thumb`}
+          orgId={orgId}
+          alt={`Page ${pg.page_number} thumbnail`}
+          className="w-full h-full object-cover"
+        />
+      </div>
+      <div className="font-mono text-[10px] tabular-nums text-center">
+        p. {pg.page_number}
+      </div>
+      {pg.page_role && (
+        <div className="font-mono text-[8px] uppercase tracking-[0.05em] text-muted-foreground text-center truncate">
+          {pg.page_role.replace(/_/g, " ")}
+        </div>
+      )}
+      {override && (
+        <div className="font-mono text-[8px] text-amber-700 text-center truncate">
+          →{" "}
+          {LOAN_DOC_TYPE_LABELS[override.assigned_doc_type] ??
+            override.assigned_doc_type}
+        </div>
+      )}
+    </button>
+  );
+}
+
+/** Page roles surfaced as drop targets in the role drop strip. Order matches
+ *  the natural reading order of a multi-page document. */
+const ROLE_OPTIONS = [
+  "first_page",
+  "continuation",
+  "last_page",
+  "signature_page",
+] as const satisfies readonly LoanPageRole[];
+
+const ROLE_LABELS: Record<LoanPageRole, string> = {
+  first_page: "First Page",
+  continuation: "Continuation",
+  last_page: "Last Page",
+  signature_page: "Signature",
+};
+
+/**
+ * One drop target for a page role. Drops here re-role the page within the
+ * current stack's doc type (i.e. flip `page_role_override` only). On drop
+ * the parent's `handleDragEnd` reads `kind: "role"` from `data.current` and
+ * dispatches `onChangeRole`.
+ */
+function RoleDropZone({
+  role,
+  isActive,
+}: {
+  role: LoanPageRole;
+  isActive: boolean;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `lo-role-${role}`,
+    data: { kind: "role", role },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "rounded-md border-2 border-dashed px-3 py-2 text-xs font-medium transition-colors text-center",
+        isOver
+          ? "border-sky-500 bg-sky-100 text-sky-900"
+          : isActive
+            ? "border-sky-300/70 bg-sky-50 text-sky-800"
+            : "border-border/60 bg-muted/30 text-muted-foreground"
+      )}
+      data-testid={`role-drop-${role}`}
+    >
+      {ROLE_LABELS[role]}
+    </div>
+  );
+}
+
+/**
+ * One drop target for a doc type. Highlights when a thumb is being dragged
+ * over it; on drop the parent's `handleDragEnd` reads the `docType` from
+ * `data.current` and dispatches an override.
+ */
+function DocTypeDropZone({
+  docType,
+  isActive,
+}: {
+  docType: string;
+  isActive: boolean;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `lo-doctype-${docType}`,
+    data: { kind: "doctype", docType },
+  });
+  const label = LOAN_DOC_TYPE_LABELS[docType] ?? docType;
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "rounded-md border-2 border-dashed px-3 py-2 text-xs font-medium transition-colors text-center",
+        isOver
+          ? "border-amber-500 bg-amber-100 text-amber-900"
+          : isActive
+            ? "border-amber-300/70 bg-amber-50 text-amber-800"
+            : "border-border/60 bg-muted/30 text-muted-foreground"
+      )}
+      data-testid={`doctype-drop-${docType}`}
+    >
+      {label}
     </div>
   );
 }

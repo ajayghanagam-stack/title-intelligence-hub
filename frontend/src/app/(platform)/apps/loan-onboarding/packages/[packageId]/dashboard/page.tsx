@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -17,13 +17,16 @@ import { useOrgSlug } from "@/hooks/use-org-slug";
 import { useLoanPackage } from "@/hooks/use-loan-packages";
 import { useLoanPipeline } from "@/hooks/use-loan-pipeline";
 import {
+  useExtractionOverridesQuery,
+  useExtractionsQuery,
+  useInvalidateLoanPackage,
+  usePageOverridesQuery,
+  useStacksQuery,
+} from "@/hooks/use-loan-package-data";
+import {
   deleteExtractionOverride,
   fetchFinalPacketPdfBlob,
   fetchPerStackZipBlob,
-  getExtractions,
-  getStacks,
-  listExtractionOverrides,
-  listPageOverrides,
   upsertExtractionOverride,
 } from "@/lib/loan-onboarding/api";
 import {
@@ -39,7 +42,6 @@ import {
 } from "@/components/loan-onboarding/extraction-workbench";
 import type {
   LoanExtractionOverride,
-  LoanPageOverride,
   LoanStack,
   LoanStackExtraction,
 } from "@/lib/loan-onboarding/types";
@@ -154,10 +156,35 @@ export default function LoanPackageDashboardPage() {
     pkg ? !TERMINAL.has(pkg.status) : true
   );
 
-  const [stacks, setStacks] = useState<LoanStack[]>([]);
-  const [overrides, setOverrides] = useState<LoanPageOverride[]>([]);
-  const [extractions, setExtractions] = useState<LoanStackExtraction[]>([]);
-  const [summaryLoading, setSummaryLoading] = useState(true);
+  // React Query — shared cache with the Results tab so cross-tab navigation
+  // is instant within `staleTime`.
+  const invalidate = useInvalidateLoanPackage();
+  const stacksQ = useStacksQuery(currentOrgId, packageId);
+  const pageOverridesQ = usePageOverridesQuery(currentOrgId, packageId);
+  const extractionsQ = useExtractionsQuery(currentOrgId, packageId);
+  const extractionOverridesQ = useExtractionOverridesQuery(
+    currentOrgId,
+    packageId
+  );
+
+  const stacks = useMemo<LoanStack[]>(
+    () => stacksQ.data ?? [],
+    [stacksQ.data]
+  );
+  const overrides = useMemo(
+    () => pageOverridesQ.data ?? [],
+    [pageOverridesQ.data]
+  );
+  const extractions = useMemo<LoanStackExtraction[]>(
+    () => extractionsQ.data ?? [],
+    [extractionsQ.data]
+  );
+  const summaryLoading =
+    stacksQ.isLoading ||
+    pageOverridesQ.isLoading ||
+    extractionsQ.isLoading ||
+    extractionOverridesQ.isLoading;
+
   // Reviewed-value editing state — drafts, saved values (hydrated from the
   // backend `lo_extraction_overrides` table), per-field errors, and an
   // in-flight set so we can disable Save/Reset while the request is open.
@@ -174,38 +201,30 @@ export default function LoanPackageDashboardPage() {
   const [zipDownloading, setZipDownloading] = useState(false);
   const [zipError, setZipError] = useState<string | null>(null);
 
+  // Seed `fieldSaved` from the persisted-overrides query whenever it changes
+  // (load + invalidation), so re-saved values reappear with the green Saved
+  // badge after a refresh. Local edits in `fieldEdits` always win at render.
+  const persistedOverrides = extractionOverridesQ.data;
   useEffect(() => {
-    if (!currentOrgId || !packageId) return;
-    setSummaryLoading(true);
-    Promise.all([
-      getStacks(currentOrgId, packageId).catch(() => [] as LoanStack[]),
-      listPageOverrides(currentOrgId, packageId).catch(
-        () => [] as LoanPageOverride[]
-      ),
-      getExtractions(currentOrgId, packageId)
-        .then((r) => r.stacks)
-        .catch(() => [] as LoanStackExtraction[]),
-      listExtractionOverrides(currentOrgId, packageId).catch(
-        () => [] as LoanExtractionOverride[]
-      ),
-    ])
-      .then(([s, o, ex, fieldOverrides]) => {
-        setStacks(s);
-        setOverrides(o);
-        setExtractions(ex);
-        // Seed `fieldSaved` from persisted overrides so re-saved values
-        // re-appear with the green Saved badge after a refresh.
-        setFieldSaved(
-          Object.fromEntries(
-            fieldOverrides.map((o) => [
-              `${o.stack_id}::${o.doc_type}::${o.field_name}`,
-              o.value,
-            ])
-          )
-        );
-      })
-      .finally(() => setSummaryLoading(false));
-  }, [currentOrgId, packageId, pipeline?.status]);
+    if (!persistedOverrides) return;
+    setFieldSaved(
+      Object.fromEntries(
+        persistedOverrides.map((o) => [
+          `${o.stack_id}::${o.doc_type}::${o.field_name}`,
+          o.value,
+        ])
+      )
+    );
+  }, [persistedOverrides]);
+
+  // Pipeline transition → terminal: blow away cached pre-completion data so
+  // the dashboard pulls the final stacks/overrides/extractions.
+  const pipelineStatus = pipeline?.status;
+  useEffect(() => {
+    if (pipelineStatus && TERMINAL.has(pipelineStatus)) {
+      void invalidate(currentOrgId, packageId);
+    }
+  }, [pipelineStatus, invalidate, currentOrgId, packageId]);
 
   if (loading) {
     return (

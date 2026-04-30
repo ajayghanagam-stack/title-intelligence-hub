@@ -241,6 +241,22 @@ export interface LoanPageOverrideResult {
   rebuild: LoanOverrideRebuildSummary;
 }
 
+export interface LoanPageOverrideBatchItem {
+  page_id: string;
+  assigned_doc_type: string;
+  page_role_override?: LoanPageRole | null;
+  note?: string | null;
+}
+
+export interface LoanPageOverrideBatchRequest {
+  overrides: LoanPageOverrideBatchItem[];
+}
+
+export interface LoanPageOverrideBatchResult {
+  overrides: LoanPageOverride[];
+  rebuild: LoanOverrideRebuildSummary;
+}
+
 // ── Field extraction (Section D output) ──────────────────────────────────
 
 export type LoanExtractionFieldStatus =
