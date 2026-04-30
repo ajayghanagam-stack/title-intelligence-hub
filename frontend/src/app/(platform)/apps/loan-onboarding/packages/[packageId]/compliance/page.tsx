@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -15,10 +15,10 @@ import {
 import { useOrg } from "@/hooks/use-org";
 import { useLoanPackage } from "@/hooks/use-loan-packages";
 import {
-  evaluateComplianceApi,
-  getComplianceRun,
-  updateComplianceContext,
-} from "@/lib/loan-onboarding/api";
+  useInvalidateCompliance,
+  useLoanCompliance,
+} from "@/hooks/use-loan-data";
+import { updateComplianceContext } from "@/lib/loan-onboarding/api";
 import {
   adaptComplianceReport,
   type ComplianceReport,
@@ -58,30 +58,25 @@ export default function CompliancePage() {
   const params = useParams();
   const packageId = params.packageId as string;
   const { currentOrgId } = useOrg();
-  const { package: pkg, loading: pkgLoading, refetch: refetchPkg } =
-    useLoanPackage(packageId);
+  const { package: pkg, loading: pkgLoading } = useLoanPackage(packageId);
   const [persona, setPersona] = useState<Persona>("lo");
   const [contextModalOpen, setContextModalOpen] = useState(false);
 
-  const [report, setReport] = useState<ComplianceReport | null>(null);
-  const [loading, setLoading] = useState(true);
+  // GET /compliance — backend evaluates-if-missing-or-returns-cached. The
+  // previous version POSTed /compliance/evaluate inside a useEffect that had
+  // `pkg` in its deps, so every package refetch (e.g. tab navigation) re-ran
+  // a full evaluation against unchanged inputs. Switching to the cached GET
+  // makes Compliance tab loads paint instantly on repeat visits.
+  const packageStatus = pkg?.status ?? null;
+  const complianceQuery = useLoanCompliance({ packageId, packageStatus });
+  const invalidateCompliance = useInvalidateCompliance(packageId);
 
-  const refetchReport = useCallback(async () => {
-    if (!currentOrgId || !packageId) return;
-    setLoading(true);
-    try {
-      const payload = await evaluateComplianceApi(currentOrgId, packageId);
-      setReport(adaptComplianceReport(payload, pkg ?? null));
-    } catch {
-      setReport(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [currentOrgId, packageId, pkg]);
+  const report: ComplianceReport | null = useMemo(() => {
+    if (!complianceQuery.data) return null;
+    return adaptComplianceReport(complianceQuery.data, pkg ?? null);
+  }, [complianceQuery.data, pkg]);
 
-  useEffect(() => {
-    void refetchReport();
-  }, [refetchReport]);
+  const loading = complianceQuery.isLoading;
 
   if (pkgLoading || loading) {
     return (
@@ -124,21 +119,14 @@ export default function CompliancePage() {
           initial={pkg.loan_context ?? DEFAULT_LOAN_CONTEXT}
           onClose={() => setContextModalOpen(false)}
           onSaved={async () => {
-            // Modal stays mounted with "Saving…" button text until this
-            // resolves. Closing the modal is the modal's job (handleSave →
-            // onClose) once we return.
-            //
             // Backend's PATCH /compliance/context already persisted a fresh
             // LOComplianceRun against the new context (compliance_service.
-            // update_loan_context calls evaluate(persist=True)). So we read
-            // that run via GET — no need to POST /evaluate and write a
-            // second redundant run.
-            if (!currentOrgId) return;
-            const [freshPkg, payload] = await Promise.all([
-              refetchPkg(),
-              getComplianceRun(currentOrgId, packageId),
-            ]);
-            setReport(adaptComplianceReport(payload, freshPkg ?? null));
+            // update_loan_context calls evaluate(persist=True)). Invalidate
+            // both the package detail (for `loan_context`) and the compliance
+            // run cache; the next render reads the persisted run via the
+            // useLoanCompliance hook above without an extra refetch wired
+            // up here.
+            await invalidateCompliance();
           }}
         />
       )}

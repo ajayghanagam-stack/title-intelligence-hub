@@ -42,7 +42,13 @@ export function useLoanPipeline(packageId: string, polling = true) {
 
   useEffect(() => {
     if (!polling || !currentOrgId) {
-      if (!polling) fetchStatus();
+      // When polling is disabled (terminal package) we used to one-shot fetch
+      // /pipeline anyway, which adds 200-500ms to every tab navigation on
+      // already-completed packages. The pipeline status when terminal is
+      // identical to `pkg.status`/`pkg.pipeline_stage` from useLoanPackage,
+      // so skipping this network call is safe — callers already fall back to
+      // package fields when `pipeline` is null.
+      setLoading(false);
       return;
     }
 

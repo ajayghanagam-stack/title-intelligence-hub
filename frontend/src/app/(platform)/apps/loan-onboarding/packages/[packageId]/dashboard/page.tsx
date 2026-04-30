@@ -17,14 +17,15 @@ import { useOrgSlug } from "@/hooks/use-org-slug";
 import { useLoanPackage } from "@/hooks/use-loan-packages";
 import { useLoanPipeline } from "@/hooks/use-loan-pipeline";
 import {
-  deleteExtractionOverride,
+  useExtractionOverrideMutations,
+  useLoanExtractionOverrides,
+  useLoanExtractions,
+  useLoanPageOverrides,
+  useLoanStacks,
+} from "@/hooks/use-loan-data";
+import {
   fetchFinalPacketPdfBlob,
   fetchPerStackZipBlob,
-  getExtractions,
-  getStacks,
-  listExtractionOverrides,
-  listPageOverrides,
-  upsertExtractionOverride,
 } from "@/lib/loan-onboarding/api";
 import {
   buildExtractionCSV,
@@ -39,7 +40,6 @@ import {
 } from "@/components/loan-onboarding/extraction-workbench";
 import type {
   LoanExtractionOverride,
-  LoanPageOverride,
   LoanStack,
   LoanStackExtraction,
 } from "@/lib/loan-onboarding/types";
@@ -154,10 +154,6 @@ export default function LoanPackageDashboardPage() {
     pkg ? !TERMINAL.has(pkg.status) : true
   );
 
-  const [stacks, setStacks] = useState<LoanStack[]>([]);
-  const [overrides, setOverrides] = useState<LoanPageOverride[]>([]);
-  const [extractions, setExtractions] = useState<LoanStackExtraction[]>([]);
-  const [summaryLoading, setSummaryLoading] = useState(true);
   // Reviewed-value editing state — drafts, saved values (hydrated from the
   // backend `lo_extraction_overrides` table), per-field errors, and an
   // in-flight set so we can disable Save/Reset while the request is open.
@@ -174,38 +170,45 @@ export default function LoanPackageDashboardPage() {
   const [zipDownloading, setZipDownloading] = useState(false);
   const [zipError, setZipError] = useState<string | null>(null);
 
+  // Shared cache — same query keys as the Results tab so navigating between
+  // tabs paints from the warm cache (terminal packages → staleTime: Infinity).
+  const packageStatus = pkg?.status ?? null;
+  const stacksQuery = useLoanStacks({ packageId, packageStatus });
+  const pageOverridesQuery = useLoanPageOverrides({ packageId, packageStatus });
+  const extractionsQuery = useLoanExtractions({ packageId, packageStatus });
+  const extractionOverridesQuery = useLoanExtractionOverrides({
+    packageId,
+    packageStatus,
+  });
+  const extractionOverrides = extractionOverridesQuery.data;
+  const stacks = stacksQuery.data ?? [];
+  const overrides = pageOverridesQuery.data ?? [];
+  const extractions = extractionsQuery.data ?? [];
+  const summaryLoading =
+    stacksQuery.isLoading ||
+    pageOverridesQuery.isLoading ||
+    extractionsQuery.isLoading ||
+    extractionOverridesQuery.isLoading;
+
+  // Mutation hooks — replace the inline upsert/delete calls in saveDraft /
+  // resetDraft so the extraction-overrides cache invalidates cleanly.
+  const overrideMutations = useExtractionOverrideMutations(packageId);
+
+  // Seed `fieldSaved` whenever the persisted override list refreshes. We
+  // only sync on identity change of the array — the workbench owns local
+  // edits via fieldEdits, and saveDraft/resetDraft mutate that map directly,
+  // so this effect just hydrates from the server snapshot.
   useEffect(() => {
-    if (!currentOrgId || !packageId) return;
-    setSummaryLoading(true);
-    Promise.all([
-      getStacks(currentOrgId, packageId).catch(() => [] as LoanStack[]),
-      listPageOverrides(currentOrgId, packageId).catch(
-        () => [] as LoanPageOverride[]
-      ),
-      getExtractions(currentOrgId, packageId)
-        .then((r) => r.stacks)
-        .catch(() => [] as LoanStackExtraction[]),
-      listExtractionOverrides(currentOrgId, packageId).catch(
-        () => [] as LoanExtractionOverride[]
-      ),
-    ])
-      .then(([s, o, ex, fieldOverrides]) => {
-        setStacks(s);
-        setOverrides(o);
-        setExtractions(ex);
-        // Seed `fieldSaved` from persisted overrides so re-saved values
-        // re-appear with the green Saved badge after a refresh.
-        setFieldSaved(
-          Object.fromEntries(
-            fieldOverrides.map((o) => [
-              `${o.stack_id}::${o.doc_type}::${o.field_name}`,
-              o.value,
-            ])
-          )
-        );
-      })
-      .finally(() => setSummaryLoading(false));
-  }, [currentOrgId, packageId, pipeline?.status]);
+    if (!extractionOverrides) return;
+    setFieldSaved(
+      Object.fromEntries(
+        extractionOverrides.map((o) => [
+          `${o.stack_id}::${o.doc_type}::${o.field_name}`,
+          o.value,
+        ])
+      )
+    );
+  }, [extractionOverrides]);
 
   if (loading) {
     return (
@@ -455,7 +458,7 @@ export default function LoanPackageDashboardPage() {
     }
     setFieldBusy((prev) => ({ ...prev, [row.key]: true }));
     try {
-      await upsertExtractionOverride(currentOrgId, packageId, {
+      await overrideMutations.upsert.mutateAsync({
         doc_type: row.docType,
         field_name: row.fieldName,
         stack_id: row.stackId,
@@ -492,7 +495,7 @@ export default function LoanPackageDashboardPage() {
     if (wasPersisted) {
       setFieldBusy((prev) => ({ ...prev, [row.key]: true }));
       try {
-        await deleteExtractionOverride(currentOrgId, packageId, {
+        await overrideMutations.remove.mutateAsync({
           doc_type: row.docType,
           field_name: row.fieldName,
           stack_id: row.stackId,

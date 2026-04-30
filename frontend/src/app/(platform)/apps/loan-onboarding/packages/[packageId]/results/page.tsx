@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -17,22 +18,21 @@ import { useOrg } from "@/hooks/use-org";
 import { useOrgSlug } from "@/hooks/use-org-slug";
 import { useLoanPackage } from "@/hooks/use-loan-packages";
 import { useLoanPipeline } from "@/hooks/use-loan-pipeline";
+import {
+  loanDataKeys,
+  useLoanExtractions,
+  useLoanPageOverrides,
+  useLoanStacks,
+  useLoanValidationResults,
+} from "@/hooks/use-loan-data";
 import { PackageStatusBadge } from "@/components/loan-onboarding/package-status-badge";
 import { StackExpanded } from "@/components/loan-onboarding/stack-expanded";
 import { blendOverallNoSplit } from "@/components/loan-onboarding/confidence-breakdown";
-import {
-  getExtractions,
-  getStacks,
-  getValidationResults,
-  listPageOverrides,
-} from "@/lib/loan-onboarding/api";
 import { LOAN_DOC_TYPE_LABELS } from "@/lib/loan-onboarding/constants";
 import { cn } from "@/lib/utils";
 import type {
   LoanStack,
-  LoanStackExtraction,
   LoanValidationResult,
-  LoanPageOverride,
 } from "@/lib/loan-onboarding/types";
 
 const TERMINAL = new Set(["completed", "failed", "awaiting_review"]);
@@ -89,43 +89,63 @@ export default function LoanPackageResultsPage() {
     }
   }, [pipelineStatus, refetchPkg]);
 
-  const [stacks, setStacks] = useState<LoanStack[]>([]);
-  const [validation, setValidation] = useState<LoanValidationResult[]>([]);
-  const [overrides, setOverrides] = useState<LoanPageOverride[]>([]);
-  const [extractions, setExtractions] = useState<LoanStackExtraction[]>([]);
-  const [summaryLoading, setSummaryLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  // Bumped after each page-override move/undo so the effect below re-runs and
-  // stacks/validation/overrides are re-fetched with the latest rebuild output.
-  const [refreshToken, setRefreshToken] = useState(0);
 
   const toggleExpanded = (stackId: string) =>
     setExpanded((prev) => ({ ...prev, [stackId]: !prev[stackId] }));
 
-  useEffect(() => {
-    if (!currentOrgId || !packageId) return;
-    setSummaryLoading(true);
-    Promise.all([
-      getStacks(currentOrgId, packageId).catch(() => [] as LoanStack[]),
-      getValidationResults(currentOrgId, packageId).catch(
-        () => [] as LoanValidationResult[]
-      ),
-      listPageOverrides(currentOrgId, packageId).catch(
-        () => [] as LoanPageOverride[]
-      ),
-      getExtractions(currentOrgId, packageId)
-        .then((r) => r.stacks)
-        .catch(() => [] as LoanStackExtraction[]),
-    ])
-      .then(([s, v, o, ex]) => {
-        setStacks(s);
-        setValidation(v);
-        setOverrides(o);
-        setExtractions(ex);
-      })
-      .finally(() => setSummaryLoading(false));
-  }, [currentOrgId, packageId, pipeline?.status, refreshToken]);
+  // All four reads share one cache (see use-loan-data.ts). On a terminal
+  // package, staleTime=Infinity so tab navigation paints from cache without
+  // any network. StackExpanded mutations (Move-to / Save) invalidate the
+  // relevant keys via usePageOverrideMutations / useExtractionOverrideMutations.
+  const packageStatus = pkg?.status ?? null;
+  const stacksQuery = useLoanStacks({ packageId, packageStatus });
+  const validationQuery = useLoanValidationResults({ packageId, packageStatus });
+  const pageOverridesQuery = useLoanPageOverrides({ packageId, packageStatus });
+  const extractionsQuery = useLoanExtractions({ packageId, packageStatus });
+
+  const stacks = useMemo(() => stacksQuery.data ?? [], [stacksQuery.data]);
+  const validation = useMemo(
+    () => validationQuery.data ?? [],
+    [validationQuery.data]
+  );
+  const overrides = useMemo(
+    () => pageOverridesQuery.data ?? [],
+    [pageOverridesQuery.data]
+  );
+  const extractions = useMemo(
+    () => extractionsQuery.data ?? [],
+    [extractionsQuery.data]
+  );
+  const summaryLoading =
+    stacksQuery.isLoading ||
+    validationQuery.isLoading ||
+    pageOverridesQuery.isLoading ||
+    extractionsQuery.isLoading;
+
+  // StackExpanded calls onMutated() after a successful Move-to / Undo. The
+  // override mutates server-side state (rebuild can shift stacks, validation,
+  // and extractions), so invalidate every key that depends on the rebuild.
+  const queryClient = useQueryClient();
+  const handleMutated = useCallback(() => {
+    if (!currentOrgId) return;
+    queryClient.invalidateQueries({
+      queryKey: loanDataKeys.stacks(currentOrgId, packageId),
+    });
+    queryClient.invalidateQueries({
+      queryKey: loanDataKeys.validation(currentOrgId, packageId),
+    });
+    queryClient.invalidateQueries({
+      queryKey: loanDataKeys.pageOverrides(currentOrgId, packageId),
+    });
+    queryClient.invalidateQueries({
+      queryKey: loanDataKeys.extractions(currentOrgId, packageId),
+    });
+    queryClient.invalidateQueries({
+      queryKey: loanDataKeys.compliance(currentOrgId, packageId),
+    });
+  }, [currentOrgId, packageId, queryClient]);
 
   const overridesByPageId = useMemo(
     () => new Map(overrides.map((o) => [o.page_id, o])),
@@ -487,7 +507,7 @@ export default function LoanPackageResultsPage() {
                             ? extractionByStack.get(stack.id)
                             : null
                         }
-                        onMutated={() => setRefreshToken((n) => n + 1)}
+                        onMutated={handleMutated}
                       />
                     </div>
                   )}
