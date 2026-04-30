@@ -8,7 +8,9 @@ export AWS_PAGER=""
 # ============================================================================
 
 PREFIX="ti-hub-stage"
-REGION="us-east-1"
+# Region is env-overridable so the same script can target us-east-1 (legacy)
+# or ap-south-1 (Mumbai migration). Default keeps existing callers untouched.
+REGION="${REGION:-us-east-1}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -139,7 +141,13 @@ if aws rds describe-db-instances --region "$REGION" \
 fi
 
 # ── 7. Optional: Delete S3 ──────────────────────────────────────────────
-S3_BUCKET="${PREFIX}-storage-${ACCOUNT_ID}"
+# Region-aware bucket name — must match the suffix logic in setup.sh.
+case "$REGION" in
+  us-east-1)  BUCKET_REGION_SUFFIX="" ;;
+  ap-south-1) BUCKET_REGION_SUFFIX="-aps1" ;;
+  *)          BUCKET_REGION_SUFFIX="-${REGION//-/}" ;;
+esac
+S3_BUCKET="${PREFIX}-storage-${ACCOUNT_ID}${BUCKET_REGION_SUFFIX}"
 if aws s3api head-bucket --bucket "$S3_BUCKET" 2>/dev/null; then
   echo ""
   read -p "Delete S3 bucket '$S3_BUCKET' and ALL its contents? (yes/no): " CONFIRM_S3
