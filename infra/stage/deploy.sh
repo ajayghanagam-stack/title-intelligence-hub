@@ -8,7 +8,9 @@ set -euo pipefail
 # ============================================================================
 
 PREFIX="ti-hub-stage"
-REGION="us-east-1"
+# Region is env-overridable so the same script can target us-east-1 (legacy)
+# or ap-south-1 (Mumbai migration). Default keeps existing callers untouched.
+REGION="${REGION:-us-east-1}"
 TARGET="${1:-both}"
 KEY_FILE="${EC2_KEY_FILE:-$HOME/.ssh/${PREFIX}-key.pem}"
 EC2_USER="ec2-user"
@@ -47,13 +49,17 @@ SSH_CMD="ssh $SSH_OPTS ${EC2_USER}@${EC2_HOST}"
 START_TIME=$(date +%s)
 
 # ── 0. Ensure local and remote are in sync ────────────────────────────────
-log "Checking local/remote sync..."
-git fetch origin main --quiet
+# Stage deploys are not pinned to main — operators can deploy a feature branch
+# (e.g. stage-mumbai-migration) without disturbing prod CD on main. The branch
+# the operator is currently on becomes the deploy branch on the EC2 side.
+DEPLOY_BRANCH="${DEPLOY_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+log "Checking local/remote sync (branch: $DEPLOY_BRANCH)..."
+git fetch origin "$DEPLOY_BRANCH" --quiet
 LOCAL_SHA=$(git rev-parse HEAD)
-REMOTE_SHA=$(git rev-parse origin/main)
+REMOTE_SHA=$(git rev-parse "origin/$DEPLOY_BRANCH")
 if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
-  err "Local ($LOCAL_SHA) and remote ($REMOTE_SHA) are out of sync."
-  err "Commit and push your changes before deploying: git push origin main"
+  err "Local ($LOCAL_SHA) and origin/$DEPLOY_BRANCH ($REMOTE_SHA) are out of sync."
+  err "Commit and push your changes before deploying: git push origin $DEPLOY_BRANCH"
   exit 1
 fi
 if [ -n "$(git status --porcelain -- ':!backend/test.db' ':!backend/storage/' ':!backend/eval_reports/' ':!docs/')" ]; then
@@ -86,9 +92,21 @@ GCP_PROJECT=$(aws ssm get-parameter --region "$REGION" \
 GCP_SA_JSON=$(aws ssm get-parameter --region "$REGION" \
   --name "/${PREFIX}/gcp-sa-json" --with-decryption \
   --query "Parameter.Value" --output text 2>/dev/null || echo "")
-GCP_REGION="${GCP_REGION:-us-east1}"
+# Default GCP region (Vertex AI) tracks the AWS region. Override via env if needed.
+if [ -z "${GCP_REGION:-}" ]; then
+  case "$REGION" in
+    ap-south-1) GCP_REGION="asia-south1" ;;
+    *)          GCP_REGION="us-east1" ;;
+  esac
+fi
 
-S3_BUCKET="${PREFIX}-storage-$(aws sts get-caller-identity --query Account --output text)"
+# Region-aware bucket name — must match the suffix logic in setup.sh.
+case "$REGION" in
+  us-east-1)  BUCKET_REGION_SUFFIX="" ;;
+  ap-south-1) BUCKET_REGION_SUFFIX="-aps1" ;;
+  *)          BUCKET_REGION_SUFFIX="-${REGION//-/}" ;;
+esac
+S3_BUCKET="${PREFIX}-storage-$(aws sts get-caller-identity --query Account --output text)${BUCKET_REGION_SUFFIX}"
 
 # Determine Vertex AI settings
 VERTEX_AI_ENABLED="false"
@@ -113,6 +131,8 @@ ${VERTEX_ENV}
 STORAGE_PROVIDER=s3
 S3_BUCKET=${S3_BUCKET}
 S3_REGION=${REGION}
+AWS_REGION=${REGION}
+AWS_DEFAULT_REGION=${REGION}
 PIPELINE_BACKEND=temporal
 TEMPORAL_ADDRESS=temporal:7233
 TSA_TEMPORAL_TASK_QUEUE=title-search
@@ -137,8 +157,8 @@ else
 fi
 
 # ── 2. Pull latest code ───────────────────────────────────────────────────
-log "Pulling latest code on EC2..."
-$SSH_CMD "cd ${APP_DIR} && git fetch origin main && git reset --hard origin/main"
+log "Pulling $DEPLOY_BRANCH on EC2..."
+$SSH_CMD "cd ${APP_DIR} && git fetch origin $DEPLOY_BRANCH && git reset --hard origin/$DEPLOY_BRANCH"
 
 # ── 3. Build and start containers ─────────────────────────────────────────
 SERVICES=""

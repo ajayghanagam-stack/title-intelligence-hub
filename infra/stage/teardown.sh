@@ -8,7 +8,9 @@ export AWS_PAGER=""
 # ============================================================================
 
 PREFIX="ti-hub-stage"
-REGION="us-east-1"
+# Region is env-overridable so the same script can target us-east-1 (legacy)
+# or ap-south-1 (Mumbai migration). Default keeps existing callers untouched.
+REGION="${REGION:-us-east-1}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -90,26 +92,53 @@ if [ "$SG_ID" != "None" ] && [ -n "$SG_ID" ]; then
 fi
 
 # ── 4. Delete IAM Instance Profile & Role ────────────────────────────────
+# IAM is a GLOBAL resource — deleting it here will break any EC2 in another
+# region that still uses this same role/profile (e.g. during a cross-region
+# migration where stage is briefly running in two regions). We scan every
+# enabled region for active associations and skip IAM deletion if any exist.
+# Override with FORCE_IAM_DELETE=1 only when you're certain no other region
+# depends on this role.
 EC2_ROLE="${PREFIX}-ec2-role"
 INSTANCE_PROFILE="${PREFIX}-ec2-profile"
+PROFILE_ARN="arn:aws:iam::${ACCOUNT_ID}:instance-profile/${INSTANCE_PROFILE}"
 
-if aws iam get-instance-profile --instance-profile-name "$INSTANCE_PROFILE" >/dev/null 2>&1; then
+OTHER_REGION_USERS=""
+if [ "${FORCE_IAM_DELETE:-0}" != "1" ] && \
+   aws iam get-instance-profile --instance-profile-name "$INSTANCE_PROFILE" >/dev/null 2>&1; then
+  ENABLED_REGIONS=$(aws ec2 describe-regions --region "$REGION" \
+    --query "Regions[?OptInStatus!='not-opted-in'].RegionName" --output text 2>/dev/null)
+  for r in $ENABLED_REGIONS; do
+    [ "$r" = "$REGION" ] && continue
+    HITS=$(aws ec2 describe-iam-instance-profile-associations --region "$r" \
+      --filters "Name=iam-instance-profile-arn,Values=${PROFILE_ARN}" \
+      --query "IamInstanceProfileAssociations[?State=='associated'].InstanceId" \
+      --output text 2>/dev/null)
+    if [ -n "$HITS" ] && [ "$HITS" != "None" ]; then
+      OTHER_REGION_USERS="${OTHER_REGION_USERS}${r}: ${HITS}\n"
+    fi
+  done
+fi
+
+if [ -n "$OTHER_REGION_USERS" ]; then
+  warn "Skipping IAM deletion — instance profile is still attached to EC2 in:"
+  echo -e "$OTHER_REGION_USERS" >&2
+  warn "Delete those instances first, or set FORCE_IAM_DELETE=1 to override (will break them)."
+elif aws iam get-instance-profile --instance-profile-name "$INSTANCE_PROFILE" >/dev/null 2>&1; then
   aws iam remove-role-from-instance-profile \
     --instance-profile-name "$INSTANCE_PROFILE" \
     --role-name "$EC2_ROLE" 2>/dev/null || true
   aws iam delete-instance-profile --instance-profile-name "$INSTANCE_PROFILE" 2>/dev/null || true
   log "Deleted instance profile: $INSTANCE_PROFILE"
-fi
 
-if aws iam get-role --role-name "$EC2_ROLE" >/dev/null 2>&1; then
-  # Delete inline policies
-  INLINE=$(aws iam list-role-policies --role-name "$EC2_ROLE" \
-    --query "PolicyNames" --output text 2>/dev/null)
-  for p in $INLINE; do
-    aws iam delete-role-policy --role-name "$EC2_ROLE" --policy-name "$p" 2>/dev/null || true
-  done
-  aws iam delete-role --role-name "$EC2_ROLE" 2>/dev/null || true
-  log "Deleted IAM role: $EC2_ROLE"
+  if aws iam get-role --role-name "$EC2_ROLE" >/dev/null 2>&1; then
+    INLINE=$(aws iam list-role-policies --role-name "$EC2_ROLE" \
+      --query "PolicyNames" --output text 2>/dev/null)
+    for p in $INLINE; do
+      aws iam delete-role-policy --role-name "$EC2_ROLE" --policy-name "$p" 2>/dev/null || true
+    done
+    aws iam delete-role --role-name "$EC2_ROLE" 2>/dev/null || true
+    log "Deleted IAM role: $EC2_ROLE"
+  fi
 fi
 
 # ── 5. Delete SSH Key Pair ───────────────────────────────────────────────
@@ -139,7 +168,13 @@ if aws rds describe-db-instances --region "$REGION" \
 fi
 
 # ── 7. Optional: Delete S3 ──────────────────────────────────────────────
-S3_BUCKET="${PREFIX}-storage-${ACCOUNT_ID}"
+# Region-aware bucket name — must match the suffix logic in setup.sh.
+case "$REGION" in
+  us-east-1)  BUCKET_REGION_SUFFIX="" ;;
+  ap-south-1) BUCKET_REGION_SUFFIX="-aps1" ;;
+  *)          BUCKET_REGION_SUFFIX="-${REGION//-/}" ;;
+esac
+S3_BUCKET="${PREFIX}-storage-${ACCOUNT_ID}${BUCKET_REGION_SUFFIX}"
 if aws s3api head-bucket --bucket "$S3_BUCKET" 2>/dev/null; then
   echo ""
   read -p "Delete S3 bucket '$S3_BUCKET' and ALL its contents? (yes/no): " CONFIRM_S3

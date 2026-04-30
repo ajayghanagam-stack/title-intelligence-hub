@@ -43,8 +43,6 @@ services:
     env_file: .env.stage
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_REGION=us-east-1
     volumes:
       - ./gcp-sa-key.json:/app/gcp-sa-key.json:ro
     restart: unless-stopped
@@ -62,8 +60,6 @@ services:
     env_file: .env.stage
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_REGION=us-east-1
     volumes:
       - ./gcp-sa-key.json:/app/gcp-sa-key.json:ro
     restart: unless-stopped

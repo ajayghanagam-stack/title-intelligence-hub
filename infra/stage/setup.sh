@@ -9,7 +9,9 @@ export AWS_PAGER=""
 # ============================================================================
 
 PREFIX="ti-hub-stage"
-REGION="us-east-1"
+# Region is env-overridable so the same script can target us-east-1 (legacy)
+# or ap-south-1 (Mumbai migration). Default keeps existing callers untouched.
+REGION="${REGION:-us-east-1}"
 INSTANCE_TYPE="t4g.xlarge"   # 4 vCPU, 16 GB RAM (ARM64)
 KEY_NAME="${PREFIX}-key"
 KEY_FILE="$HOME/.ssh/${KEY_NAME}.pem"
@@ -35,6 +37,16 @@ command -v aws >/dev/null 2>&1 || { err "AWS CLI not found. Install: https://aws
 command -v jq  >/dev/null 2>&1 || { err "jq not found. Install: brew install jq"; exit 1; }
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+# Region-aware S3 bucket suffix. S3 bucket names are global, so we can't reuse
+# the same name across regions. us-east-1 keeps the legacy unsuffixed name for
+# backwards compatibility; new regions get a short suffix.
+case "$REGION" in
+  us-east-1)  BUCKET_REGION_SUFFIX="" ;;
+  ap-south-1) BUCKET_REGION_SUFFIX="-aps1" ;;
+  *)          BUCKET_REGION_SUFFIX="-${REGION//-/}" ;;
+esac
+
 log "AWS Account: $ACCOUNT_ID"
 log "Region: $REGION"
 log "Prefix: $PREFIX"
@@ -62,12 +74,18 @@ fi
 log "Subnets: ${SUBNET_ARRAY[*]}"
 
 # ── 1. S3 Bucket ──────────────────────────────────────────────────────────
-S3_BUCKET="${PREFIX}-storage-${ACCOUNT_ID}"
+S3_BUCKET="${PREFIX}-storage-${ACCOUNT_ID}${BUCKET_REGION_SUFFIX}"
 
 if aws s3api head-bucket --bucket "$S3_BUCKET" 2>/dev/null; then
   info "S3 bucket '$S3_BUCKET' already exists"
 else
-  aws s3api create-bucket --bucket "$S3_BUCKET" --region "$REGION" >/dev/null
+  # AWS quirk: us-east-1 must NOT pass LocationConstraint; every other region must.
+  if [ "$REGION" = "us-east-1" ]; then
+    aws s3api create-bucket --bucket "$S3_BUCKET" --region "$REGION" >/dev/null
+  else
+    aws s3api create-bucket --bucket "$S3_BUCKET" --region "$REGION" \
+      --create-bucket-configuration "LocationConstraint=$REGION" >/dev/null
+  fi
   aws s3api put-public-access-block --bucket "$S3_BUCKET" \
     --public-access-block-configuration \
     "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" >/dev/null
@@ -240,11 +258,23 @@ else
 fi
 
 # ── 5. SSH Key Pair ───────────────────────────────────────────────────────
+# EC2 key pairs are region-scoped. When migrating to a new region we want to
+# reuse the same local private key (operators don't want to juggle multiple
+# .pem files), so if the local key exists but the AWS record doesn't, import
+# its public half into the target region instead of generating a fresh pair.
 if aws ec2 describe-key-pairs --region "$REGION" --key-names "$KEY_NAME" >/dev/null 2>&1; then
-  info "Key pair '$KEY_NAME' already exists"
+  info "Key pair '$KEY_NAME' already exists in $REGION"
   if [ ! -f "$KEY_FILE" ]; then
     warn "Key file not found at $KEY_FILE — you may need to use an existing copy"
   fi
+elif [ -f "$KEY_FILE" ]; then
+  log "Importing local SSH key into $REGION (reusing $KEY_FILE)"
+  TMP_PUB=$(mktemp)
+  ssh-keygen -y -f "$KEY_FILE" > "$TMP_PUB"
+  aws ec2 import-key-pair --region "$REGION" --key-name "$KEY_NAME" \
+    --public-key-material "fileb://$TMP_PUB" >/dev/null
+  rm -f "$TMP_PUB"
+  log "Imported key pair: $KEY_NAME (private key reused from $KEY_FILE)"
 else
   log "Creating SSH key pair: $KEY_NAME"
   aws ec2 create-key-pair --region "$REGION" --key-name "$KEY_NAME" \
