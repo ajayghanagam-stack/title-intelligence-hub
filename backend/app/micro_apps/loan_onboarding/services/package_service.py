@@ -17,16 +17,6 @@ from app.micro_apps.loan_onboarding.schemas.package import DocTypeSpec, Validati
 
 logger = logging.getLogger(__name__)
 
-# LO AI-cache stage prefixes under `{org_id}/ai_cache/{stage}/…`.
-# Mirrors the stage strings passed to `storage.make_ai_cache_path` by:
-#   - classify stage     → "lo_classify"
-#   - validate stage     → "lo_validate_rule"
-#   - review stage       → "lo_reason"
-# Delete-package wipes these stage dirs so the deleted package's LLM outputs
-# cannot be replayed (or leaked across packages in the same org via the
-# content-hash keyed cache).
-_LO_AI_CACHE_STAGES: tuple[str, ...] = ("lo_classify", "lo_validate_rule", "lo_reason")
-
 
 async def create_package(
     db: AsyncSession,
@@ -162,8 +152,18 @@ async def delete_package(
     storage = get_storage()
 
     if hasattr(storage, "delete_dir"):
-        # 1. Package-scoped dir — uploaded PDFs, rendered page images, thumbs,
-        #    any cached reports. Everything under `{org_id}/{package_id}/`.
+        # Package-scoped dir — uploaded PDFs, rendered page images, thumbs,
+        # any cached reports. Everything under `{org_id}/{package_id}/`.
+        # NOTE: we deliberately do NOT wipe the org-scoped AI cache
+        # (`{org_id}/ai_cache/...`) here. Cache entries are content-addressed
+        # (the cache key hashes the actual file bytes + model + prompt +
+        # schema), so cross-package leakage is structurally impossible:
+        # different content → different cache key. Preserving the cache lets
+        # delete-package + re-upload-same-PDF replay the deterministic AI
+        # output bit-for-bit, which is what users expect when they correct a
+        # mistaken upload. If org-level data deletion is ever required for
+        # compliance, add a separate explicit `purge_org_ai_cache` admin
+        # action — don't couple it to per-package delete.
         try:
             await storage.delete_dir(f"{org_id}/{package_id}")
         except Exception as e:
@@ -171,22 +171,6 @@ async def delete_package(
                 "Failed to delete package storage dir %s/%s: %s",
                 org_id, package_id, e,
             )
-
-        # 2. AI caches. These are org-scoped (the cache key embeds a content
-        #    hash so two packages with the same PDF share the cache). Wiping
-        #    the whole per-stage cache dir is the same nuclear approach used
-        #    by Title Intelligence's delete_pack: it guarantees the deleted
-        #    package's LLM output can't resurface via a cache-hit when the
-        #    same content is re-uploaded. The cache is rebuilt on the next
-        #    run at the cost of one round of LLM calls.
-        for stage in _LO_AI_CACHE_STAGES:
-            try:
-                await storage.delete_dir(f"{org_id}/ai_cache/{stage}")
-            except Exception as e:
-                logger.warning(
-                    "Failed to delete AI cache dir %s/ai_cache/%s: %s",
-                    org_id, stage, e,
-                )
 
     # DB row delete — FK CASCADE removes lo_package_files, lo_pages,
     # lo_classifications, lo_stacks, lo_validation_results, lo_hitl_reviews,
