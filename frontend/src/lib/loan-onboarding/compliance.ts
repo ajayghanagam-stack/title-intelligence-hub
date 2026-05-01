@@ -326,13 +326,28 @@ export function adaptComplianceReport(
   const bySeverity = _findingsBySeverity(findings);
   const overallStatus = _deriveOverallStatus(findings);
 
+  // The closeability tallies are "open-only" — they should match the backend's
+  // open-finding semantics (status != "compliant"). Critical was already
+  // sourced from `open_critical_count`; High was previously read from
+  // `bySeverity.high`, which counts EVERY high-severity finding (including
+  // ones already marked compliant) and inflated the tile. Compute both from
+  // raw findings here so the numbers are symmetric and match what the backend
+  // uses to drive the closeability tone.
+  let openCriticalCount = 0;
+  let openHighCount = 0;
+  for (const f of payload.findings) {
+    if (f.status === "compliant") continue;
+    if (f.severity === "critical") openCriticalCount++;
+    else if (f.severity === "high") openHighCount++;
+  }
+
   const closeability: CloseabilityState = {
     tone: TONE_MAP[payload.lo_view.closeability.tone] ?? "review",
     label: payload.lo_view.closeability.label,
     headline: payload.lo_view.closeability.label,
     detail: payload.lo_view.closeability.message,
-    criticalCount: payload.lo_view.closeability.open_critical_count,
-    highCount: bySeverity.high,
+    criticalCount: openCriticalCount,
+    highCount: openHighCount,
   };
 
   const dealKillers = payload.lo_view.deal_killers.map(_dealKillerFromFinding);
