@@ -67,6 +67,11 @@ export default function LoanPackageProcessingPage() {
   const handoffStartedRef = useRef(false);
   // Guard so we only schedule the auto-redirect once per terminal transition.
   const redirectScheduledRef = useRef(false);
+  // Tracks whether we've observed a non-terminal state during this mount.
+  // Without this, navigating back to /processing for an already-terminal
+  // package would auto-redirect on landing — preventing the user from
+  // viewing the run summary.
+  const sawNonTerminalRef = useRef(false);
 
   // Pre-flight: if the new-package form handed off an upload payload for
   // this package id, drive the upload + pipeline trigger from here.
@@ -117,19 +122,25 @@ export default function LoanPackageProcessingPage() {
     `/apps/loan-onboarding/packages/${packageId}/results`
   );
 
-  // Auto-redirect to the Results tab once the pipeline reaches a terminal
-  // state. Use `replace` so the back button doesn't return to a stale
-  // processing screen, and a small grace window so the user briefly sees the
-  // "complete" state before the navigation.
+  // Auto-redirect to the Results tab only when we observe the *transition*
+  // from non-terminal → terminal during this mount. If the user lands on
+  // /processing for an already-terminal package (e.g. clicking the
+  // Processing tab from Results), they should be able to stay and view the
+  // run summary.
   useEffect(() => {
-    if (!isTerminal) return;
+    if (!liveStatus) return;
+    if (!isTerminal) {
+      sawNonTerminalRef.current = true;
+      return;
+    }
+    if (!sawNonTerminalRef.current) return;
     if (redirectScheduledRef.current) return;
     redirectScheduledRef.current = true;
     const t = setTimeout(() => {
       router.replace(resultsHref);
     }, 800);
     return () => clearTimeout(t);
-  }, [isTerminal, resultsHref, router]);
+  }, [liveStatus, isTerminal, resultsHref, router]);
 
   const totalElapsed = pipeline?.stage_timings?.reduce(
     (sum, t) => sum + (t.elapsed_seconds ?? 0),
