@@ -121,9 +121,10 @@ export default function AccountDetailPage() {
     setLogoSavedMsg("");
     try {
       const trimmed = logoUrlDraft.trim();
-      // PATCH the org via the regular org route — admins can edit their own org,
-      // platform admins can edit any. Empty string clears the logo (sent as null).
-      await adminFetch(`/api/v1/organizations/${orgId}`, {
+      // Platform-admin route — bypasses TenantContextMiddleware (which would
+      // otherwise demand X-Org-Id matching the platform admin's *own* org).
+      // Empty string clears the logo (sent as null).
+      await adminFetch(`/api/v1/admin/accounts/${orgId}`, {
         method: "PATCH",
         body: JSON.stringify({ logo_url: trimmed === "" ? null : trimmed }),
       });

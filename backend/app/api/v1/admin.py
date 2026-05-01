@@ -17,7 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_platform_admin
 from app.models.user import User
-from app.services import admin_service, billing_service
+from app.schemas.organization import OrganizationUpdate
+from app.services import admin_service, billing_service, organization_service
 from app.services.billing_pdf_service import generate_billing_report_pdf
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -112,6 +113,12 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(min_length=6)
 
 
+class UpdateAccountRequest(BaseModel):
+    """Platform-admin patch of a customer org. All fields optional."""
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    logo_url: str | None = None
+
+
 class UsageItem(BaseModel):
     name: str
     filenames: list[str] | None = None
@@ -174,6 +181,25 @@ async def get_account(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a customer account with its users and subscriptions."""
+    data = await admin_service.get_account(db, org_id)
+    return AccountDetail(
+        **{k: v for k, v in data.items() if k != "subscriptions"},
+        subscriptions=[AccountDetailSubscription(**s) for s in data["subscriptions"]],
+    )
+
+
+@router.patch("/accounts/{org_id}", response_model=AccountDetail)
+async def update_account(
+    org_id: uuid.UUID,
+    body: UpdateAccountRequest,
+    admin: User = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Platform-admin update of a customer org (e.g. name, logo). Bypasses
+    tenant context middleware (admin routes are exempt) so the platform admin
+    does not need to be a member of the target org."""
+    update = OrganizationUpdate(**body.model_dump(exclude_unset=True))
+    await organization_service.update_organization(db, org_id, update)
     data = await admin_service.get_account(db, org_id)
     return AccountDetail(
         **{k: v for k, v in data.items() if k != "subscriptions"},
