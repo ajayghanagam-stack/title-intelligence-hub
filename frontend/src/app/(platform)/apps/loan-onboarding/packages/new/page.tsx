@@ -10,8 +10,7 @@ import { LoanContextForm } from "@/components/loan-onboarding/loan-context-form"
 import { useOrg } from "@/hooks/use-org";
 import { useOrgSlug } from "@/hooks/use-org-slug";
 import { useLoanPackages } from "@/hooks/use-loan-packages";
-import { uploadFiles } from "@/lib/api";
-import { processPackage } from "@/lib/loan-onboarding/api";
+import { enqueueUpload } from "@/lib/loan-onboarding/upload-queue";
 import {
   DEFAULT_HITL_THRESHOLD,
   OTHERS_DOC_TYPE_KEY,
@@ -165,16 +164,11 @@ export default function NewLoanPackagePage() {
         loan_context: complianceEnabled ? loanContext : undefined,
       });
 
-      setStageLabel("Uploading files");
-      await uploadFiles(
-        `/api/v1/apps/loan-onboarding/packages/${pkg.id}/files`,
-        files,
-        { orgId: currentOrgId }
-      );
-
-      setStageLabel("Starting pipeline");
-      await processPackage(currentOrgId, pkg.id);
-
+      // Hand the in-memory File objects off to the /processing page and
+      // navigate immediately. The processing page owns the upload + pipeline
+      // trigger from here so the user sees the pipeline scaffold without
+      // waiting on the multipart upload to finish on this screen.
+      enqueueUpload(pkg.id, { files, orgId: currentOrgId });
       window.dispatchEvent(new Event("loan-package-created"));
       router.push(
         orgPath(`/apps/loan-onboarding/packages/${pkg.id}/processing`)
