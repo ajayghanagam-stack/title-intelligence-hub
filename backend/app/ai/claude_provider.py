@@ -218,13 +218,27 @@ async def call_with_web_search_claude(
                 if block.type == "tool_use" and block.name == result_tool_name:
                     structured_result = block.input if isinstance(block.input, dict) else {}
 
-                # Extract citations from web search result blocks
+                # Extract citations from web search result blocks. The
+                # Anthropic SDK exposes results on `block.content` — a list of
+                # WebSearchResultBlock — or, on error, a single
+                # WebSearchToolResultError object. There is no `search_results`
+                # attribute, so previous reads silently produced empty
+                # citations even when web search returned hits.
                 if block.type == "web_search_tool_result":
-                    for search_result in getattr(block, "search_results", []):
-                        url = getattr(search_result, "url", "")
-                        title = getattr(search_result, "title", "")
-                        if url:
-                            citations.append({"url": url, "title": title})
+                    block_content = getattr(block, "content", None)
+                    if isinstance(block_content, list):
+                        for search_result in block_content:
+                            url = getattr(search_result, "url", "")
+                            title = getattr(search_result, "title", "")
+                            if url:
+                                citations.append({"url": url, "title": title})
+                    else:
+                        # Error block (e.g. {type: "web_search_tool_result_error", error_code: ...})
+                        err_code = getattr(block_content, "error_code", None)
+                        if err_code:
+                            logger.warning(
+                                f"Claude web_search returned error block: {err_code}"
+                            )
 
             # Deduplicate citations by URL
             seen_urls: set[str] = set()

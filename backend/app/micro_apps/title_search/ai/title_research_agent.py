@@ -443,20 +443,43 @@ class TitleResearchAgent(BaseAIService):
             + "\n\nSearch all available county records online and provide complete findings."
         )
 
-        result, citations = await self.call_with_web_search(
-            system_prompt=RESEARCH_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
-            result_tool_schema=RESEARCH_RESULT_SCHEMA,
-            result_tool_name="submit_research_results",
-            result_tool_description=(
-                "Submit the complete structured title research findings. "
-                "Include all 22 entity categories with data found from web searches."
-            ),
-            max_web_searches=15,
-            max_tokens=16384,
-            temperature=0.0,
-            timeout=300,
-        )
+        # The 22-entity schema is large; if the model exhausts max_tokens
+        # while emitting the result tool input, Anthropic returns the
+        # tool_use block with an empty `input` dict. We detect that case
+        # and retry once before raising so the orchestrator can mark the
+        # order failed instead of silently completing with no data.
+        result: dict[str, Any] = {}
+        citations: list[dict[str, str]] = []
+        last_attempt = 1
+        for attempt in range(1, 3):
+            last_attempt = attempt
+            result, citations = await self.call_with_web_search(
+                system_prompt=RESEARCH_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_message}],
+                result_tool_schema=RESEARCH_RESULT_SCHEMA,
+                result_tool_name="submit_research_results",
+                result_tool_description=(
+                    "Submit the complete structured title research findings. "
+                    "Include all 22 entity categories with data found from web searches."
+                ),
+                max_web_searches=15,
+                max_tokens=24576,
+                temperature=0.0,
+                timeout=300,
+            )
+            if result:
+                break
+            logger.warning(
+                f"Title research returned empty result for {property_address} "
+                f"(attempt {attempt}/2) — retrying"
+            )
+
+        if not result:
+            raise RuntimeError(
+                f"Title research returned empty result for {property_address}, "
+                f"{county} County, {state_code} after {last_attempt} attempt(s). "
+                f"Claude likely exhausted max_tokens before completing the structured tool input."
+            )
 
         logger.info(
             f"Title research completed for {property_address}, {county} County, {state_code} "
