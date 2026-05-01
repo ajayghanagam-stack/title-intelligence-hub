@@ -1,22 +1,35 @@
 "use client";
 
-import { useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { ArrowRight, Clock } from "lucide-react";
 import { useOrgSlug } from "@/hooks/use-org-slug";
 import { useLoanPackage } from "@/hooks/use-loan-packages";
 import { useLoanPipeline } from "@/hooks/use-loan-pipeline";
 import { PipelineProgress } from "@/components/loan-onboarding/pipeline-progress";
+import { PackageStatusBadge } from "@/components/loan-onboarding/package-status-badge";
 
 const TERMINAL = new Set(["completed", "failed", "awaiting_review"]);
 
+function formatElapsed(seconds: number): string {
+  if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rem = Math.round(seconds - minutes * 60);
+  return `${minutes}m ${rem}s`;
+}
+
 /**
- * Processing tab — renders the centered vertical pipeline stepper while
- * the pipeline is running. When the live pipeline status transitions to
- * a terminal value (completed / failed / awaiting_review) we auto-push to
- * the Results tab so the user sees the outcome without a manual click.
+ * Processing tab — dual purpose:
+ *
+ * While the pipeline is running, renders the live vertical stepper. Once the
+ * pipeline reaches a terminal state (completed / failed / awaiting_review)
+ * the same view becomes a read-only run summary: total elapsed time, final
+ * status, per-stage timings, and any error. The stepper itself naturally
+ * renders the terminal state (all green / red), so we just add a header
+ * banner with the headline numbers + a CTA over to Results.
  */
 export default function LoanPackageProcessingPage() {
-  const router = useRouter();
   const params = useParams();
   const packageId = params.packageId as string;
   const { orgPath } = useOrgSlug();
@@ -27,13 +40,15 @@ export default function LoanPackageProcessingPage() {
   );
 
   const liveStatus = pipeline?.status ?? pkg?.status;
+  const isTerminal = !!liveStatus && TERMINAL.has(liveStatus);
+  const resultsHref = orgPath(
+    `/apps/loan-onboarding/packages/${packageId}/results`
+  );
 
-  // Auto-switch to Results when the pipeline terminates.
-  useEffect(() => {
-    if (!liveStatus || !TERMINAL.has(liveStatus)) return;
-    const base = orgPath(`/apps/loan-onboarding/packages/${packageId}`);
-    router.replace(`${base}/results`);
-  }, [liveStatus, packageId, orgPath, router]);
+  const totalElapsed = pipeline?.stage_timings?.reduce(
+    (sum, t) => sum + (t.elapsed_seconds ?? 0),
+    0
+  );
 
   if (loading) {
     return (
@@ -49,7 +64,31 @@ export default function LoanPackageProcessingPage() {
       className="flex justify-center py-6"
       data-testid="loan-package-processing"
     >
-      <div className="w-full max-w-xl">
+      <div className="w-full max-w-xl space-y-4">
+        {isTerminal && liveStatus ? (
+          <div
+            className="section-card flex items-center justify-between gap-4"
+            data-testid="loan-package-run-summary"
+          >
+            <div className="flex items-center gap-3">
+              <PackageStatusBadge status={liveStatus} />
+              {totalElapsed !== undefined && totalElapsed > 0 ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
+                  <Clock className="h-3.5 w-3.5" />
+                  Total {formatElapsed(totalElapsed)}
+                </span>
+              ) : null}
+            </div>
+            <Link
+              href={resultsHref}
+              className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+            >
+              View results
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
+        ) : null}
+
         {pipeline ? (
           <PipelineProgress
             stages={pipeline.stages}
