@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     TI_CHAT_PROVIDER: Literal["gemini", "claude", ""] = ""
     TA_AI_PROVIDER: Literal["gemini", "claude", ""] = "claude"
 
+    # TSA Claude model override. Empty = use BaseAIService default
+    # (CLAUDE_MODEL from claude_provider.py). Set a litellm-compatible id like
+    # "anthropic/claude-sonnet-4-6" or a bare id like "claude-sonnet-4-6"
+    # (the "anthropic/" prefix is added automatically when missing).
+    TA_CLAUDE_MODEL: str = ""
+
     # Gemini / Vertex AI
     GOOGLE_API_KEY: str = ""  # AI Studio API key (used when VERTEX_AI=false)
     VERTEX_AI: bool = False  # Set True to use Vertex AI instead of AI Studio

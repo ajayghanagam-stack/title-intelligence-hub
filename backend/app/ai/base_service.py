@@ -571,11 +571,17 @@ class BaseAIService:
         max_tokens: int = 16384,
         temperature: float = 0.0,
         timeout: int = 300,
+        model: str | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, str]]]:
         """Call Claude with web search + structured result tool.
 
         Uses Anthropic SDK directly for server-side web_search tool.
         Returns (structured_result, citations) tuple.
+
+        If `model` is provided, it overrides the default Claude SDK model.
+        Accepts either a bare id ("claude-sonnet-4-6") or a litellm-style
+        prefixed id ("anthropic/claude-sonnet-4-6") — the prefix is stripped
+        before being handed to the Anthropic SDK.
         """
         from app.ai.claude_provider import call_with_web_search_claude, configure_claude
         settings = get_settings()
@@ -591,6 +597,7 @@ class BaseAIService:
             max_tokens=max_tokens,
             temperature=temperature,
             timeout=timeout,
+            model=model,
         )
 
     async def call_streaming(

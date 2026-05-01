@@ -62,9 +62,13 @@ CHAIN_TOOL = {
 class ChainBuilderAgent(BaseAIService):
     def __init__(self, org_id: uuid.UUID):
         from app.config import get_settings
+        from app.micro_apps.title_search.ai._model import get_ta_claude_model
         settings = get_settings()
         provider_override = settings.TA_AI_PROVIDER or None
         super().__init__(org_id, provider_override=provider_override)
+        ta_model = get_ta_claude_model()
+        if ta_model and self._provider == "claude":
+            self.model = ta_model
 
     async def build(self, documents: list[dict]) -> dict:
         """Build chain of title from parsed documents.

@@ -397,9 +397,13 @@ class TitleResearchAgent(BaseAIService):
 
     def __init__(self, org_id: uuid.UUID):
         from app.config import get_settings
+        from app.micro_apps.title_search.ai._model import get_ta_claude_model
         settings = get_settings()
         provider_override = settings.TA_AI_PROVIDER or None
         super().__init__(org_id, role="title_researcher", provider_override=provider_override)
+        ta_model = get_ta_claude_model()
+        if ta_model and self._provider == "claude":
+            self.model = ta_model
 
     async def research(
         self,
@@ -453,6 +457,10 @@ class TitleResearchAgent(BaseAIService):
         last_attempt = 1
         for attempt in range(1, 3):
             last_attempt = attempt
+            # `call_with_web_search` always hits the Anthropic SDK directly;
+            # only forward `self.model` when we're actually configured for
+            # Claude — otherwise we'd hand a Gemini id to the Anthropic API.
+            web_search_model = self.model if self._provider == "claude" else None
             result, citations = await self.call_with_web_search(
                 system_prompt=RESEARCH_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_message}],
@@ -466,6 +474,7 @@ class TitleResearchAgent(BaseAIService):
                 max_tokens=24576,
                 temperature=0.0,
                 timeout=300,
+                model=web_search_model,
             )
             if result:
                 break

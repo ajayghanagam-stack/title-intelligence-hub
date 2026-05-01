@@ -145,6 +145,7 @@ async def call_with_web_search_claude(
     retries: int = 2,
     temperature: float = 0.0,
     timeout: int = 300,
+    model: str | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
     """Call Claude with web_search server tool + custom result tool.
 
@@ -195,11 +196,18 @@ async def call_with_web_search_claude(
         },
     ]
 
+    # Resolve effective SDK model — strip the "anthropic/" litellm prefix if a
+    # caller passes a fully-qualified litellm id. The Anthropic SDK expects a
+    # bare model id (e.g. "claude-sonnet-4-6").
+    effective_model = (model or CLAUDE_SDK_MODEL).strip()
+    if effective_model.startswith("anthropic/"):
+        effective_model = effective_model[len("anthropic/"):]
+
     for attempt in range(retries):
         try:
             response = await asyncio.wait_for(
                 client.messages.create(
-                    model=CLAUDE_SDK_MODEL,
+                    model=effective_model,
                     max_tokens=max_tokens,
                     temperature=temperature,
                     system=system_prompt,
