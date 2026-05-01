@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { AlertCircle, ArrowRight, Clock, Loader2, Upload } from "lucide-react";
 import { useOrgSlug } from "@/hooks/use-org-slug";
 import { useLoanPackage } from "@/hooks/use-loan-packages";
@@ -53,6 +53,7 @@ function formatMb(bytes: number): string {
  */
 export default function LoanPackageProcessingPage() {
   const params = useParams();
+  const router = useRouter();
   const packageId = params.packageId as string;
   const { orgPath } = useOrgSlug();
   const { package: pkg, loading } = useLoanPackage(packageId);
@@ -64,6 +65,8 @@ export default function LoanPackageProcessingPage() {
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>({ kind: "idle" });
   // Guard against StrictMode double-invoke and per-mount re-runs.
   const handoffStartedRef = useRef(false);
+  // Guard so we only schedule the auto-redirect once per terminal transition.
+  const redirectScheduledRef = useRef(false);
 
   // Pre-flight: if the new-package form handed off an upload payload for
   // this package id, drive the upload + pipeline trigger from here.
@@ -113,6 +116,20 @@ export default function LoanPackageProcessingPage() {
   const resultsHref = orgPath(
     `/apps/loan-onboarding/packages/${packageId}/results`
   );
+
+  // Auto-redirect to the Results tab once the pipeline reaches a terminal
+  // state. Use `replace` so the back button doesn't return to a stale
+  // processing screen, and a small grace window so the user briefly sees the
+  // "complete" state before the navigation.
+  useEffect(() => {
+    if (!isTerminal) return;
+    if (redirectScheduledRef.current) return;
+    redirectScheduledRef.current = true;
+    const t = setTimeout(() => {
+      router.replace(resultsHref);
+    }, 800);
+    return () => clearTimeout(t);
+  }, [isTerminal, resultsHref, router]);
 
   const totalElapsed = pipeline?.stage_timings?.reduce(
     (sum, t) => sum + (t.elapsed_seconds ?? 0),

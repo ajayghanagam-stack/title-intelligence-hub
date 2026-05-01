@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useOrg } from "@/hooks/use-org";
 import {
   createPackage,
@@ -15,6 +15,12 @@ import type {
   LoanPackage,
   LoanPackageListItem,
 } from "@/lib/loan-onboarding/types";
+
+const TERMINAL_STATUSES = new Set([
+  "completed",
+  "failed",
+  "awaiting_review",
+]);
 
 export function useLoanPackages() {
   const { currentOrgId } = useOrg();
@@ -77,10 +83,10 @@ export function useLoanPackage(packageId: string | null | undefined) {
   const [pkg, setPkg] = useState<LoanPackage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchPackage = useCallback(async (): Promise<LoanPackage | null> => {
     if (!currentOrgId || !packageId) return null;
-    setLoading(true);
     setError(null);
     try {
       const data = await getPackage(currentOrgId, packageId);
@@ -95,8 +101,36 @@ export function useLoanPackage(packageId: string | null | undefined) {
     }
   }, [currentOrgId, packageId]);
 
+  // Poll while the package is in a non-terminal state so consumers (like the
+  // tab-strip status pip) reflect the live status without a manual refresh.
   useEffect(() => {
-    fetchPackage();
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      const data = await fetchPackage();
+      if (cancelled) return;
+      if (data && TERMINAL_STATUSES.has(data.status)) {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+      }
+    };
+
+    setLoading(true);
+    tick();
+
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(tick, 3000);
+
+    return () => {
+      cancelled = true;
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
   }, [fetchPackage]);
 
   return { package: pkg, loading, error, refetch: fetchPackage };
