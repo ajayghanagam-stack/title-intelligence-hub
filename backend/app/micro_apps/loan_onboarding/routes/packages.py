@@ -4,12 +4,12 @@ All endpoints are tenant-scoped via `get_org_id` (set by TenantContextMiddleware
 """
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.core.deps import get_current_member, get_db, get_org_id, get_session_factory, require_admin
+from app.core.deps import get_current_member, get_db, get_org_id, get_session_factory
 from app.core.exceptions import ValidationError
 from app.micro_apps.loan_onboarding.pipeline.orchestrator import trigger_pipeline
 from app.micro_apps.loan_onboarding.models.package import LOPackage
@@ -131,9 +131,16 @@ async def get_package(
 async def delete_package(
     package_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    member: User = Depends(require_admin),
+    member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
 ):
+    # Allow the uploader to delete their own package; admins/owners can delete any.
+    package = await package_service.get_package_or_raise(db, org_id, package_id)
+    if member.role not in ("admin", "owner") and package.created_by != member.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only delete packages you uploaded",
+        )
     await package_service.delete_package(db, org_id, package_id)
     # delete_package commits on its own; emit audit event in a fresh txn
     await log_event(
