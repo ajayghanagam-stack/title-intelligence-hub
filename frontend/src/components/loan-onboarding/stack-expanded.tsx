@@ -1,18 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   CheckCircle2,
   AlertTriangle,
   AlertCircle,
   ArrowRight,
+  Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Expand,
   Eye,
   FileSearch,
   GalleryHorizontal,
   LayoutList,
   Maximize2,
   Undo2,
+  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -33,7 +39,11 @@ import {
   applyPageOverride,
   removePageOverride,
 } from "@/lib/loan-onboarding/api";
-import { LOAN_DOC_TYPE_LABELS } from "@/lib/loan-onboarding/constants";
+import {
+  LOAN_DOC_TYPE_LABELS,
+  OTHERS_DOC_TYPE_KEY,
+  SUGGESTED_DOC_TYPES,
+} from "@/lib/loan-onboarding/constants";
 import { blendOverallNoSplit } from "@/components/loan-onboarding/confidence-breakdown";
 import type {
   LoanStack,
@@ -42,8 +52,19 @@ import type {
   LoanValidationResult,
   LoanPageOverride,
   LoanPageRole,
+  LoanDocTypeSpec,
 } from "@/lib/loan-onboarding/types";
 import { ExtractedFieldsPanel } from "@/components/loan-onboarding/extracted-fields-panel";
+
+/** Move-target option for the "Move to…" picker. Hoisted to module scope so
+ *  the inner PageViewer can type its `moveOptions` prop against it. */
+type MoveOption = {
+  key: string;
+  label: string;
+  description?: string;
+  required: boolean;
+  group: "configured" | "detected" | "suggested" | "catch-all";
+};
 
 interface Props {
   orgId: string;
@@ -52,10 +73,9 @@ interface Props {
   validation: LoanValidationResult | undefined;
   /** All stacks in the package — used to populate the "Move to…" dropdown. */
   allStacks: LoanStack[];
-  /** Doc types configured at upload (keys). Combined with allStacks doc types
-   *  so the Move dropdown can target a configured type even if no stack of
-   *  that type currently exists in the result. */
-  packageDocTypes: string[];
+  /** Doc types configured at upload (full specs — key/label/description/required).
+   *  Drives the primary "Expected for this package" section in the Move dropdown. */
+  packageDocTypeSpecs: LoanDocTypeSpec[];
   /** Page overrides keyed by page_id so we can render Undo for moved pages. */
   overrides: Map<string, LoanPageOverride>;
   /** Per-stack field extraction (Section D). Optional — null when extraction
@@ -85,7 +105,7 @@ export function StackExpanded({
   stack,
   validation,
   allStacks,
-  packageDocTypes,
+  packageDocTypeSpecs,
   overrides,
   extraction,
   onMutated,
@@ -111,21 +131,78 @@ export function StackExpanded({
     validation: null,
   };
 
-  // Move destination options — union of every doc_type present in any stack
-  // and every doc_type configured for the package, minus this stack's own
-  // doc_type. This lets the user move pages to a configured type even if no
-  // stack of that type exists yet (e.g. moving a misclassified page out of
-  // the catch-all "Others" bucket).
-  const moveOptions = useMemo(
-    () =>
-      Array.from(
-        new Set([
-          ...allStacks.map((s) => s.doc_type),
-          ...packageDocTypes,
-        ])
-      ).filter((dt) => dt !== stack.doc_type),
-    [allStacks, packageDocTypes, stack.doc_type]
-  );
+  // Move destination options — built as rich entries (label + description +
+  // required + group) so the picker can render a grouped, hierarchical list:
+  //   1. Expected for this package      ← the configured doc types
+  //   2. Other detected types           ← runtime stacks not in config
+  //   3. Other common types             ← canonical catalog fallback
+  //   4. Catch-all                      ← Others (always last)
+  // The grouping is what makes the picker feel intuitive: the user sees
+  // their configured list FIRST, with required pills, before falling back
+  // to the broader catalog. The current stack's own type is excluded.
+  const moveOptions = useMemo<MoveOption[]>(() => {
+    const seen = new Set<string>();
+    const out: MoveOption[] = [];
+    const push = (opt: MoveOption) => {
+      if (opt.key === stack.doc_type) return;
+      if (seen.has(opt.key)) return;
+      seen.add(opt.key);
+      out.push(opt);
+    };
+
+    // 1. Configured types (preserve config order — required-ness matters here)
+    for (const spec of packageDocTypeSpecs) {
+      push({
+        key: spec.key,
+        label: spec.label,
+        description: spec.description,
+        required: spec.required,
+        group: "configured",
+      });
+    }
+
+    // 2. Doc types that exist at runtime as stacks but weren't configured
+    //    (e.g. AI created an "Others" bucket, or a custom type added later)
+    for (const s of allStacks) {
+      if (s.doc_type === OTHERS_DOC_TYPE_KEY) continue;
+      const fromCatalog = SUGGESTED_DOC_TYPES.find((d) => d.key === s.doc_type);
+      push({
+        key: s.doc_type,
+        label:
+          fromCatalog?.label ??
+          LOAN_DOC_TYPE_LABELS[s.doc_type] ??
+          s.doc_type,
+        description: fromCatalog?.description,
+        required: false,
+        group: "detected",
+      });
+    }
+
+    // 3. Canonical catalog fallback — always include so the LO can route a
+    //    page to a common doc type even when it wasn't pre-configured. This
+    //    is the fix for the "dropdown only shows 1 type" symptom that
+    //    happens when the package config is sparse.
+    for (const spec of SUGGESTED_DOC_TYPES) {
+      push({
+        key: spec.key,
+        label: spec.label,
+        description: spec.description,
+        required: spec.required,
+        group: "suggested",
+      });
+    }
+
+    // 4. Others — always present as the demote-anywhere target
+    push({
+      key: OTHERS_DOC_TYPE_KEY,
+      label: "Others (catch-all)",
+      description: "Pages that don't fit any expected document type",
+      required: false,
+      group: "catch-all",
+    });
+
+    return out;
+  }, [allStacks, packageDocTypeSpecs, stack.doc_type]);
 
   const handleMove = async (page: LoanStackPage, targetDocType: string) => {
     setBusyPageId(page.page_id);
@@ -447,7 +524,7 @@ interface PageViewerProps {
   packageId: string;
   stack: LoanStack;
   overrides: Map<string, LoanPageOverride>;
-  moveOptions: string[];
+  moveOptions: MoveOption[];
   busyPageId: string | null;
   onMove: (page: LoanStackPage, target: string) => void;
   onUndo: (page: LoanStackPage) => void;
@@ -489,10 +566,58 @@ function PageViewer({
   // pair. Closes on thumbnail switch, on outside click, or after a selection.
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
+  // Per-section "show all" toggle. The picker shows the top N options per
+  // section by default — clicking "Show all" expands that section. Cleared
+  // when the picker closes so it always opens with the compact view.
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(
+    () => new Set()
+  );
+  const SECTION_PAGE_SIZE = 5;
   const closePicker = () => {
     setPickerOpen(false);
     setPickerQuery("");
+    setExpandedSections(new Set());
   };
+
+  // The popover is rendered via a React portal into document.body so it
+  // can't be clipped by any `overflow-hidden` ancestor (the previous inline
+  // `absolute bottom-full` placement was getting hidden by the View pages
+  // drawer's overflow box, which is what made the dropdown look "frozen" —
+  // the backdrop covered the page but the popover itself was invisible).
+  // We anchor the popover to the trigger's bounding rect on every open.
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const [pickerRect, setPickerRect] = useState<{
+    top: number;
+    bottom: number;
+    left: number;
+    width: number;
+  } | null>(null);
+
+  const recomputePickerRect = () => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPickerRect({
+      top: r.top,
+      bottom: r.bottom,
+      left: r.left,
+      width: r.width,
+    });
+  };
+
+  // Recompute on open + on viewport resize/scroll while open. useLayoutEffect
+  // so the popover paints in the right place on its first frame.
+  useLayoutEffect(() => {
+    if (!pickerOpen) return;
+    recomputePickerRect();
+    const onScrollOrResize = () => recomputePickerRect();
+    window.addEventListener("resize", onScrollOrResize);
+    window.addEventListener("scroll", onScrollOrResize, true);
+    return () => {
+      window.removeEventListener("resize", onScrollOrResize);
+      window.removeEventListener("scroll", onScrollOrResize, true);
+    };
+  }, [pickerOpen]);
 
   // Close on Escape while the picker is open.
   useEffect(() => {
@@ -533,9 +658,46 @@ function PageViewer({
   // whenever the active page changes so a fresh page always lands at a
   // sensible default instead of inheriting the previous page's zoom.
   const [zoom, setZoom] = useState<number | "fit">("fit");
+  // Lightbox (full-page view) — separate zoom state from the inline preview
+  // because the lightbox uses a much larger pixel anchor; sharing zoom would
+  // make 100% in the inline view feel tiny in the lightbox and vice versa.
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxZoom, setLightboxZoom] = useState<number | "fit">("fit");
   useEffect(() => {
     setZoom("fit");
+    setLightboxZoom("fit");
   }, [activePageId]);
+
+  // Lightbox keyboard handling: ←/→ navigate within the stack, Esc closes,
+  // 0 resets to fit. Body scroll is locked while open so the underlying
+  // results page can't scroll behind the overlay.
+  useEffect(() => {
+    if (!lightboxOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setLightboxOpen(false);
+        return;
+      }
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        const idx = visiblePages.findIndex((p) => p.page_id === activePageId);
+        if (idx < 0) return;
+        const next = e.key === "ArrowLeft" ? idx - 1 : idx + 1;
+        if (next >= 0 && next < visiblePages.length) {
+          setActivePageId(visiblePages[next].page_id);
+        }
+        e.preventDefault();
+        return;
+      }
+      if (e.key === "0") setLightboxZoom("fit");
+    };
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [lightboxOpen, activePageId, visiblePages]);
 
   // Per-user layout preference. List = vertical thumbnail rail (metadata-
   // rich, easier triage). Filmstrip = horizontal scrolling thumbs above the
@@ -799,7 +961,13 @@ function PageViewer({
 
         {/* Right (or full-width in strip mode): preview surface + action bar */}
         <div className="flex flex-col">
-          <div className="px-4 py-2 bg-muted/40 border-b border-border/60 flex items-center justify-between gap-3">
+          {/* Preview toolbar — three slots: page identity (left), zoom +
+              full-view (center/right cluster), current doc-type (right).
+              `flex-wrap` keeps the row from clipping on narrow widths.
+              Zoom controls were previously floating at bottom-right of the
+              preview surface; relocating them here removes their overlap
+              with the page image and with the "Current:" label. */}
+          <div className="px-4 py-2 bg-muted/40 border-b border-border/60 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
             <div className="flex items-baseline gap-3 min-w-0">
               <div className="text-sm font-medium truncate">
                 {activePage ? `Page ${activePage.page_number}` : "No page"}
@@ -812,18 +980,38 @@ function PageViewer({
                 </div>
               )}
             </div>
-            <div className="font-mono text-[10px] text-muted-foreground shrink-0">
-              Current:{" "}
-              <span className="text-foreground font-medium">{currentLabel}</span>
-              {activeOverride && (
-                <span className="inline-flex items-center gap-1 ml-2 text-amber-700">
-                  <ArrowRight className="h-3 w-3" />
-                  <span className="font-medium">
-                    {LOAN_DOC_TYPE_LABELS[activeOverride.assigned_doc_type] ??
-                      activeOverride.assigned_doc_type}
-                  </span>
-                </span>
+            <div className="flex items-center gap-3 shrink-0">
+              {activePage && (
+                <>
+                  <ZoomControls zoom={zoom} onChange={setZoom} />
+                  <button
+                    type="button"
+                    onClick={() => setLightboxOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-border bg-card hover:bg-muted/60 transition-colors text-[10px] font-mono uppercase tracking-[0.1em]"
+                    aria-label="Open full-page view"
+                    title="Open full-page view"
+                    data-testid="page-fullview-open"
+                  >
+                    <Expand className="h-3.5 w-3.5" />
+                    Full view
+                  </button>
+                </>
               )}
+              <div className="font-mono text-[10px] text-muted-foreground">
+                Current:{" "}
+                <span className="text-foreground font-medium">
+                  {currentLabel}
+                </span>
+                {activeOverride && (
+                  <span className="inline-flex items-center gap-1 ml-2 text-amber-700">
+                    <ArrowRight className="h-3 w-3" />
+                    <span className="font-medium">
+                      {LOAN_DOC_TYPE_LABELS[activeOverride.assigned_doc_type] ??
+                        activeOverride.assigned_doc_type}
+                    </span>
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
@@ -836,24 +1024,38 @@ function PageViewer({
           <div
             className="flex-1 relative bg-amber-50/30"
             style={{
-              // Adaptive height: roughly 65vh, capped between 400 and 720
-              // so it always reserves a sensible vertical chunk regardless
-              // of monitor resolution.
-              height: "clamp(400px, 65vh, 720px)",
+              // A4-sized viewer: A4 portrait is 210×297mm (aspect ~1.414).
+              // For a typical viewer width of ~600–780px the matching height
+              // is ~850–1100px. clamp(640, 88vh, 1100) sizes the surface so
+              // a full A4/letter page renders at-scale in fit mode without
+              // scroll on 1080p+ monitors. The 640px floor keeps the viewer
+              // usable on 720p laptops (still ≥1 full page visible).
+              height: "clamp(640px, 88vh, 1100px)",
             }}
             data-testid="page-preview-container"
           >
             <div className="absolute inset-0 overflow-auto">
               {activePage ? (
                 zoom === "fit" ? (
+                  // Fit mode: page card is forced to A4-ish portrait aspect
+                  // and stretched to fill the viewer height (`h-full`). The
+                  // image inside uses `object-contain` so it scales up to
+                  // fill the card while preserving its native aspect — this
+                  // is what makes a full A4 page actually show at A4 size
+                  // instead of rendering at the source's intrinsic ~612×792
+                  // pixels (which used to leave the page tiny inside the
+                  // bigger viewer).
                   <div className="absolute inset-0 flex items-center justify-center p-4">
-                    <div className="bg-card border border-border shadow-sm rounded overflow-hidden max-h-full max-w-full">
+                    <div
+                      className="bg-card border border-border shadow-sm rounded overflow-hidden h-full max-w-full flex items-center justify-center"
+                      style={{ aspectRatio: "8.5 / 11" }}
+                    >
                       <AuthImage
                         key={activePage.page_id}
                         path={`/api/v1/apps/loan-onboarding/packages/${packageId}/pages/${activePage.page_id}/image`}
                         orgId={orgId}
                         alt={`Page ${activePage.page_number}`}
-                        className="block max-h-full max-w-full w-auto h-auto"
+                        className="block w-full h-full object-contain"
                       />
                     </div>
                   </div>
@@ -866,10 +1068,10 @@ function PageViewer({
                         orgId={orgId}
                         alt={`Page ${activePage.page_number}`}
                         className="block w-auto"
-                        // 800px ≈ "100%" anchor (a US-Letter render at DPI=100
-                        // is ~830px tall). Each zoom step scales relative to
-                        // that, so 200% ≈ 1600px, 50% ≈ 400px.
-                        style={{ height: `${800 * zoom}px` }}
+                        // 1050px ≈ "100%" anchor — sized to the new A4
+                        // viewer (clamp(640, 88vh, 1100)) so 100% matches a
+                        // full A4 page at native size. 200% ≈ 2100px, 50% ≈ 525px.
+                        style={{ height: `${1050 * zoom}px` }}
                       />
                     </div>
                   </div>
@@ -880,14 +1082,6 @@ function PageViewer({
                 </div>
               )}
             </div>
-
-            {/* Floating zoom controls anchored to the wrapper corner so the
-                scrolling image inside never moves them offscreen. */}
-            {activePage && (
-              <div className="absolute bottom-3 right-3 z-10">
-                <ZoomControls zoom={zoom} onChange={setZoom} />
-              </div>
-            )}
 
             {/* Drop targets overlay — only rendered while a thumb is being
                 dragged. Positioned `absolute inset-0` over the preview so
@@ -909,8 +1103,9 @@ function PageViewer({
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                       {moveOptions.map((dt) => (
                         <DocTypeDropZone
-                          key={dt}
-                          docType={dt}
+                          key={dt.key}
+                          docType={dt.key}
+                          label={dt.label}
                           isActive={!!draggingPageId}
                         />
                       ))}
@@ -939,16 +1134,51 @@ function PageViewer({
           {/* Move action bar */}
           {activePage && (() => {
             const q = pickerQuery.trim().toLowerCase();
+            // Filter by label OR description so users can find a type by
+            // searching for "loan application" → URLA_1003, etc.
             const filtered = q
-              ? moveOptions.filter((dt) =>
-                  (LOAN_DOC_TYPE_LABELS[dt] ?? dt)
-                    .toLowerCase()
-                    .includes(q)
+              ? moveOptions.filter(
+                  (opt) =>
+                    opt.label.toLowerCase().includes(q) ||
+                    (opt.description?.toLowerCase().includes(q) ?? false) ||
+                    opt.key.toLowerCase().includes(q)
                 )
               : moveOptions;
-            const activeDraftLabel = activeDraft
-              ? (LOAN_DOC_TYPE_LABELS[activeDraft] ?? activeDraft)
-              : "";
+            // Catch-all (Others) is surfaced as a sticky footer button so
+            // demoting a misclassified page is always one click away — no
+            // scrolling required. We strip it out of the main list.
+            const catchAllOption = moveOptions.find(
+              (o) => o.group === "catch-all"
+            );
+            // Bucket by group for sectioned rendering. Order matters — the
+            // user reads top-to-bottom and we want the package's configured
+            // list to come first.
+            const grouped = {
+              configured: filtered.filter((o) => o.group === "configured"),
+              detected: filtered.filter((o) => o.group === "detected"),
+              suggested: filtered.filter((o) => o.group === "suggested"),
+              "catch-all": filtered.filter((o) => o.group === "catch-all"),
+            };
+            const SECTION_LABELS: Record<MoveOption["group"], string> = {
+              configured: "Expected for this package",
+              detected: "Other detected types",
+              suggested: "Other common types",
+              "catch-all": "Catch-all",
+            };
+            const SECTION_ORDER: MoveOption["group"][] = [
+              "configured",
+              "detected",
+              "suggested",
+            ];
+
+            const activeDraftOption = activeDraft
+              ? moveOptions.find((o) => o.key === activeDraft)
+              : null;
+            const activeDraftLabel =
+              activeDraftOption?.label ??
+              (activeDraft
+                ? (LOAN_DOC_TYPE_LABELS[activeDraft] ?? activeDraft)
+                : "");
             const triggerDisabled =
               !!activeOverride ||
               busyPageId === activePage.page_id ||
@@ -958,8 +1188,9 @@ function PageViewer({
               <span className="font-mono text-[9px] tracking-[0.15em] text-muted-foreground uppercase shrink-0">
                 Move to
               </span>
-              <div className="flex-1 relative">
+              <div className="flex-1">
                 <button
+                  ref={triggerRef}
                   type="button"
                   onClick={() => {
                     if (triggerDisabled) return;
@@ -993,17 +1224,70 @@ function PageViewer({
                     )}
                   />
                 </button>
-                {pickerOpen && !activeOverride && (
+                {pickerOpen && !activeOverride && pickerRect && typeof document !== "undefined" && createPortal(
                   <>
-                    {/* Click-outside backdrop closes the popover. */}
+                    {/* Click-outside backdrop closes the popover. Portaled to
+                        body so it sits above any ancestor overflow boxes. */}
                     <div
-                      className="fixed inset-0 z-10"
+                      className="fixed inset-0 z-[90]"
                       onClick={closePicker}
                       aria-hidden
                     />
-                    {/* Popover above the trigger so it stays inside the viewer. */}
+                    {/* Popover positioned via fixed coords anchored to the
+                        trigger's bounding rect. Vertical placement is chosen
+                        per-render: prefer ABOVE the trigger so the inline
+                        action bar isn't covered, but fall back to BELOW when
+                        the trigger is too close to the top of the viewport. */}
+                    {(() => {
+                      const VIEWPORT_GUTTER = 8;
+                      const TRIGGER_GAP = 6;
+                      const popoverWidth = Math.max(pickerRect.width, 360);
+                      // Clamp horizontally inside the viewport.
+                      const left = Math.max(
+                        VIEWPORT_GUTTER,
+                        Math.min(
+                          pickerRect.left,
+                          window.innerWidth - popoverWidth - VIEWPORT_GUTTER
+                        )
+                      );
+                      // Choose the side with more room → clamp maxHeight to
+                      // that side's actual space so the popover never
+                      // overflows the viewport (which used to truncate the
+                      // top rows when placed above).
+                      const spaceAbove = pickerRect.top - VIEWPORT_GUTTER - TRIGGER_GAP;
+                      const spaceBelow =
+                        window.innerHeight -
+                        pickerRect.bottom -
+                        VIEWPORT_GUTTER -
+                        TRIGGER_GAP;
+                      const placeAbove = spaceAbove > spaceBelow;
+                      const availableSpace = Math.max(
+                        180,
+                        placeAbove ? spaceAbove : spaceBelow
+                      );
+                      const popoverMaxHeight = Math.min(420, availableSpace);
+                      const style: React.CSSProperties = placeAbove
+                        ? {
+                            position: "fixed",
+                            left,
+                            bottom:
+                              window.innerHeight -
+                              pickerRect.top +
+                              TRIGGER_GAP,
+                            width: popoverWidth,
+                            maxHeight: popoverMaxHeight,
+                          }
+                        : {
+                            position: "fixed",
+                            left,
+                            top: pickerRect.bottom + TRIGGER_GAP,
+                            width: popoverWidth,
+                            maxHeight: popoverMaxHeight,
+                          };
+                      return (
                     <div
-                      className="absolute bottom-full left-0 right-0 mb-2 bg-popover border border-border rounded-md shadow-lg z-20 flex flex-col"
+                      className="z-[100] bg-popover border border-border rounded-md shadow-xl flex flex-col"
+                      style={style}
                       role="listbox"
                     >
                       <div className="p-2 border-b border-border/60">
@@ -1012,56 +1296,185 @@ function PageViewer({
                           autoFocus
                           value={pickerQuery}
                           onChange={(e) => setPickerQuery(e.target.value)}
-                          placeholder="Search doc types…"
+                          placeholder="Search by name or description…"
                           className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                           aria-label="Search doc types"
                         />
                       </div>
-                      <div className="overflow-y-auto max-h-[220px]">
+                      <div className="overflow-y-auto flex-1 min-h-0">
                         {filtered.length === 0 ? (
-                          <div className="px-3 py-4 text-[11px] text-muted-foreground italic">
-                            No doc types match.
+                          <div className="px-3 py-6 text-[11px] text-muted-foreground italic text-center">
+                            No doc types match &ldquo;{pickerQuery}&rdquo;.
                           </div>
                         ) : (
-                          filtered.map((dt) => {
-                            const label =
-                              LOAN_DOC_TYPE_LABELS[dt] ?? dt;
-                            const selected = activeDraft === dt;
+                          SECTION_ORDER.map((group) => {
+                            const items = grouped[group];
+                            if (items.length === 0) return null;
+                            // Search bypasses the per-section cap — when the
+                            // user is filtering, all matches should be
+                            // visible (search IS the filter mechanism).
+                            const isExpanded =
+                              !!q || expandedSections.has(group);
+                            const visible = isExpanded
+                              ? items
+                              : items.slice(0, SECTION_PAGE_SIZE);
+                            const hiddenCount = items.length - visible.length;
                             return (
-                              <button
-                                key={dt}
-                                type="button"
-                                role="option"
-                                aria-selected={selected}
-                                onClick={() => {
-                                  setDraftByPage((prev) => ({
-                                    ...prev,
-                                    [activePage.page_id]: dt,
-                                  }));
-                                  closePicker();
-                                }}
-                                className={cn(
-                                  "w-full text-left px-3 py-1.5 text-xs hover:bg-muted/60 transition-colors",
-                                  selected
-                                    ? "bg-amber-50/70 text-foreground font-medium"
-                                    : "text-foreground"
+                              <div key={group}>
+                                <div className="px-3 py-1.5 bg-muted/30 border-b border-border/40 sticky top-0 z-10 flex items-center justify-between gap-2">
+                                  <div className="flex items-baseline gap-1.5">
+                                    <span className="font-mono text-[9px] tracking-[0.15em] text-muted-foreground uppercase">
+                                      {SECTION_LABELS[group]}
+                                    </span>
+                                    <span className="font-mono text-[9px] tabular-nums text-muted-foreground/70">
+                                      {isExpanded
+                                        ? items.length
+                                        : `${visible.length} / ${items.length}`}
+                                    </span>
+                                  </div>
+                                </div>
+                                {visible.map((opt) => {
+                                  const selected = activeDraft === opt.key;
+                                  return (
+                                    <button
+                                      key={opt.key}
+                                      type="button"
+                                      role="option"
+                                      aria-selected={selected}
+                                      onClick={() => {
+                                        setDraftByPage((prev) => ({
+                                          ...prev,
+                                          [activePage.page_id]: opt.key,
+                                        }));
+                                        closePicker();
+                                      }}
+                                      className={cn(
+                                        "w-full text-left px-3 py-2 hover:bg-muted/60 transition-colors flex items-start gap-2 border-b border-border/30 last:border-b-0",
+                                        selected && "bg-amber-50/70"
+                                      )}
+                                      data-testid={`move-option-${opt.key}`}
+                                    >
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span
+                                            className={cn(
+                                              "text-xs truncate",
+                                              selected
+                                                ? "font-semibold text-foreground"
+                                                : "font-medium text-foreground"
+                                            )}
+                                          >
+                                            {opt.label}
+                                          </span>
+                                          {opt.required && (
+                                            <span className="font-mono text-[8px] tracking-[0.1em] uppercase text-amber-800 bg-amber-100 ring-1 ring-amber-200 rounded px-1.5 py-0.5">
+                                              Required
+                                            </span>
+                                          )}
+                                        </div>
+                                        {opt.description && (
+                                          <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                                            {opt.description}
+                                          </div>
+                                        )}
+                                      </div>
+                                      {selected && (
+                                        <Check className="h-3.5 w-3.5 text-amber-700 shrink-0 mt-0.5" />
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                                {/* Per-section "Show all / Show less" — only
+                                    when not searching and the section has
+                                    more than the page size. Sits inline at
+                                    the bottom of each section so the user
+                                    expands exactly what they need. */}
+                                {!q && (hiddenCount > 0 || isExpanded) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setExpandedSections((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(group)) next.delete(group);
+                                        else next.add(group);
+                                        return next;
+                                      });
+                                    }}
+                                    className="w-full text-left px-3 py-2 text-[11px] font-medium text-amber-800 hover:bg-amber-50 transition-colors border-b border-border/30 flex items-center gap-1.5"
+                                    data-testid={`move-section-toggle-${group}`}
+                                  >
+                                    <ChevronDown
+                                      className={cn(
+                                        "h-3 w-3 transition-transform",
+                                        isExpanded && "rotate-180"
+                                      )}
+                                    />
+                                    {isExpanded
+                                      ? "Show less"
+                                      : `Show ${hiddenCount} more`}
+                                  </button>
                                 )}
-                                data-testid={`move-option-${dt}`}
-                              >
-                                {label}
-                              </button>
+                              </div>
                             );
                           })
                         )}
                       </div>
+                      {/* Sticky catch-all footer — promotes the "Others"
+                          option out of the scrollable list so demoting a
+                          misclassified page is always one click away,
+                          regardless of how the user has expanded sections
+                          or what they're searching for. */}
+                      {catchAllOption && (
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={activeDraft === catchAllOption.key}
+                          onClick={() => {
+                            setDraftByPage((prev) => ({
+                              ...prev,
+                              [activePage.page_id]: catchAllOption.key,
+                            }));
+                            closePicker();
+                          }}
+                          className={cn(
+                            "border-t border-border/60 bg-muted/30 px-3 py-2.5 text-left hover:bg-muted/60 transition-colors flex items-start gap-2",
+                            activeDraft === catchAllOption.key &&
+                              "bg-amber-50/70"
+                          )}
+                          data-testid={`move-option-${catchAllOption.key}`}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-medium text-foreground">
+                                Move to Others
+                              </span>
+                              <span className="font-mono text-[8px] tracking-[0.1em] uppercase text-muted-foreground bg-background ring-1 ring-border rounded px-1.5 py-0.5">
+                                Catch-all
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                              Pages that don&rsquo;t fit any expected document
+                              type
+                            </div>
+                          </div>
+                          {activeDraft === catchAllOption.key && (
+                            <Check className="h-3.5 w-3.5 text-amber-700 shrink-0 mt-0.5" />
+                          )}
+                        </button>
+                      )}
                       <div className="px-3 py-1.5 border-t border-border/60 bg-muted/40 font-mono text-[9px] tracking-[0.15em] text-muted-foreground uppercase tabular-nums flex items-center justify-between">
                         <span>
-                          {filtered.length} of {moveOptions.length}
+                          {q
+                            ? `${filtered.filter((o) => o.group !== "catch-all").length} match${filtered.filter((o) => o.group !== "catch-all").length === 1 ? "" : "es"}`
+                            : `${moveOptions.filter((o) => o.group !== "catch-all").length} doc types`}
                         </span>
-                        <span>Esc / click outside to close</span>
+                        <span>Esc to close</span>
                       </div>
                     </div>
-                  </>
+                      );
+                    })()}
+                  </>,
+                  document.body
                 )}
               </div>
               {activeOverride ? (
@@ -1102,6 +1515,168 @@ function PageViewer({
         splits the stack here).
       </div>
     </div>
+    {/* Full-page lightbox — opens when the user hits "Full view" or presses
+        Enter on the button. Renders the same `/image` endpoint at viewport
+        size with its own zoom + page navigation. Backdrop click and Escape
+        close; ←/→ paginate within the visible (filtered) pages. */}
+    {lightboxOpen && activePage && (() => {
+      const idx = visiblePages.findIndex((p) => p.page_id === activePageId);
+      const prev = idx > 0 ? visiblePages[idx - 1] : null;
+      const next =
+        idx >= 0 && idx < visiblePages.length - 1
+          ? visiblePages[idx + 1]
+          : null;
+      const positionLabel =
+        idx >= 0 ? `${idx + 1} of ${visiblePages.length}` : null;
+      return (
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Page ${activePage.page_number} full view`}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setLightboxOpen(false);
+          }}
+          data-testid="page-lightbox"
+        >
+          {/* Header — page identity + zoom + close. White on dark to read
+              against the backdrop image area. */}
+          <div
+            className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-6 py-3 bg-card/95 backdrop-blur border-b border-border/40 shrink-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-baseline gap-4 min-w-0">
+              <div className="text-base font-medium">
+                Page {activePage.page_number}
+                {positionLabel && (
+                  <span className="text-muted-foreground text-xs font-normal ml-2">
+                    ({positionLabel} in stack)
+                  </span>
+                )}
+              </div>
+              {activePage.page_role && (
+                <div className="font-mono text-[10px] tracking-[0.15em] text-muted-foreground uppercase">
+                  {activePage.page_role.replace(/_/g, " ")}
+                </div>
+              )}
+              <div className="font-mono text-[10px] text-muted-foreground">
+                {currentLabel}
+                {activeOverride && (
+                  <span className="inline-flex items-center gap-1 ml-2 text-amber-700">
+                    <ArrowRight className="h-3 w-3" />
+                    <span className="font-medium">
+                      {LOAN_DOC_TYPE_LABELS[activeOverride.assigned_doc_type] ??
+                        activeOverride.assigned_doc_type}
+                    </span>
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <ZoomControls zoom={lightboxZoom} onChange={setLightboxZoom} />
+              <button
+                type="button"
+                onClick={() => setLightboxOpen(false)}
+                className="p-1.5 rounded-md border border-border bg-card hover:bg-muted/60 transition-colors"
+                aria-label="Close full view (Esc)"
+                title="Close (Esc)"
+                data-testid="page-lightbox-close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Image surface — fills available height. Scrollable when zoomed
+              past "fit". Clicking the dim margin (not the image) closes. */}
+          <div
+            className="flex-1 relative overflow-hidden"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setLightboxOpen(false);
+            }}
+          >
+            <div className="absolute inset-0 overflow-auto">
+              {lightboxZoom === "fit" ? (
+                // Same fit-fix as the inline viewer: use a portrait-aspect
+                // wrapper at h-full so the image scales up via object-contain
+                // instead of rendering at its intrinsic source resolution.
+                <div className="absolute inset-0 flex items-center justify-center p-6">
+                  <div
+                    className="h-full max-w-full shadow-2xl rounded overflow-hidden bg-white flex items-center justify-center"
+                    style={{ aspectRatio: "8.5 / 11" }}
+                  >
+                    <AuthImage
+                      key={`lightbox-${activePage.page_id}`}
+                      path={`/api/v1/apps/loan-onboarding/packages/${packageId}/pages/${activePage.page_id}/image`}
+                      orgId={orgId}
+                      alt={`Page ${activePage.page_number}`}
+                      className="block w-full h-full object-contain"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="p-6 inline-block">
+                  <AuthImage
+                    key={`lightbox-${activePage.page_id}`}
+                    path={`/api/v1/apps/loan-onboarding/packages/${packageId}/pages/${activePage.page_id}/image`}
+                    orgId={orgId}
+                    alt={`Page ${activePage.page_number}`}
+                    className="block w-auto shadow-2xl rounded"
+                    // Larger anchor than the inline preview (1100 vs 800):
+                    // a US-Letter render at the lightbox's bigger surface
+                    // wants more pixels at "100%" before the user has to
+                    // start zooming further.
+                    style={{ height: `${1100 * (lightboxZoom as number)}px` }}
+                  />
+                </div>
+              )}
+            </div>
+
+            {prev && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActivePageId(prev.page_id);
+                }}
+                className="absolute left-4 top-1/2 -translate-y-1/2 p-2 rounded-full bg-card/95 border border-border hover:bg-muted/60 shadow-lg transition-colors"
+                aria-label="Previous page (Left arrow)"
+                title="Previous page (←)"
+                data-testid="page-lightbox-prev"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+            )}
+            {next && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActivePageId(next.page_id);
+                }}
+                className="absolute right-4 top-1/2 -translate-y-1/2 p-2 rounded-full bg-card/95 border border-border hover:bg-muted/60 shadow-lg transition-colors"
+                aria-label="Next page (Right arrow)"
+                title="Next page (→)"
+                data-testid="page-lightbox-next"
+              >
+                <ChevronRight className="h-5 w-5" />
+              </button>
+            )}
+          </div>
+
+          {/* Footer hint — keyboard shortcuts. Subtle, non-blocking. */}
+          <div
+            className="px-6 py-2 bg-card/95 backdrop-blur border-t border-border/40 text-[10px] font-mono tracking-[0.1em] uppercase text-muted-foreground shrink-0 flex items-center gap-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span>← / → navigate</span>
+            <span>0 fit</span>
+            <span>Esc close</span>
+          </div>
+        </div>
+      );
+    })()}
     {/* Floating drag preview — without this the source thumb just dims
         in place, which reads as "drag isn't working" to most users.
         We portal a small chip showing the page number being moved. */}
@@ -1424,16 +1999,21 @@ function RoleDropZone({
  */
 function DocTypeDropZone({
   docType,
+  label: labelOverride,
   isActive,
 }: {
   docType: string;
+  /** Optional pretty label from the rich `MoveOption`. Falls back to the
+   *  legacy LOAN_DOC_TYPE_LABELS map → raw key chain so existing callers
+   *  that don't pass this prop still render correctly. */
+  label?: string;
   isActive: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: `lo-doctype-${docType}`,
     data: { kind: "doctype", docType },
   });
-  const label = LOAN_DOC_TYPE_LABELS[docType] ?? docType;
+  const label = labelOverride ?? LOAN_DOC_TYPE_LABELS[docType] ?? docType;
   return (
     <div
       ref={setNodeRef}

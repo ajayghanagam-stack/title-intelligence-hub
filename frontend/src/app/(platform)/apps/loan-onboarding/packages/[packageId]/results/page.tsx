@@ -478,7 +478,7 @@ export default function LoanPackageResultsPage() {
                         stack={stack}
                         validation={vr}
                         allStacks={sortedStacks}
-                        packageDocTypes={pkg.doc_types.map((d) => d.key)}
+                        packageDocTypeSpecs={pkg.doc_types}
                         overrides={overridesByPageId}
                         extraction={
                           pkg.extraction_enabled
