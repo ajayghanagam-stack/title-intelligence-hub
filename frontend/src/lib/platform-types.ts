@@ -65,6 +65,7 @@ export interface AccountDetail {
   id: string;
   name: string;
   slug: string;
+  logo_url: string | null;
   is_active: boolean;
   created_at: string;
   users: AccountUser[];

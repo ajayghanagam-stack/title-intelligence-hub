@@ -12,7 +12,8 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Building2, Users, Package, Plus, Trash2, KeyRound } from "lucide-react";
+import Image from "next/image";
+import { ArrowLeft, Building2, Users, Package, Plus, Trash2, KeyRound, ImageIcon } from "lucide-react";
 
 import type { AccountDetail, MicroApp } from "@/lib/platform-types";
 import { API_URL } from "@/lib/config";
@@ -48,6 +49,8 @@ export default function AccountDetailPage() {
   const [newPassword, setNewPassword] = useState("");
   const [resetSuccess, setResetSuccess] = useState("");
   const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
+  const [logoUrlDraft, setLogoUrlDraft] = useState("");
+  const [logoSavedMsg, setLogoSavedMsg] = useState("");
 
   const fetchData = useCallback(async () => {
     try {
@@ -56,6 +59,7 @@ export default function AccountDetailPage() {
         adminFetch("/api/v1/admin/apps"),
       ]);
       setAccount(acct);
+      setLogoUrlDraft(acct.logo_url ?? "");
       setAllApps(apps.filter((a: MicroApp) => a.is_active));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load account");
@@ -107,6 +111,26 @@ export default function AccountDetailPage() {
       await fetchData();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to delete user");
+    }
+    setActionLoading(null);
+  };
+
+  const saveLogoUrl = async () => {
+    setActionLoading("logo");
+    setError("");
+    setLogoSavedMsg("");
+    try {
+      const trimmed = logoUrlDraft.trim();
+      // PATCH the org via the regular org route — admins can edit their own org,
+      // platform admins can edit any. Empty string clears the logo (sent as null).
+      await adminFetch(`/api/v1/organizations/${orgId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ logo_url: trimmed === "" ? null : trimmed }),
+      });
+      setLogoSavedMsg("Logo updated. Reload the org's login page or sign in again to see the change.");
+      await fetchData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to update logo");
     }
     setActionLoading(null);
   };
@@ -185,6 +209,70 @@ export default function AccountDetailPage() {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
       {resetSuccess && <p className="text-sm text-green-600">{resetSuccess}</p>}
+
+      {/* Branding — sets logo shown on /{slug}/login + sidebar after login */}
+      <Card className="shadow-sm">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <ImageIcon className="h-5 w-5" />
+            Branding
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+            <div className="flex h-24 w-48 shrink-0 items-center justify-center rounded-lg border bg-muted/30">
+              {account.logo_url ? (
+                <Image
+                  src={account.logo_url}
+                  alt={`${account.name} logo`}
+                  width={200}
+                  height={80}
+                  className="max-h-20 w-auto"
+                />
+              ) : (
+                <span className="text-xs text-muted-foreground">No logo set</span>
+              )}
+            </div>
+            <div className="flex-1 space-y-2">
+              <label className="text-sm font-medium" htmlFor="logo-url-input">
+                Logo URL
+              </label>
+              <Input
+                id="logo-url-input"
+                value={logoUrlDraft}
+                onChange={(e) => setLogoUrlDraft(e.target.value)}
+                placeholder="/logikcore-primary.svg or https://cdn.example.com/logo.svg"
+              />
+              <p className="text-xs text-muted-foreground">
+                Public asset path (e.g. <code>/logikcore-primary.svg</code>) or an absolute URL. Shown on the org&rsquo;s
+                login page (<code>/{account.slug}/login</code>) and in the sidebar after login.
+              </p>
+              {logoSavedMsg && <p className="text-xs text-green-600">{logoSavedMsg}</p>}
+              <div className="flex gap-2 pt-1">
+                <Button
+                  size="sm"
+                  onClick={saveLogoUrl}
+                  disabled={actionLoading === "logo" || logoUrlDraft.trim() === (account.logo_url ?? "")}
+                >
+                  {actionLoading === "logo" ? "Saving..." : "Save logo"}
+                </Button>
+                {account.logo_url && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setLogoUrlDraft("");
+                    }}
+                    disabled={actionLoading === "logo"}
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Enabled Micro Apps */}
       <Card className="shadow-sm">

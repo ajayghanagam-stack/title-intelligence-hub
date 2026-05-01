@@ -149,6 +149,7 @@ async def get_account(db: AsyncSession, org_id: uuid.UUID) -> dict:
         "id": str(org.id),
         "name": org.name,
         "slug": org.slug,
+        "logo_url": org.logo_url,
         "is_active": org.is_active,
         "created_at": org.created_at,
         "users": users,

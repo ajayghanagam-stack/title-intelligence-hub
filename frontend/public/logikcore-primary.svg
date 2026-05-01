@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 140" width="620" height="140">
+  <g>
+    <polygon points="105,70 82.5,31.0 37.5,31.0 15,70 37.5,109.0 82.5,109.0"
+             fill="none" stroke="#BD33A4" stroke-width="9" stroke-linejoin="round"/>
+    <circle cx="60" cy="70" r="18" fill="#FCAE1E"/>
+  </g>
+  <text x="138" y="80" font-family="Proxima Nova, 'Proxima Nova', Inter, system-ui, -apple-system, Helvetica, Arial, sans-serif" font-size="50" font-weight="700" letter-spacing="-1.6">
+    <tspan fill="#53585F">Logik</tspan><tspan fill="#BD33A4">Core</tspan>
+  </text>
+  <text x="141" y="108" font-family="Proxima Nova, 'Proxima Nova', Inter, system-ui, -apple-system, Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#53585F" letter-spacing="0.3">
+    Decision-Ready at the Core
+  </text>
+</svg>

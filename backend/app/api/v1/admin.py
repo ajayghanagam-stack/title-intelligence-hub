@@ -97,6 +97,7 @@ class AccountDetail(BaseModel):
     id: str
     name: str
     slug: str
+    logo_url: str | None = None
     is_active: bool
     created_at: datetime
     users: list[dict]
