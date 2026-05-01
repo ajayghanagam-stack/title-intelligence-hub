@@ -218,10 +218,16 @@ async def _run_stage_with_retry(
     while True:
         attempt += 1
         try:
-            async with session_factory() as db:
-                output = await stage_fn(package_id, org_id, db, storage)
-                await db.commit()
-                return output
+            # ingest manages its own sessions internally so it can release the
+            # connection during S3 I/O — see stage_ingest docstring. Other
+            # stages still get one session for the whole call.
+            if stage_fn is stage_ingest:
+                output = await stage_fn(package_id, org_id, session_factory, storage)
+            else:
+                async with session_factory() as db:
+                    output = await stage_fn(package_id, org_id, db, storage)
+                    await db.commit()
+            return output
         except NotImplementedError:
             # Don't retry unimplemented stages — surface immediately to the caller
             raise

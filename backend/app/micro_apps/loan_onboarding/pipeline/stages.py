@@ -15,7 +15,7 @@ import json
 import uuid
 
 from sqlalchemy import select, delete
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.logging import get_logger
 from app.micro_apps.loan_onboarding.models.classification import LOClassification
@@ -121,7 +121,7 @@ def _detect_content_signal(page, text_len: int) -> str:
 async def stage_ingest(
     package_id: uuid.UUID,
     org_id: uuid.UUID,
-    db: AsyncSession,
+    session_factory: async_sessionmaker,
     storage: StorageProvider,
 ) -> dict:
     """Split every uploaded PDF into LOPage rows with heuristic text extraction.
@@ -132,42 +132,56 @@ async def stage_ingest(
     whole package (1-indexed) so later stages can reason about continuity
     without joining through files.
 
+    Connection lifecycle: this stage takes `session_factory` (not a live
+    session) and deliberately uses *two* short-lived sessions sandwiching the
+    long-running storage I/O + PyMuPDF parsing — never holds a DB transaction
+    open across an `await storage.get_object(...)` call. Holding a transaction
+    open across async I/O previously exhausted the connection pool on stage
+    when S3 fetches were slow (5 sessions stuck `idle in transaction` for
+    16+ minutes → `QueuePool limit reached` on every other request).
+
     Idempotent: any existing LOPage rows for this package are deleted first.
     """
     log = get_logger(__name__, org_id=org_id, pack_id=package_id, stage="ingest")
 
-    files = (await db.execute(
-        select(LOPackageFile)
-        .where(LOPackageFile.package_id == package_id, LOPackageFile.org_id == org_id)
-        .order_by(LOPackageFile.created_at.asc(), LOPackageFile.filename.asc())
-    )).scalars().all()
-    if not files:
-        raise ValueError("No files uploaded to this package")
+    # Phase 1: short-lived read session — snapshot file metadata into plain
+    # values, then close. After this `async with` exits, the connection is
+    # released back to the pool.
+    async with session_factory() as db:
+        file_rows = (await db.execute(
+            select(LOPackageFile)
+            .where(LOPackageFile.package_id == package_id, LOPackageFile.org_id == org_id)
+            .order_by(LOPackageFile.created_at.asc(), LOPackageFile.filename.asc())
+        )).scalars().all()
+        if not file_rows:
+            raise ValueError("No files uploaded to this package")
+        file_specs = [
+            {"id": f.id, "storage_path": f.storage_path, "filename": f.filename}
+            for f in file_rows
+        ]
 
-    # Verify all files still exist in storage
-    for f in files:
-        if not await storage.exists(f.storage_path):
-            raise FileNotFoundError(f"File not found in storage: {f.storage_path}")
-
-    # Idempotent: wipe any previous ingest output
-    await db.execute(
-        delete(LOPage).where(LOPage.package_id == package_id, LOPage.org_id == org_id)
-    )
+    # Phase 2: no DB session held. Verify storage existence, fetch bytes, and
+    # parse with PyMuPDF in memory. Pages are accumulated as plain dicts and
+    # bulk-inserted in Phase 3 below.
+    for f in file_specs:
+        if not await storage.exists(f["storage_path"]):
+            raise FileNotFoundError(f"File not found in storage: {f['storage_path']}")
 
     import fitz  # pymupdf — imported here so test envs without fitz can still import the module
 
+    page_rows: list[dict] = []
     global_page_num = 0
     total_text_chars = 0
     text_count = 0
     image_count = 0
     blank_count = 0
 
-    for file_row in files:
-        content = await storage.get_object(file_row.storage_path)
+    for f in file_specs:
+        content = await storage.get_object(f["storage_path"])
         try:
             doc = fitz.open(stream=content, filetype="pdf")
         except Exception as e:
-            raise ValueError(f"Failed to open PDF '{file_row.filename}': {e}") from e
+            raise ValueError(f"Failed to open PDF '{f['filename']}': {e}") from e
 
         try:
             for source_idx in range(doc.page_count):
@@ -185,27 +199,37 @@ async def stage_ingest(
                 else:
                     blank_count += 1
 
-                db.add(LOPage(
-                    org_id=org_id,
-                    package_id=package_id,
-                    file_id=file_row.id,
-                    page_number=global_page_num,
-                    source_page_number=source_idx + 1,
-                    heuristic_text=text,
-                    text_length=text_len,
-                    content_signal=signal,
-                ))
+                page_rows.append({
+                    "org_id": org_id,
+                    "package_id": package_id,
+                    "file_id": f["id"],
+                    "page_number": global_page_num,
+                    "source_page_number": source_idx + 1,
+                    "heuristic_text": text,
+                    "text_length": text_len,
+                    "content_signal": signal,
+                })
         finally:
             doc.close()
 
-    await db.flush()
+    # Phase 3: short-lived write session — wipe any previous ingest output and
+    # bulk-insert the new pages in one transaction.
+    async with session_factory() as db:
+        await db.execute(
+            delete(LOPage).where(
+                LOPage.package_id == package_id, LOPage.org_id == org_id
+            )
+        )
+        for row in page_rows:
+            db.add(LOPage(**row))
+        await db.commit()
 
     log.info(
-        f"Ingested {global_page_num} pages from {len(files)} file(s); "
+        f"Ingested {global_page_num} pages from {len(file_specs)} file(s); "
         f"{text_count} text, {image_count} image-bearing, {blank_count} blank"
     )
     return {
-        "files": len(files),
+        "files": len(file_specs),
         "pages": global_page_num,
         "text_pages": text_count,
         "image_pages": image_count,

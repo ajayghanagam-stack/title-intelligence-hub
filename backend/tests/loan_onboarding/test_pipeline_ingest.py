@@ -96,8 +96,7 @@ async def test_ingest_splits_pdf_into_pages(
     ])
     await _upload_file(db_session, storage, TEST_PACKAGE_ID, "loan_bundle.pdf", pdf_bytes)
 
-    output = await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
-    await db_session.commit()
+    output = await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, test_session_factory, storage)
 
     assert output["files"] == 1
     assert output["pages"] == 3
@@ -126,8 +125,7 @@ async def test_ingest_detects_scanned_pages_as_image(
     pdf_bytes = _make_scanned_pdf(num_pages=2)
     await _upload_file(db_session, storage, TEST_PACKAGE_ID, "scanned.pdf", pdf_bytes)
 
-    output = await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
-    await db_session.commit()
+    output = await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, test_session_factory, storage)
 
     # Both pages had an image inserted and no text layer → both must be
     # classified as image-bearing, NOT blank (which would route them to
@@ -159,8 +157,7 @@ async def test_ingest_signal_mix_across_pages(
     await _upload_file(db_session, storage, TEST_PACKAGE_ID, "b.pdf", blank_pdf)
     await _upload_file(db_session, storage, TEST_PACKAGE_ID, "c.pdf", scanned_pdf)
 
-    output = await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
-    await db_session.commit()
+    output = await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, test_session_factory, storage)
 
     assert output["pages"] == 3
     assert output["text_pages"] == 1
@@ -183,8 +180,7 @@ async def test_ingest_numbers_pages_globally_across_files(
     await _upload_file(db_session, storage, TEST_PACKAGE_ID, "a.pdf", pdf_a)
     await _upload_file(db_session, storage, TEST_PACKAGE_ID, "b.pdf", pdf_b)
 
-    output = await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
-    await db_session.commit()
+    output = await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, test_session_factory, storage)
 
     assert output["pages"] == 5
 
@@ -204,10 +200,8 @@ async def test_ingest_is_idempotent(sample_package, db_session: AsyncSession):
     pdf_bytes = _make_pdf(["page one", "page two"])
     await _upload_file(db_session, storage, TEST_PACKAGE_ID, "bundle.pdf", pdf_bytes)
 
-    await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
-    await db_session.commit()
-    await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
-    await db_session.commit()
+    await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, test_session_factory, storage)
+    await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, test_session_factory, storage)
 
     count = (await db_session.execute(
         select(LOPage).where(LOPage.package_id == TEST_PACKAGE_ID)
@@ -219,7 +213,7 @@ async def test_ingest_is_idempotent(sample_package, db_session: AsyncSession):
 async def test_ingest_raises_without_files(sample_package, db_session: AsyncSession):
     storage = get_storage()
     with pytest.raises(ValueError, match="No files uploaded"):
-        await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
+        await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, test_session_factory, storage)
 
 
 @pytest.mark.asyncio

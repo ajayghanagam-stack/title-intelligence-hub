@@ -86,9 +86,15 @@ async def _run_stage(stage_fn, package_id: str, org_id: str, stage_name: str) ->
     stage_started = time.time()
     heartbeat_task = asyncio.create_task(_heartbeat_loop(stage_name))
     try:
-        async with sf() as db:
-            output = await stage_fn(package_uuid, org_uuid, db, storage)
-            await db.commit()
+        # ingest manages its own sessions internally so it can release the
+        # connection during S3 I/O — see stage_ingest docstring. Other stages
+        # still get one session for the whole call.
+        if stage_fn is stage_ingest:
+            output = await stage_fn(package_uuid, org_uuid, sf, storage)
+        else:
+            async with sf() as db:
+                output = await stage_fn(package_uuid, org_uuid, db, storage)
+                await db.commit()
     finally:
         heartbeat_task.cancel()
         try:

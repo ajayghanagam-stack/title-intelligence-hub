@@ -25,7 +25,7 @@ from app.micro_apps.loan_onboarding.models.classification import LOClassificatio
 from app.micro_apps.loan_onboarding.models.package_file import LOPackageFile
 from app.micro_apps.loan_onboarding.pipeline.stages import stage_classify
 from app.services.storage import get_storage
-from tests.conftest import TEST_ORG_ID
+from tests.conftest import TEST_ORG_ID, test_session_factory
 from tests.loan_onboarding.conftest import TEST_PACKAGE_ID
 
 
@@ -355,8 +355,7 @@ async def test_stage_classify_skips_blank_pages_and_writes_rows(
     ])
     await _upload_file(db_session, storage, TEST_PACKAGE_ID, "bundle.pdf", pdf_bytes)
 
-    await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
-    await db_session.commit()
+    await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, test_session_factory, storage)
 
     # Mock the classifier: returns URLA_1003 for the first content page, PAYSTUB for the second
     # (classifier only ever sees content pages 1 and 3)
@@ -399,8 +398,7 @@ async def test_stage_classify_is_idempotent(
     storage = get_storage()
     pdf_bytes = _make_pdf(["URLA 1003 page one — Borrower: Jane. Income: $120k."])
     await _upload_file(db_session, storage, TEST_PACKAGE_ID, "bundle.pdf", pdf_bytes)
-    await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
-    await db_session.commit()
+    await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, test_session_factory, storage)
 
     async def fake_call(**kwargs):
         return {"classifications": [
@@ -450,8 +448,7 @@ async def test_stage_classify_routes_image_pages_to_llm(
     pdf_bytes = _make_scanned_pdf(num_pages=2)
     await _upload_ingest(db_session, storage, TEST_PACKAGE_ID, "scanned.pdf", pdf_bytes)
 
-    await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
-    await db_session.commit()
+    await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, test_session_factory, storage)
 
     # The classifier should see 2 pages (the image-bearing pair). Emit
     # URLA_1003 for both so we can prove they did not get auto-Othered.
@@ -502,8 +499,7 @@ async def test_stage_classify_still_shortcircuits_truly_blank_pages(
     pdf_bytes = _make_pdf(["", ""])  # both pages empty → signal='blank'
     await _upload_file(db_session, storage, TEST_PACKAGE_ID, "empty.pdf", pdf_bytes)
 
-    await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
-    await db_session.commit()
+    await stage_ingest(TEST_PACKAGE_ID, TEST_ORG_ID, test_session_factory, storage)
 
     # call_json_structured should NOT be invoked at all — assert via side_effect
     async def _boom(**_kwargs):  # pragma: no cover — must not run
