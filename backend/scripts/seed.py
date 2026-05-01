@@ -1,16 +1,18 @@
 """
 Seed the database with:
-  1. Logikality organization (platform admin's home org)
-  2. Logikality Admin user (platform super admin — creates customer accounts, manages apps)
-  3. Title Intelligence micro app (available for admin to assign to customers)
-
-The Logikality Admin does NOT subscribe to any micro app.
-He is the super admin who creates and manages customer accounts.
+  1. Logikality organization + platform admin (super admin — creates customer accounts, manages apps)
+  2. The three micro apps (TI, TSA, LO) so they can be assigned to customers
+  3. Demo customer accounts with default passwords:
+       - Society Title (admin@societytitle.com / password123)
+       - Alliance Title Co. (admin@alliancetitle.com / password123)
+       - LogikCore (admin@logikcore.com + 6 members @logikcore.com / password123)
+  4. Mock county sources for the TSA pipeline
 
 Usage:
     cd backend && PYTHONPATH=. python scripts/seed.py
 
-Idempotent — safe to run multiple times.
+Idempotent — safe to run multiple times. Existing user passwords are NEVER
+overwritten on re-run; the seed password is only the *initial* credential.
 """
 
 import asyncio
@@ -291,6 +293,134 @@ async def seed(session: AsyncSession) -> None:
             print(f"  Subscribed {ALLIANCE_ORG_NAME} to {app_obj.name}")
         else:
             print(f"  Subscription already exists: {ALLIANCE_ORG_NAME} → {app_obj.name}")
+    await session.flush()
+
+    # ── 6b. LogikCore customer account ────────────────────────
+    LOGIKCORE_ORG_NAME = "LogikCore"
+    LOGIKCORE_ORG_SLUG = "logikcore"
+    LOGIKCORE_LOGO_URL = "/logikcore-primary.svg"
+    LOGIKCORE_OWNER_EMAIL = "admin@logikcore.com"
+    LOGIKCORE_OWNER_NAME = "Ajay Ghanagam"
+    LOGIKCORE_PASSWORD = "password123"
+    # (email, full_name) — all share the same default seed password
+    LOGIKCORE_MEMBERS = [
+        ("ananya@logikcore.com", "Ananya"),
+        ("shantanu@logikcore.com", "Shantanu"),
+        ("ajay@logikcore.com", "Ajay"),
+        ("gautham@logikcore.com", "Gautham"),
+        ("malavika@logikcore.com", "Malavika"),
+        ("alok@logikcore.com", "Alok"),
+    ]
+
+    result = await session.execute(
+        select(Organization).where(Organization.slug == LOGIKCORE_ORG_SLUG)
+    )
+    logikcore_org = result.scalar_one_or_none()
+    if logikcore_org is None:
+        logikcore_org = Organization(
+            name=LOGIKCORE_ORG_NAME,
+            slug=LOGIKCORE_ORG_SLUG,
+            logo_url=LOGIKCORE_LOGO_URL,
+        )
+        session.add(logikcore_org)
+        await session.flush()
+        print(f"  Created customer org: {LOGIKCORE_ORG_NAME} (id={logikcore_org.id})")
+    else:
+        # Keep logo_url + name in sync with the seed if they were edited away.
+        updated = False
+        if logikcore_org.logo_url != LOGIKCORE_LOGO_URL:
+            logikcore_org.logo_url = LOGIKCORE_LOGO_URL
+            updated = True
+        if logikcore_org.name != LOGIKCORE_ORG_NAME:
+            logikcore_org.name = LOGIKCORE_ORG_NAME
+            updated = True
+        if updated:
+            print(f"  Updated org metadata: {LOGIKCORE_ORG_NAME}")
+        else:
+            print(f"  Customer org already exists: {LOGIKCORE_ORG_NAME} (id={logikcore_org.id})")
+
+    # Owner
+    from app.services.auth_service import verify_password
+    result = await session.execute(
+        select(User).where(User.email == LOGIKCORE_OWNER_EMAIL)
+    )
+    logikcore_owner = result.scalar_one_or_none()
+    if logikcore_owner is None:
+        owner_id = uuid.uuid4()
+        logikcore_owner = User(
+            id=owner_id,
+            auth_user_id=owner_id,
+            email=LOGIKCORE_OWNER_EMAIL,
+            full_name=LOGIKCORE_OWNER_NAME,
+            password_hash=hash_password(LOGIKCORE_PASSWORD),
+            org_id=logikcore_org.id,
+            role="owner",
+            is_platform_admin=False,
+        )
+        session.add(logikcore_owner)
+        await session.flush()
+        print(f"  Created customer owner: {LOGIKCORE_OWNER_NAME} <{LOGIKCORE_OWNER_EMAIL}> (id={logikcore_owner.id})")
+    else:
+        # Don't reset a password the user has already changed — only top up
+        # full_name + role. The seed password is the *initial* password only.
+        updated = False
+        if logikcore_owner.full_name != LOGIKCORE_OWNER_NAME:
+            logikcore_owner.full_name = LOGIKCORE_OWNER_NAME
+            updated = True
+        if logikcore_owner.role != "owner":
+            logikcore_owner.role = "owner"
+            updated = True
+        if updated:
+            print(f"  Updated customer owner metadata: {LOGIKCORE_OWNER_EMAIL}")
+        else:
+            print(f"  Customer owner already exists: {LOGIKCORE_OWNER_EMAIL} (id={logikcore_owner.id})")
+
+    # Members
+    for member_email, member_name in LOGIKCORE_MEMBERS:
+        result = await session.execute(
+            select(User).where(User.email == member_email)
+        )
+        member = result.scalar_one_or_none()
+        if member is None:
+            member_id = uuid.uuid4()
+            session.add(User(
+                id=member_id,
+                auth_user_id=member_id,
+                email=member_email,
+                full_name=member_name,
+                password_hash=hash_password(LOGIKCORE_PASSWORD),
+                org_id=logikcore_org.id,
+                role="member",
+                is_platform_admin=False,
+            ))
+            print(f"  Created member: {member_name} <{member_email}>")
+        else:
+            # Same policy as owner — don't overwrite passwords that may have
+            # been changed; only sync full_name if it's still null.
+            if member.full_name is None or member.full_name == "":
+                member.full_name = member_name
+                print(f"  Set full_name for member: {member_email}")
+            else:
+                print(f"  Member already exists: {member_email}")
+    await session.flush()
+
+    # Subscribe LogikCore to all three micro apps
+    for app_obj in [ti_app, ts_app, lo_app]:
+        result = await session.execute(
+            select(Subscription).where(
+                Subscription.org_id == logikcore_org.id,
+                Subscription.app_id == app_obj.id,
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            session.add(Subscription(
+                org_id=logikcore_org.id,
+                app_id=app_obj.id,
+                status="active",
+            ))
+            print(f"  Subscribed {LOGIKCORE_ORG_NAME} to {app_obj.name}")
+        else:
+            print(f"  Subscription already exists: {LOGIKCORE_ORG_NAME} → {app_obj.name}")
     await session.flush()
 
     # ── 7. Seed county sources for testing ──────────────────────
