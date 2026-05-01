@@ -203,19 +203,27 @@ async def call_with_web_search_claude(
     if effective_model.startswith("anthropic/"):
         effective_model = effective_model[len("anthropic/"):]
 
+    async def _do_stream() -> Any:
+        # Use the streaming API: the Anthropic SDK refuses non-streaming
+        # requests whose pre-flight (max_tokens × per-token-time) estimate
+        # exceeds 10 minutes. Web-search calls run with max_tokens=24576
+        # and on slower-output models like claude-sonnet-4-6 the estimate
+        # blows past that ceiling. `messages.stream(...).get_final_message()`
+        # returns the same Message object the non-streaming path would
+        # have returned, so the rest of the parsing logic is unchanged.
+        async with client.messages.stream(
+            model=effective_model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system_prompt,
+            messages=messages,
+            tools=tools,
+        ) as stream:
+            return await stream.get_final_message()
+
     for attempt in range(retries):
         try:
-            response = await asyncio.wait_for(
-                client.messages.create(
-                    model=effective_model,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    system=system_prompt,
-                    messages=messages,
-                    tools=tools,
-                ),
-                timeout=timeout,
-            )
+            response = await asyncio.wait_for(_do_stream(), timeout=timeout)
 
             # Extract structured result from tool use blocks
             structured_result = {}
