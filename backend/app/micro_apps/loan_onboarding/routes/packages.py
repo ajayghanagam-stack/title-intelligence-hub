@@ -2,6 +2,8 @@
 
 All endpoints are tenant-scoped via `get_org_id` (set by TenantContextMiddleware).
 """
+import logging
+import time
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
@@ -28,6 +30,7 @@ from app.services.audit_service import log_event
 from app.services.storage import StorageProvider, get_storage
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 async def _serialize_package(
@@ -167,16 +170,25 @@ async def upload_files(
     storage: StorageProvider = Depends(get_storage),
 ):
     settings = get_settings()
+    t_handler_entered = time.perf_counter()
     package = await package_service.get_package_or_raise(db, org_id, package_id)
     max_size = settings.LO_FILE_UPLOAD_MAX_SIZE
+    logger.info(
+        "lo_upload: handler entered package_id=%s file_count=%d (parsing already complete by this point)",
+        package_id, len(files),
+    )
 
     saved = []
     for upload in files:
+        t0 = time.perf_counter()
         data = await upload.read()
+        t_read = time.perf_counter() - t0
+        size_mb = len(data) / 1024 / 1024
         if len(data) > max_size:
             raise ValidationError(
                 f"File '{upload.filename}' exceeds max size of {max_size} bytes"
             )
+        t1 = time.perf_counter()
         row = await file_service.store_uploaded_file(
             db,
             storage,
@@ -186,8 +198,14 @@ async def upload_files(
             content=data,
             content_type=upload.content_type,
         )
+        t_store = time.perf_counter() - t1
+        logger.info(
+            "lo_upload: file=%s size=%.1fMB read=%.2fs store=%.2fs (sha256+disk+pdf+db)",
+            upload.filename, size_mb, t_read, t_store,
+        )
         saved.append(row)
 
+    t2 = time.perf_counter()
     await log_event(
         db, org_id,
         action="lo_files_uploaded",
@@ -197,6 +215,10 @@ async def upload_files(
         metadata={"file_count": len(saved), "filenames": [f.filename for f in saved]},
     )
     await db.commit()
+    logger.info(
+        "lo_upload: audit+commit=%.2fs total_handler=%.2fs",
+        time.perf_counter() - t2, time.perf_counter() - t_handler_entered,
+    )
     return saved
 
 

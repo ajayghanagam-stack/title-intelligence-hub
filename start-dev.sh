@@ -150,7 +150,14 @@ echo -e "${GREEN}       Seed complete${NC}"
 # ------------------------------------------------------------------
 echo -e "${CYAN}[3/5] Starting backend on http://localhost:8000 ...${NC}"
 cd "$BACKEND_DIR"
-PYTHONPATH="$BACKEND_DIR" uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload &
+# --reload-dir scoped to app/ so watchfiles ignores backend/storage/ (large
+# uploads + per-page renders), backend/test.db (SQLite WAL churn), and
+# backend/eval_reports/. Without this, every byte written to storage/ fires
+# an FSEvent — on a near-full APFS disk the watcher thread stalls and
+# request handling pauses mid-upload. Reload only needs to see source code.
+PYTHONPATH="$BACKEND_DIR" uvicorn app.main:app \
+  --host 0.0.0.0 --port 8000 \
+  --reload --reload-dir app &
 PIDS+=($!)
 
 # ------------------------------------------------------------------

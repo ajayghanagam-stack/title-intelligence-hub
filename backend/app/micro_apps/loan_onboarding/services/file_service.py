@@ -1,4 +1,5 @@
 """File upload + content hashing service for Loan Onboarding."""
+import asyncio
 import hashlib
 import uuid
 
@@ -31,11 +32,25 @@ async def store_uploaded_file(
 
     # Use the platform-wide path convention shared with TI
     storage_path = storage.make_pack_path(org_id, package_id, filename)
-    await storage.put_object(storage_path, content, content_type=PDF_MIME)
 
-    content_hash = hashlib.sha256(content).hexdigest()
+    # Run the disk write, sha256 hashing, and PyMuPDF page count concurrently
+    # in worker threads. All three are CPU- or sync-IO-bound; left on the
+    # event loop they freeze every other coroutine for 1-2s on a 75 MB PDF
+    # (visible to the user as a stalled upload while SSE/polling requests
+    # back up behind the same loop).
+    async def _hash() -> str:
+        return await asyncio.to_thread(
+            lambda: hashlib.sha256(content).hexdigest()
+        )
 
-    page_count = _count_pdf_pages(content)
+    async def _pages() -> int:
+        return await asyncio.to_thread(_count_pdf_pages, content)
+
+    _, content_hash, page_count = await asyncio.gather(
+        storage.put_object(storage_path, content, content_type=PDF_MIME),
+        _hash(),
+        _pages(),
+    )
 
     file_row = LOPackageFile(
         org_id=org_id,

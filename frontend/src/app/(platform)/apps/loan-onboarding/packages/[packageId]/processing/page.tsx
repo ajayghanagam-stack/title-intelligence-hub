@@ -63,8 +63,6 @@ export default function LoanPackageProcessingPage() {
   );
 
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>({ kind: "idle" });
-  // Guard against StrictMode double-invoke and per-mount re-runs.
-  const handoffStartedRef = useRef(false);
   // Guard so we only schedule the auto-redirect once per terminal transition.
   const redirectScheduledRef = useRef(false);
   // Tracks whether we've observed a non-terminal state during this mount.
@@ -75,11 +73,25 @@ export default function LoanPackageProcessingPage() {
 
   // Pre-flight: if the new-package form handed off an upload payload for
   // this package id, drive the upload + pipeline trigger from here.
+  //
+  // No `cancelled` short-circuit here on purpose. React 18 dev StrictMode
+  // mounts effects as setup → cleanup → setup. If we set `cancelled = true`
+  // in the cleanup, the in-flight `await uploadFiles(...)` from the first
+  // setup resolves *after* the cleanup has already fired — and the next
+  // line short-circuits, so `processPackage()` is never invoked and the
+  // backend pipeline never starts. From the user's seat this looks like
+  // an upload that hangs forever ("Uploading…" banner that never advances)
+  // even though the network POST completed in <1s.
+  //
+  // Idempotency is already guaranteed by `dequeueUpload`: the queue is a
+  // module-level Map, the first call removes the entry, the second mount
+  // gets `null` and bails. So we don't need a per-mount cancel flag.
+  // The trade-off is a possible "setState on unmounted component" dev
+  // warning if the user navigates away mid-upload — that's a harmless
+  // log line and well worth the bug fix.
   useEffect(() => {
-    if (handoffStartedRef.current) return;
     const queued = dequeueUpload(packageId);
     if (!queued) return;
-    handoffStartedRef.current = true;
 
     const totalBytes = queued.files.reduce((s, f) => s + f.size, 0);
     setUploadPhase({
@@ -88,7 +100,6 @@ export default function LoanPackageProcessingPage() {
       totalBytes,
     });
 
-    let cancelled = false;
     (async () => {
       try {
         await uploadFiles(
@@ -96,13 +107,10 @@ export default function LoanPackageProcessingPage() {
           queued.files,
           { orgId: queued.orgId }
         );
-        if (cancelled) return;
         setUploadPhase({ kind: "starting" });
         await processPackage(queued.orgId, packageId);
-        if (cancelled) return;
         setUploadPhase({ kind: "done" });
       } catch (err) {
-        if (cancelled) return;
         setUploadPhase({
           kind: "error",
           message:
@@ -110,10 +118,6 @@ export default function LoanPackageProcessingPage() {
         });
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
   }, [packageId]);
 
   const liveStatus = pipeline?.status ?? pkg?.status;

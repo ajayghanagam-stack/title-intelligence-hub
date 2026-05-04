@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.config import get_settings
 from app.api.v1.router import api_v1_router
-from app.core.middleware import MetricsMiddleware, RequestIdMiddleware, TenantContextMiddleware, MicroAppAccessMiddleware
+from app.core.middleware import MetricsMiddleware, RequestIdMiddleware, TenantContextMiddleware, MicroAppAccessMiddleware, UploadTimingMiddleware
 from app.micro_apps.registry import discover_micro_apps
 
 
@@ -72,8 +72,12 @@ def create_app(session_factory_override=None) -> FastAPI:
     # Metrics (tracks request count + latency)
     app.add_middleware(MetricsMiddleware)
 
-    # Request ID (outermost, runs first — before CORS)
+    # Request ID (runs before CORS)
     app.add_middleware(RequestIdMiddleware)
+
+    # Diagnostic upload timing — outermost so it sees body chunks before any
+    # other layer touches them. No-op for non-upload routes.
+    app.add_middleware(UploadTimingMiddleware)
 
     # Service-layer exception → HTTP response conversion
     from app.core.exceptions import ServiceError
