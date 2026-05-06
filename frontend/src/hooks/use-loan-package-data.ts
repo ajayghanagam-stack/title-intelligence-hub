@@ -38,61 +38,99 @@ const key = (orgId: string | null, packageId: string, kind: Kind) =>
 const enabled = (orgId: string | null | undefined, packageId: string) =>
   Boolean(orgId && packageId);
 
+// Per-package data is treated as fresh for 60s. That covers the common
+// "click around the Recent sidebar" pattern: revisiting a package within a
+// minute returns instantly from cache instead of waterfalling four GETs
+// (`/stacks`, `/validation-results`, `/overrides`, `/extractions`) every
+// time. After 60s React Query background-revalidates on next mount.
+//
+// The pipeline-terminal effect on the results page already invalidates the
+// whole `["lo", orgId, packageId]` subtree when the package finishes
+// processing, so a stale cache from a not-yet-completed run is replaced with
+// the post-completion data the moment we observe the terminal status — not
+// 60s later.
+const STALE_TIME = 60_000;
+const GC_TIME = 5 * 60_000;
+
+const baseQuery = <T,>(
+  queryKey: readonly unknown[],
+  queryFn: () => Promise<T>,
+  isEnabled: boolean,
+) => ({
+  queryKey,
+  queryFn,
+  enabled: isEnabled,
+  staleTime: STALE_TIME,
+  gcTime: GC_TIME,
+});
+
 export function useStacksQuery(orgId: string | null, packageId: string) {
-  return useQuery({
-    queryKey: key(orgId, packageId, LO_QUERY_KINDS.stacks),
-    queryFn: () => getStacks(orgId!, packageId),
-    enabled: enabled(orgId, packageId),
-  });
+  return useQuery(
+    baseQuery(
+      key(orgId, packageId, LO_QUERY_KINDS.stacks),
+      () => getStacks(orgId!, packageId),
+      enabled(orgId, packageId),
+    ),
+  );
 }
 
 export function useValidationResultsQuery(
   orgId: string | null,
   packageId: string,
 ) {
-  return useQuery({
-    queryKey: key(orgId, packageId, LO_QUERY_KINDS.validation),
-    queryFn: () => getValidationResults(orgId!, packageId),
-    enabled: enabled(orgId, packageId),
-  });
+  return useQuery(
+    baseQuery(
+      key(orgId, packageId, LO_QUERY_KINDS.validation),
+      () => getValidationResults(orgId!, packageId),
+      enabled(orgId, packageId),
+    ),
+  );
 }
 
 export function usePageOverridesQuery(
   orgId: string | null,
   packageId: string,
 ) {
-  return useQuery({
-    queryKey: key(orgId, packageId, LO_QUERY_KINDS.pageOverrides),
-    queryFn: () => listPageOverrides(orgId!, packageId),
-    enabled: enabled(orgId, packageId),
-  });
+  return useQuery(
+    baseQuery(
+      key(orgId, packageId, LO_QUERY_KINDS.pageOverrides),
+      () => listPageOverrides(orgId!, packageId),
+      enabled(orgId, packageId),
+    ),
+  );
 }
 
 export function useExtractionsQuery(orgId: string | null, packageId: string) {
-  return useQuery({
-    queryKey: key(orgId, packageId, LO_QUERY_KINDS.extractions),
-    queryFn: () => getExtractions(orgId!, packageId).then((r) => r.stacks),
-    enabled: enabled(orgId, packageId),
-  });
+  return useQuery(
+    baseQuery(
+      key(orgId, packageId, LO_QUERY_KINDS.extractions),
+      () => getExtractions(orgId!, packageId).then((r) => r.stacks),
+      enabled(orgId, packageId),
+    ),
+  );
 }
 
 export function useExtractionOverridesQuery(
   orgId: string | null,
   packageId: string,
 ) {
-  return useQuery({
-    queryKey: key(orgId, packageId, LO_QUERY_KINDS.extractionOverrides),
-    queryFn: () => listExtractionOverrides(orgId!, packageId),
-    enabled: enabled(orgId, packageId),
-  });
+  return useQuery(
+    baseQuery(
+      key(orgId, packageId, LO_QUERY_KINDS.extractionOverrides),
+      () => listExtractionOverrides(orgId!, packageId),
+      enabled(orgId, packageId),
+    ),
+  );
 }
 
 export function useComplianceQuery(orgId: string | null, packageId: string) {
-  return useQuery({
-    queryKey: key(orgId, packageId, LO_QUERY_KINDS.compliance),
-    queryFn: () => getComplianceRun(orgId!, packageId),
-    enabled: enabled(orgId, packageId),
-  });
+  return useQuery(
+    baseQuery(
+      key(orgId, packageId, LO_QUERY_KINDS.compliance),
+      () => getComplianceRun(orgId!, packageId),
+      enabled(orgId, packageId),
+    ),
+  );
 }
 
 /**
