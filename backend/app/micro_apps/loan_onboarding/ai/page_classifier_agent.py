@@ -283,10 +283,15 @@ class PageClassifierAgent(BaseAIService):
             return ClassificationBatchResult(classifications=[])
 
         n_pages = len(page_numbers)
-        # Adaptive token budget: ~500 tokens/page covers the full schema
-        # (predicted_doc_type + confidence + role + up to 5 fields with bboxes
-        # + alternatives). Floor at 8K so tiny chunks still have headroom.
-        max_tokens = max(8192, min(32_000, 500 * n_pages))
+        # Adaptive token budget: ~1000 tokens/page covers the full schema with
+        # headroom (predicted_doc_type + confidence + role + up to 8 fields
+        # with bboxes + alternatives). The previous 500/page budget was a hot
+        # spot for output truncation on real loan packets — large packages
+        # like Benavides 89543 (592 pages) had ~half their 20-page chunks
+        # truncate at the 10K cap, triggering recursive split-and-retry that
+        # turned a ~6-min classify into ~12 min. Gemini 2.5 Flash supports up
+        # to 65K output tokens, so a 48K cap leaves plenty of slack.
+        max_tokens = max(12_000, min(48_000, 1000 * n_pages))
         # Adaptive timeout: ~3s/page vision budget + 30s base, capped at 5min.
         effective_timeout = timeout or min(300, 30 + 3 * n_pages)
 
