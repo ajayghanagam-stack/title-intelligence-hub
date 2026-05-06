@@ -23,7 +23,7 @@ from app.micro_apps.loan_onboarding.schemas.override import (
     PageOverrideWithRebuild,
     RebuildSummary,
 )
-from app.micro_apps.loan_onboarding.services import page_override_service
+from app.micro_apps.loan_onboarding.services import package_service, page_override_service
 from app.models.user import User
 from app.services.audit_service import log_event
 from app.services.storage import StorageProvider, get_storage
@@ -51,6 +51,7 @@ async def create_or_update_override(
     rebuild (new stack count, HITL delta, rule pass/fail totals) so the UI
     can refresh its chips without a follow-up fetch.
     """
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     override = await page_override_service.apply_override(
         db,
         org_id,
@@ -108,6 +109,7 @@ async def batch_apply_overrides(
     No-op moves (page already in the target doc_type with the same role) are
     silently skipped. Invalid doc_types fail the whole batch.
     """
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     overrides = await page_override_service.apply_overrides_batch(
         db,
         org_id,
@@ -157,6 +159,7 @@ async def delete_override(
     (no existing override) still trigger a rebuild — safe because the stages
     are idempotent — but they do not emit an audit event.
     """
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     removed = await page_override_service.remove_override(
         db, org_id, package_id, page_id
     )
@@ -191,4 +194,5 @@ async def list_overrides(
     org_id: uuid.UUID = Depends(get_org_id),
 ):
     """List every active override on a package (audit view for the UI)."""
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     return await page_override_service.list_overrides(db, org_id, package_id)

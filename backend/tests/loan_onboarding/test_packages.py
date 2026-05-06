@@ -2,6 +2,7 @@
 import uuid
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -235,3 +236,97 @@ async def test_tenant_isolation(
     )
     # Org B has no subscription → middleware blocks with 403
     assert r.status_code == 403
+
+
+@pytest_asyncio.fixture
+async def member_user(db_session: AsyncSession, seed_data):
+    """Insert a non-admin "member" in the same org as the seeded owner.
+
+    Used to exercise the per-user package visibility rule: members only see
+    packages they personally uploaded; admins/owners see everything.
+    """
+    from app.models.user import User
+
+    other = User(
+        id=uuid.UUID("00000000-0000-0000-0000-0000000099aa"),
+        auth_user_id=uuid.UUID("00000000-0000-0000-0000-0000000099aa"),
+        org_id=TEST_ORG_ID,
+        email="member@example.com",
+        full_name="Other Member",
+        role="member",
+    )
+    db_session.add(other)
+    await db_session.commit()
+    return other
+
+
+def _override_member_to(app, user):
+    """Repoint the get_current_member dependency to a different user."""
+    from app.core.deps import get_current_member
+
+    async def _override():
+        return user
+
+    app.dependency_overrides[get_current_member] = _override
+
+
+@pytest.mark.asyncio
+async def test_member_cannot_see_others_package_in_list(
+    client: AsyncClient, sample_package, member_user
+):
+    """Non-admin member should NOT see a package created by someone else."""
+    _override_member_to(client._transport.app, member_user)
+    r = await client.get(f"{BASE}/packages", headers=HEADERS)
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+@pytest.mark.asyncio
+async def test_member_get_others_package_returns_404(
+    client: AsyncClient, sample_package, member_user
+):
+    """A member fetching someone else's package gets 404 (not 403) — we don't
+    leak existence of cross-user packages."""
+    _override_member_to(client._transport.app, member_user)
+    r = await client.get(f"{BASE}/packages/{TEST_PACKAGE_ID}", headers=HEADERS)
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_member_delete_others_package_returns_404(
+    client: AsyncClient, sample_package, member_user, db_session: AsyncSession
+):
+    """A member deleting someone else's package gets 404, and the package
+    survives."""
+    _override_member_to(client._transport.app, member_user)
+    r = await client.delete(f"{BASE}/packages/{TEST_PACKAGE_ID}", headers=HEADERS)
+    assert r.status_code == 404
+    pkg = (await db_session.execute(
+        select(LOPackage).where(LOPackage.id == TEST_PACKAGE_ID)
+    )).scalar_one_or_none()
+    assert pkg is not None
+
+
+@pytest.mark.asyncio
+async def test_member_sees_own_package(
+    client: AsyncClient, lo_app_and_subscription, member_user, db_session: AsyncSession
+):
+    """Member-uploaded package should be visible to that member."""
+    own = LOPackage(
+        org_id=TEST_ORG_ID,
+        created_by=member_user.id,
+        name="Member's Package",
+        hitl_threshold=0.75,
+        status="uploading",
+    )
+    db_session.add(own)
+    await db_session.commit()
+    await db_session.refresh(own)
+
+    _override_member_to(client._transport.app, member_user)
+    r = await client.get(f"{BASE}/packages", headers=HEADERS)
+    assert r.status_code == 200
+    assert any(p["id"] == str(own.id) for p in r.json())
+
+    r = await client.get(f"{BASE}/packages/{own.id}", headers=HEADERS)
+    assert r.status_code == 200

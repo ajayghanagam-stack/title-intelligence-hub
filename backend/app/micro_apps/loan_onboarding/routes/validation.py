@@ -91,7 +91,7 @@ async def list_rules(
     member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
 ):
-    await package_service.get_package_or_raise(db, org_id, package_id)
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     rules = (await db.execute(
         select(LOValidationRule)
         .where(
@@ -121,7 +121,7 @@ async def list_validation_results(
     member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
 ):
-    await package_service.get_package_or_raise(db, org_id, package_id)
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     rows = (await db.execute(
         select(LOValidationResult).where(
             LOValidationResult.package_id == package_id,

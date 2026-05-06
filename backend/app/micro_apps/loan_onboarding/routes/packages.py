@@ -116,7 +116,21 @@ async def list_packages(
     member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
 ):
-    return await package_service.list_packages(db, org_id, status=status_filter, page=page, size=size)
+    # Non-admin members only see packages they personally uploaded; admins
+    # and owners see everything in the org. Mirrors the per-package visibility
+    # rule in `get_visible_package_or_raise` so the listing and per-resource
+    # access never disagree.
+    created_by = (
+        None
+        if member.role in package_service.PACKAGE_ADMIN_ROLES
+        else member.id
+    )
+    return await package_service.list_packages(
+        db, org_id,
+        status=status_filter,
+        page=page, size=size,
+        created_by=created_by,
+    )
 
 
 @router.get("/packages/{package_id}", response_model=PackageResponse)
@@ -126,7 +140,9 @@ async def get_package(
     member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
 ):
-    package = await package_service.get_package_or_raise(db, org_id, package_id)
+    package = await package_service.get_visible_package_or_raise(
+        db, org_id, package_id, member,
+    )
     return await _serialize_package(db, org_id, package)
 
 
@@ -137,13 +153,13 @@ async def delete_package(
     member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
 ):
-    # Allow the uploader to delete their own package; admins/owners can delete any.
-    package = await package_service.get_package_or_raise(db, org_id, package_id)
-    if member.role not in ("admin", "owner") and package.created_by != member.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only delete packages you uploaded",
-        )
+    # Visibility check: non-admins can only delete packages they uploaded.
+    # Anyone else trying to delete somebody else's package gets a 404 — same
+    # response they get from a list/get, so the surface area never leaks
+    # the existence of cross-user packages.
+    await package_service.get_visible_package_or_raise(
+        db, org_id, package_id, member,
+    )
     await package_service.delete_package(db, org_id, package_id)
     # delete_package commits on its own; emit audit event in a fresh txn
     await log_event(
@@ -171,7 +187,9 @@ async def upload_files(
 ):
     settings = get_settings()
     t_handler_entered = time.perf_counter()
-    package = await package_service.get_package_or_raise(db, org_id, package_id)
+    package = await package_service.get_visible_package_or_raise(
+        db, org_id, package_id, member,
+    )
     max_size = settings.LO_FILE_UPLOAD_MAX_SIZE
     logger.info(
         "lo_upload: handler entered package_id=%s file_count=%d (parsing already complete by this point)",
@@ -231,7 +249,9 @@ async def process_package(
     org_id: uuid.UUID = Depends(get_org_id),
 ):
     """Trigger the Loan Onboarding pipeline (ingest → classify → stack → validate → review)."""
-    package = await package_service.get_package_or_raise(db, org_id, package_id)
+    package = await package_service.get_visible_package_or_raise(
+        db, org_id, package_id, member,
+    )
 
     if package.status not in ("uploading", "failed"):
         raise ValidationError(
@@ -342,7 +362,9 @@ async def download_final_packet(
         build_final_packet_pdf,
     )
 
-    package = await package_service.get_package_or_raise(db, org_id, package_id)
+    package = await package_service.get_visible_package_or_raise(
+        db, org_id, package_id, member,
+    )
     pdf_bytes = await build_final_packet_pdf(db, org_id, package_id, storage)
     stem = _safe_filename_stem(
         package.loan_reference or package.name, fallback=str(package.id)
@@ -373,7 +395,9 @@ async def download_per_stack_zip(
         build_per_stack_zip,
     )
 
-    package = await package_service.get_package_or_raise(db, org_id, package_id)
+    package = await package_service.get_visible_package_or_raise(
+        db, org_id, package_id, member,
+    )
     zip_bytes = await build_per_stack_zip(db, org_id, package_id, storage)
     stem = _safe_filename_stem(
         package.loan_reference or package.name, fallback=str(package.id)
@@ -393,7 +417,9 @@ async def get_pipeline_status(
     member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
 ):
-    package = await package_service.get_package_or_raise(db, org_id, package_id)
+    package = await package_service.get_visible_package_or_raise(
+        db, org_id, package_id, member,
+    )
     progress = package.progress or {}
     return PipelineStatusResponse(
         package_id=package.id,

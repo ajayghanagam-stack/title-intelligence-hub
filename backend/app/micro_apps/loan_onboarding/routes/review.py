@@ -44,7 +44,7 @@ async def list_review_queue(
     org_id: uuid.UUID = Depends(get_org_id),
 ):
     """Return every stack that needs human review, with rule-pass stats."""
-    await package_service.get_package_or_raise(db, org_id, package_id)
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
 
     stacks = (await db.execute(
         select(LOStack)
@@ -100,7 +100,7 @@ async def record_review_decision(
     org_id: uuid.UUID = Depends(get_org_id),
 ):
     """Record a human decision on a stack and update stack/package status."""
-    await package_service.get_package_or_raise(db, org_id, package_id)
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
 
     stack = (await db.execute(
         select(LOStack).where(
@@ -184,7 +184,7 @@ async def list_reviews_for_stack(
     member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
 ):
-    await package_service.get_package_or_raise(db, org_id, package_id)
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     reviews = (await db.execute(
         select(LOHITLReview)
         .where(

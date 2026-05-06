@@ -14,6 +14,21 @@ from app.micro_apps.loan_onboarding.models.package import LOPackage
 from app.micro_apps.loan_onboarding.models.doc_type_config import LODocTypeConfig
 from app.micro_apps.loan_onboarding.models.validation_rule import LOValidationRule
 from app.micro_apps.loan_onboarding.schemas.package import DocTypeSpec, ValidationRuleSpec
+from app.models.user import User
+
+# Roles that can view/manage every package in the org. Everyone else is
+# scoped to packages they personally uploaded — see `_member_can_view`.
+PACKAGE_ADMIN_ROLES: frozenset[str] = frozenset({"admin", "owner"})
+
+
+def _member_can_view(member: User, package: LOPackage) -> bool:
+    """A member sees a package iff they are an org admin/owner or they
+    created it. Org-wide tenant scoping is enforced separately by the
+    caller (queries always filter by `org_id`).
+    """
+    if member.role in PACKAGE_ADMIN_ROLES:
+        return True
+    return package.created_by == member.id
 
 logger = logging.getLogger(__name__)
 
@@ -124,16 +139,42 @@ async def get_package_or_raise(
     return package
 
 
+async def get_visible_package_or_raise(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    package_id: uuid.UUID,
+    member: User,
+) -> LOPackage:
+    """Fetch a package the caller is allowed to see, else NotFound.
+
+    Non-admin/owner members see only packages they uploaded. Returning
+    NotFound (rather than 403) is deliberate: the caller shouldn't be able
+    to probe whether a package exists in another user's scope.
+    """
+    package = await get_package_or_raise(db, org_id, package_id)
+    if not _member_can_view(member, package):
+        raise NotFoundError("LoanPackage", package_id)
+    return package
+
+
 async def list_packages(
     db: AsyncSession,
     org_id: uuid.UUID,
     status: str | None = None,
     page: int = 1,
     size: int = 20,
+    created_by: uuid.UUID | None = None,
 ) -> Sequence[LOPackage]:
+    """List packages within an org. When `created_by` is set, only return
+    packages uploaded by that member — the route layer passes the current
+    member's id for non-admin callers so the listing matches the per-package
+    visibility rule enforced by `get_visible_package_or_raise`.
+    """
     query = select(LOPackage).where(LOPackage.org_id == org_id)
     if status:
         query = query.where(LOPackage.status == status)
+    if created_by is not None:
+        query = query.where(LOPackage.created_by == created_by)
     query = query.order_by(LOPackage.created_at.desc()).offset((page - 1) * size).limit(size)
     result = await db.execute(query)
     return list(result.scalars().all())

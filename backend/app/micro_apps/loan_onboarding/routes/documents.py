@@ -39,7 +39,7 @@ async def list_pages(
     member: User = Depends(get_current_member),
     org_id: uuid.UUID = Depends(get_org_id),
 ):
-    await package_service.get_package_or_raise(db, org_id, package_id)
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     pages = (await db.execute(
         select(LOPage)
         .where(LOPage.package_id == package_id, LOPage.org_id == org_id)
@@ -70,8 +70,9 @@ async def get_page_image(
     LO ingest writes only metadata-only LOPage rows (no `image_path`), so the
     image is rendered from the source PDF via PyMuPDF on each request. Tenant
     isolation is enforced by filtering LOPage on both `org_id` and
-    `package_id`.
+    `package_id`; per-user visibility is enforced by `get_visible_package_or_raise`.
     """
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     page = (await db.execute(
         select(LOPage).where(
             LOPage.id == page_id,
@@ -134,6 +135,7 @@ async def get_page_thumb(
     Same `Cache-Control: immutable` story as `/image`: source PDF doesn't
     change, page renders are deterministic.
     """
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     page = (await db.execute(
         select(LOPage).where(
             LOPage.id == page_id,
@@ -217,6 +219,7 @@ async def get_page_words(
           ]
         }
     """
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     page = (await db.execute(
         select(LOPage).where(
             LOPage.id == page_id,
@@ -408,7 +411,7 @@ async def list_stacks(
     Response shape matches the frontend Documents tab requirements —
     grouped list of {stack, pages_with_classification}.
     """
-    await package_service.get_package_or_raise(db, org_id, package_id)
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     stacks = (await db.execute(
         select(LOStack)
         .where(LOStack.package_id == package_id, LOStack.org_id == org_id)

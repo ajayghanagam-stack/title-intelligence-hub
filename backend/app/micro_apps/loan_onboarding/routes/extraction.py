@@ -27,7 +27,7 @@ async def list_extractions(
     - the per-stack 'Extracted fields' panel inside each expanded stack card
     - the dashboard 'Extracted fields' download card (JSON / CSV / MISMO XML)
     """
-    pkg = await package_service.get_package_or_raise(db, org_id, package_id)
+    pkg = await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
 
     rows = (await db.execute(
         select(LOExtraction).where(

@@ -39,7 +39,7 @@ async def list_extraction_overrides(
     org_id: uuid.UUID = Depends(get_org_id),
 ):
     """List every reviewer override on a package."""
-    await package_service.get_package_or_raise(db, org_id, package_id)
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     return await extraction_override_service.list_overrides(db, org_id, package_id)
 
 
@@ -56,7 +56,7 @@ async def upsert_extraction_override(
     org_id: uuid.UUID = Depends(get_org_id),
 ):
     """Insert or update one reviewer-edited field value."""
-    await package_service.get_package_or_raise(db, org_id, package_id)
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     row = await extraction_override_service.upsert_override(
         db,
         org_id,
@@ -103,7 +103,7 @@ async def delete_extraction_override(
     this on every Reset click without first checking, so idempotence
     matters.
     """
-    await package_service.get_package_or_raise(db, org_id, package_id)
+    await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     removed = await extraction_override_service.delete_override(
         db,
         org_id,

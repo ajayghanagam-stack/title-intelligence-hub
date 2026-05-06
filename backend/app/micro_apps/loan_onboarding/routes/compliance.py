@@ -46,6 +46,7 @@ async def get_compliance(
 ):
     """Return the most recent compliance run, evaluating once if absent."""
     try:
+        await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
         return await compliance_service.get_or_evaluate(db, org_id, package_id)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -69,6 +70,7 @@ async def evaluate_compliance(
     from `GET /compliance`.
     """
     try:
+        await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
         _, payload = await compliance_service.evaluate(
             db, org_id, package_id, persist=True
         )
@@ -90,6 +92,7 @@ async def update_loan_context(
 ):
     """Update the loan context. Closed-set enums are validated server-side."""
     try:
+        await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
         pkg = await compliance_service.update_loan_context(
             db, org_id, package_id, body.model_dump()
         )
@@ -115,7 +118,7 @@ async def download_compliance_report(
     with the package's current loan-context + stack inventory.
     """
     try:
-        pkg = await package_service.get_package_or_raise(db, org_id, package_id)
+        pkg = await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
         run, payload = await compliance_service.evaluate(
             db, org_id, package_id, persist=True
         )
