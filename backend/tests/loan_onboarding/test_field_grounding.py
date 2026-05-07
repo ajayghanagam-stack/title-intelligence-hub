@@ -55,6 +55,34 @@ def test_normalize_bbox_garbage_rejected():
     assert _normalize_bbox_to_unit([1, 2, 3]) is None
 
 
+def test_normalize_bbox_vertical_sliver_rejected():
+    # Real Benavides URLA_1003 case: classifier emitted a 2%×21% vertical
+    # strip (likely the column position of a label, not the value's
+    # actual line). Such slivers always overlap many lines on a page,
+    # which makes them "match" anything — they were winning grounding
+    # ties on continuation pages and highlighting nothing useful.
+    # In Gemini's [0, 1000] space: width=20, height=211.
+    assert _normalize_bbox_to_unit([95, 233, 115, 444]) is None
+    # Already-unit version of the same sliver
+    assert _normalize_bbox_to_unit([0.095, 0.233, 0.115, 0.444]) is None
+
+
+def test_normalize_bbox_too_tall_rejected():
+    # Classifier sometimes returns whole-region bboxes (e.g. boxing an
+    # entire section). >20% page height means we're not looking at a
+    # value's bbox.
+    # 0..1000 space: height = 250
+    assert _normalize_bbox_to_unit([100, 100, 500, 350]) is None
+
+
+def test_normalize_bbox_horizontal_text_line_passes():
+    # A normal text-value bbox — wide but short — must NOT be rejected.
+    # 50% width × 2% height is the canonical shape of a name/address line.
+    out = _normalize_bbox_to_unit([100, 250, 600, 270])
+    assert out is not None
+    assert out == [0.1, 0.25, 0.6, 0.27]
+
+
 # ── alias matching ────────────────────────────────────────────────────
 
 
@@ -228,6 +256,123 @@ def test_ground_skips_invalid_bbox():
     ]
     result = ground_field_location("ssn", "635-30-9229", snippets)
     assert result is None
+
+
+def test_ground_skips_degenerate_sliver_bbox():
+    # The Benavides URLA_1003 case: a real classifier on a continuation
+    # page emits "Property Address" with the right value but a vertical
+    # sliver bbox (height >> width, height > 20% of page). The
+    # plausibility check rejects the bbox so this entry can't win
+    # grounding even though label+value both score perfectly.
+    snippets = [
+        # Page 3 — the legitimate first-page entry, normal text-line bbox
+        _snippet(3, [
+            {
+                "field_name": "Subject Property Address",
+                "value": "123 Main St, Austin, TX 78701",
+                "bbox": [120, 250, 600, 270],
+            },
+        ]),
+        # Page 60 — the sloppy continuation page entry with a sliver
+        _snippet(60, [
+            {
+                "field_name": "Property Address",
+                "value": "123 Main St, Austin, TX 78701",
+                "bbox": [95, 233, 115, 444],  # width=20, height=211 → garbage
+            },
+        ]),
+    ]
+    result = ground_field_location(
+        "property_address", "123 Main St, Austin, TX 78701", snippets
+    )
+    assert result is not None
+    page, _ = result
+    # Page 60's sliver must be rejected; legitimate page 3 entry wins.
+    assert page == 3
+
+
+def test_ground_prefers_earlier_page_in_stack_when_scores_equal():
+    # The deterministic stacker collapses ALL same-doc-type pages into
+    # one stack regardless of contiguity, so a URLA_1003 stack can span
+    # pages [3..361]. When the same labelled field appears on multiple
+    # stack pages with identical bboxes/values, the earliest page in
+    # the stack must win — that's the canonical instance.
+    snippets = []
+    for pn in (3, 5, 9, 13, 17, 21, 25, 29, 33, 60):
+        snippets.append(_snippet(pn, [
+            {
+                "field_name": "Borrower Name",
+                "value": "Jane Doe",
+                "bbox": [120, 250, 400, 270],
+            },
+        ]))
+    result = ground_field_location("borrower_name", "Jane Doe", snippets)
+    assert result is not None
+    page, _ = result
+    assert page == 3
+
+
+def test_ground_position_penalty_caps_far_page_lift():
+    # With 10 stack pages, the position penalty (0.10 × position) caps
+    # how much a far page can outscore an early page. A page-9 entry
+    # that has only a label match (no value confirmation) cannot beat
+    # a page-3 entry with the same label, even though the existing
+    # -page tiebreaker would normally pick page 9 if combined scores
+    # tied. Here the penalty makes page 3 strictly higher-scored.
+    snippets = []
+    for pn in (3, 5, 7, 11, 15, 19, 23, 27, 31, 60):
+        # All ten pages are in this URLA_1003 stack
+        snippets.append(_snippet(pn, []))
+    # Only pages 3 and 60 have the field
+    snippets[0]["detected_fields"] = [
+        {
+            "field_name": "Borrower Name",
+            "value": "Jane Doe",
+            "bbox": [120, 250, 400, 270],
+        },
+    ]
+    snippets[-1]["detected_fields"] = [
+        {
+            "field_name": "Borrower Name",
+            "value": "Jane Doe",
+            "bbox": [120, 250, 400, 270],
+        },
+    ]
+    result = ground_field_location("borrower_name", "Jane Doe", snippets)
+    assert result is not None
+    page, _ = result
+    assert page == 3
+
+
+def test_ground_value_match_can_still_overcome_small_position_gap():
+    # Defensive: a strong label-only match on the first page should NOT
+    # beat a label+value match on the very next page. The penalty is
+    # deliberately small enough that real value matches remain dominant.
+    snippets = [
+        _snippet(3, [
+            # Label match only — value differs (extraction picked a
+            # later page's value)
+            {
+                "field_name": "Borrower Name",
+                "value": "Some Other Person",
+                "bbox": [120, 250, 400, 270],
+            },
+        ]),
+        _snippet(5, [
+            # Label + exact value match
+            {
+                "field_name": "Borrower Name",
+                "value": "Jane Doe",
+                "bbox": [120, 350, 400, 370],
+            },
+        ]),
+    ]
+    result = ground_field_location("borrower_name", "Jane Doe", snippets)
+    assert result is not None
+    page, _ = result
+    # Page 5 has +2.0 from value match; page 3 only has 0.5 from value
+    # signal absence. Even with -0.10 position penalty, page 5 wins.
+    assert page == 5
 
 
 def test_ground_handles_non_dict_entries_gracefully():

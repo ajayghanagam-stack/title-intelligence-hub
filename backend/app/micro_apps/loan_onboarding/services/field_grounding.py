@@ -688,7 +688,9 @@ def _normalize_bbox_to_unit(bbox: object) -> list[float] | None:
 
     Defensive: if any value already sits in 0..1.5, we assume the bbox
     is pre-normalized and pass through. If any value exceeds 1500, we
-    bail (likely garbage).
+    bail (likely garbage). After normalization, the box is also
+    plausibility-checked (see ``_is_plausible_bbox``) so degenerate
+    slivers from sloppy classifier output don't poison grounding.
     """
     if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
         return None
@@ -705,10 +707,55 @@ def _normalize_bbox_to_unit(bbox: object) -> list[float] | None:
         return None
     max_c = max(abs(x) for x in nums)
     if max_c <= 1.5:
-        return nums
-    if max_c > 1500:
+        unit = nums
+    elif max_c > 1500:
         return None
-    return [x / 1000.0 for x in nums]
+    else:
+        unit = [x / 1000.0 for x in nums]
+    if not _is_plausible_bbox(unit):
+        return None
+    return unit
+
+
+# Minimum / maximum dimensions for a plausible text-field bbox in 0..1
+# unit space. Empirically tuned against real Gemini classifier output:
+#  - Real form values rarely render with width < ~1.5% of the page
+#    (single character at ~2-3 pt font would be wider than that)
+#  - Real text fields rarely span more than ~20% of page height; values
+#    that do are almost always the classifier picking up a region/section
+#    instead of the value's actual line
+# Both checks are deliberately permissive — false positives here mean a
+# legitimate field gets no highlight, which is strictly less bad than the
+# alternative (a giant or sliver bbox highlighting the wrong area).
+_MIN_BBOX_WIDTH = 0.015
+_MAX_BBOX_HEIGHT = 0.20
+
+
+def _is_plausible_bbox(unit_bbox: list[float]) -> bool:
+    """Return ``False`` for bboxes that look like classifier garbage.
+
+    Catches two pathologies seen on real packages:
+
+    1. *Vertical slivers*: e.g. ``[0.095, 0.233, 0.115, 0.444]`` — width
+       2% of page, height 21% of page. The classifier occasionally
+       boxes the *column position* of a label rather than the line it
+       lives on. These slivers always grade as "matches" against any
+       value because they're tall enough to overlap dozens of lines, so
+       they win grounding ties on continuation pages.
+    2. *Whole-region boxes*: bboxes spanning >20% of the page height,
+       which in practice means the classifier returned a section
+       boundary, not a single value's coordinates.
+
+    ``unit_bbox`` is already in 0..1 space.
+    """
+    x1, y1, x2, y2 = unit_bbox
+    w = abs(x2 - x1)
+    h = abs(y2 - y1)
+    if w < _MIN_BBOX_WIDTH:
+        return False
+    if h > _MAX_BBOX_HEIGHT:
+        return False
+    return True
 
 
 def _is_finite(x: float) -> bool:
@@ -751,13 +798,30 @@ def ground_field_location(
     if not candidates:
         return None
 
-    best: tuple[float, int, int, list[float]] | None = None
-    # Tuple shape: (combined_score, -page, -entry_index, bbox)
-    # Negation forces the *earliest* page+entry to win on ties.
+    snippet_list = [s for s in snippets if isinstance(s, dict)]
+    # Position-in-stack: pages sorted ascending → position 0 is the
+    # earliest page in this stack. The deterministic stacker collapses
+    # all same-doc-type pages into one stack regardless of contiguity,
+    # so a URLA_1003 stack can legitimately span pages [3..361]. Without
+    # this penalty, a sloppy classifier label on a continuation page
+    # whose value happens to match outranks the legitimate first-page
+    # match (combined score ties broken by score, not by which page is
+    # canonical for the field). The penalty is applied per-page, not
+    # per-page-number, so a stack with pages [3, 7, 60] punishes page
+    # 60 by the same amount as a stack with pages [3, 4, 5] punishes
+    # page 5 — the third page is the third page either way.
+    page_position: dict[int, int] = {}
+    for pos, page in enumerate(
+        sorted({s.get("page_number") for s in snippet_list
+                if isinstance(s.get("page_number"), int)})
+    ):
+        page_position[page] = pos
 
-    for snippet in snippets:
-        if not isinstance(snippet, dict):
-            continue
+    best: tuple[float, int, int, list[float]] | None = None
+    # Tuple shape: (adjusted_score, -page, -entry_index, bbox)
+    # Negation forces the *earliest* page+entry to win on remaining ties.
+
+    for snippet in snippet_list:
         page = snippet.get("page_number")
         if not isinstance(page, int):
             continue
@@ -790,7 +854,19 @@ def ground_field_location(
             if bbox is None:
                 continue
 
-            key = (combined, -page, -idx, bbox)
+            # Position penalty — small enough that strong, exact value
+            # matches on a later page can still win over weak label-only
+            # matches on the first page, but large enough that a
+            # weak/medium value match on a far page can't beat a
+            # legitimate first-page match. With weights below:
+            #   first page, label-only:        4.5 - 0.0 = 4.5
+            #   third page,  label+exact val:  6.5 - 0.2 = 6.3 (wins)
+            #   first page, label+exact val:   6.5 - 0.0 = 6.5 (wins all)
+            #   tenth page, label-only:        4.5 - 1.0 = 3.5 (loses)
+            penalty = _STACK_POSITION_PENALTY * page_position.get(page, 0)
+            adjusted = combined - penalty
+
+            key = (adjusted, -page, -idx, bbox)
             if best is None or key > best:
                 best = key
 
@@ -798,3 +874,14 @@ def ground_field_location(
         return None
     _, neg_page, _, bbox = best
     return (-neg_page, bbox)
+
+
+# Per-position penalty applied to grounding scores so earlier pages of
+# a stack win ties (and small score deltas) against later pages. See
+# ``ground_field_location`` for the calibration. Tuned so:
+#   - A pure label match (2.0) → contributes 3.0 to combined
+#   - A label match + exact value match → 6.5 max
+#   - Per-position 0.10 means a 5-position gap erases a strong label-only
+#     match (~0.5 of score) but doesn't erase a strong value-confirmed
+#     match (~2.0 of score gap)
+_STACK_POSITION_PENALTY = 0.10
