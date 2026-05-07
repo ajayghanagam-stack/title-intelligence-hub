@@ -961,6 +961,28 @@ async def stage_extract(
         FieldLocation,
         StackExtraction,
     )
+    from app.micro_apps.loan_onboarding.services.field_grounding import (
+        ground_field_location,
+    )
+
+    def _apply_grounding(extraction: StackExtraction, snippets: list[dict]) -> int:
+        """Populate empty `location` on each ExtractedField using the
+        classifier's grounded ``detected_fields`` bboxes from snippets.
+
+        Always overwrites — even when the agent emitted its own bbox —
+        because the agent only sees text and any bbox it returns is
+        hallucinated. The classifier *does* see the rendered PDF and
+        emits real coordinates. Returns the count of fields grounded.
+        """
+        grounded_count = 0
+        for f in extraction.fields:
+            located = ground_field_location(f.name, f.value, snippets)
+            if located is None:
+                continue
+            page_num, bbox_unit = located
+            f.location = FieldLocation(page=page_num, bbox=bbox_unit)
+            grounded_count += 1
+        return grounded_count
 
     log = get_logger(__name__, org_id=org_id, pack_id=package_id, stage="extract")
 
@@ -1156,6 +1178,21 @@ async def stage_extract(
                         log.warning(
                             f"extract cache write failed ({cache_key[:12]}…): {e}"
                         )
+
+            # Ground each field against the classifier's detected_fields[]
+            # AFTER cache read/write — improvements to the alias map or
+            # bbox normalization propagate without invalidating the cache.
+            try:
+                grounded = _apply_grounding(extraction, snippets)
+                if grounded:
+                    log.info(
+                        f"grounded {grounded}/{len(extraction.fields)} fields "
+                        f"on stack={stack.stack_index} ({stack.doc_type})"
+                    )
+            except Exception as e:
+                log.warning(
+                    f"field grounding failed for stack={stack.stack_index}: {e}"
+                )
             return stack, extraction
 
     results = await _asyncio.gather(*[_run_one(s) for s in targets])

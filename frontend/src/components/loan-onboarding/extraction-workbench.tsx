@@ -941,6 +941,21 @@ function _resolveTarget(
   dimsByPageId: Record<string, { width: number; height: number }>
 ): { page: number; bbox: number[] } | null {
   if (!row || !stack) return null;
+
+  // Server-side grounding (see `services/field_grounding.py`) writes the
+  // classifier's already-normalized 0..1 bbox onto LOExtraction.fields.
+  // When present, it's authoritative — skip text-search entirely.
+  if (
+    row.page != null &&
+    _isValidBboxShape(row.bbox) &&
+    stack.pages.some((p) => p.page_number === row.page)
+  ) {
+    const maxC = Math.max(...(row.bbox as number[]).map((n) => Math.abs(n)));
+    if (maxC <= 1.5) {
+      return { page: row.page, bbox: row.bbox as number[] };
+    }
+  }
+
   const target = row.originalValue;
 
   const tryTextMatch = (
@@ -1145,6 +1160,14 @@ function _resolveOverlayBbox(
   // If the row has a known page that doesn't match the viewer, no highlight.
   // If the row has no page, we still try matching against the current page.
   if (row.page != null && row.page !== viewerPage) return null;
+
+  // Server-side grounding produced an already-normalized 0..1 bbox tied
+  // to a specific page. Trust it and bypass the text-search/proximity
+  // chain — the classifier saw the rendered PDF and emitted real coords.
+  if (row.page === viewerPage && _isValidBboxShape(row.bbox)) {
+    const maxC = Math.max(...(row.bbox as number[]).map((n) => Math.abs(n)));
+    if (maxC <= 1.5) return row.bbox as number[];
+  }
 
   // Look up the classifier's anchor for this field on the viewer page up
   // front so all text-match calls below can use it to disambiguate among
