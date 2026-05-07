@@ -194,6 +194,27 @@ async def _run_pipeline_inner(
         )
     log.info(f"Pipeline completed in {total_elapsed}s (timings={stage_timings})")
 
+    # Warm the per-page thumbnail cache so the first viewer doesn't pay the
+    # PyMuPDF render cost on every thumb. Done AFTER the package is marked
+    # completed so the user sees the packet ready immediately; the warm-up
+    # then runs as a tail of the pipeline. Best-effort — any failure is
+    # logged but never raised, since /thumb still has a render-on-miss
+    # fallback so a missed warm-up just degrades to the previous behavior.
+    try:
+        from app.micro_apps.loan_onboarding.services.thumbnail_cache import (
+            warm_package_thumbnails,
+        )
+
+        warmup = await warm_package_thumbnails(
+            package_id, org_id, session_factory, storage
+        )
+        log.info(
+            f"Thumbnail cache warmed: rendered={warmup['rendered']} "
+            f"skipped={warmup['skipped']} failed={warmup['failed']}"
+        )
+    except Exception as e:
+        log.warning(f"Thumbnail warmup failed (non-fatal): {e}")
+
 
 async def _run_stage_with_retry(
     stage_name: str,
