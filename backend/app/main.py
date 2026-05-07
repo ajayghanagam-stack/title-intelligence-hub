@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.config import get_settings
 from app.api.v1.router import api_v1_router
+from app.core.deps import _POOL_KWARGS
 from app.core.middleware import MetricsMiddleware, RequestIdMiddleware, TenantContextMiddleware, MicroAppAccessMiddleware, UploadTimingMiddleware
 from app.micro_apps.registry import discover_micro_apps
 
@@ -53,7 +54,11 @@ def create_app(session_factory_override=None) -> FastAPI:
     if session_factory_override:
         sf = session_factory_override
     else:
-        engine = create_async_engine(settings.effective_database_url, echo=False, pool_size=5)
+        # Reuse the centralized pool config from app.core.deps so the
+        # MicroAppAccessMiddleware session factory has the same large pool
+        # as get_db. Previously this used pool_size=5 which exhausted under
+        # dashboard load (every request hits this middleware first).
+        engine = create_async_engine(settings.effective_database_url, **_POOL_KWARGS)
         sf = async_sessionmaker(engine, expire_on_commit=False)
     app.add_middleware(MicroAppAccessMiddleware, session_factory=sf)
 

@@ -12,11 +12,34 @@ from app.models.user import User
 _engine = None
 _session_factory = None
 
+# Connection pool sizing. The previous defaults (pool_size=5, the SQLAlchemy
+# default max_overflow=10) capped us at 15 concurrent DB connections — far
+# too few for a multi-user dashboard. The Loan Onboarding dashboard alone
+# fires ~5 list queries (stacks, page-overrides, extractions, extraction-
+# overrides, validation) plus a polling status query plus per-page
+# thumb/image fetches that each hold a session through the storage call.
+# Open one large packet on a slow link and the pool exhausts: queries time
+# out after 30s with QueuePool TimeoutError, which surfaces in the UI as a
+# 500 on /stacks → empty pageIdByNumber → page viewer never loads.
+#
+# 20+40 = 60 max connections matches what RDS db.t4g.large can comfortably
+# handle (default max_connections ≈ 100 with overhead for psql/Temporal).
+# pool_pre_ping detects connections silently dropped by RDS idle-eviction;
+# pool_recycle=300 recycles every 5 minutes to stay well under any
+# server-side idle timeout.
+_POOL_KWARGS = {
+    "echo": False,
+    "pool_size": 20,
+    "max_overflow": 40,
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+}
+
 
 def get_engine(settings: Settings = Depends(get_settings)):
     global _engine
     if _engine is None:
-        _engine = create_async_engine(settings.effective_database_url, echo=False, pool_size=5)
+        _engine = create_async_engine(settings.effective_database_url, **_POOL_KWARGS)
     return _engine
 
 
@@ -25,7 +48,7 @@ def get_session_factory(settings: Settings | None = None):
     if _session_factory is None:
         if settings is None:
             settings = get_settings()
-        engine = create_async_engine(settings.effective_database_url, echo=False, pool_size=5)
+        engine = create_async_engine(settings.effective_database_url, **_POOL_KWARGS)
         _session_factory = async_sessionmaker(engine, expire_on_commit=False)
     return _session_factory
 
@@ -35,7 +58,7 @@ async def get_db(
 ) -> AsyncGenerator[AsyncSession, None]:
     global _session_factory
     if _session_factory is None:
-        engine = create_async_engine(settings.effective_database_url, echo=False, pool_size=5)
+        engine = create_async_engine(settings.effective_database_url, **_POOL_KWARGS)
         _session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with _session_factory() as session:
         yield session
