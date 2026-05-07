@@ -15,6 +15,7 @@ from app.micro_apps.loan_onboarding.services.field_grounding import (
     FIELD_ALIASES,
     _normalize_bbox_to_unit,
     ground_field_location,
+    is_extraction_worthy_label,
 )
 
 
@@ -504,3 +505,162 @@ def test_ssn_label_score_beats_value_substring_on_wrong_label():
     assert page == 3
     # Must land on the SSN bbox, not the loan-number bbox
     assert bbox == [0.550, 0.249, 0.630, 0.262]
+
+
+# ── New canonical fields (CD / appraisal / credit / title / notary) ───
+
+
+def test_ground_cash_to_close_via_cd_alias():
+    snippets = [
+        _snippet(3, [
+            {"field_name": "Estimated Cash to Close", "value": "$24,500.00", "bbox": [400, 200, 600, 215]},
+        ]),
+    ]
+    result = ground_field_location("cash_to_close", "$24,500.00", snippets)
+    assert result is not None
+
+
+def test_ground_total_closing_costs_via_cd_alias():
+    snippets = [
+        _snippet(2, [
+            {"field_name": "J. Total Closing Costs", "value": "$8,250.00", "bbox": [400, 600, 600, 615]},
+        ]),
+    ]
+    result = ground_field_location("total_closing_costs", "$8,250.00", snippets)
+    assert result is not None
+
+
+def test_ground_appraiser_name():
+    snippets = [
+        _snippet(40, [
+            {"field_name": "Appraiser", "value": "Pat Smith", "bbox": [80, 700, 300, 715]},
+        ]),
+    ]
+    result = ground_field_location("appraiser_name", "Pat Smith", snippets)
+    assert result is not None
+
+
+def test_ground_effective_date_of_appraisal():
+    snippets = [
+        _snippet(40, [
+            {"field_name": "Effective Date of Appraisal", "value": "2025-09-12", "bbox": [400, 80, 560, 95]},
+        ]),
+    ]
+    result = ground_field_location("effective_date_of_appraisal", "2025-09-12", snippets)
+    assert result is not None
+
+
+def test_ground_credit_score_via_fico_alias():
+    snippets = [
+        _snippet(60, [
+            {"field_name": "FICO Score", "value": "742", "bbox": [200, 100, 280, 115]},
+        ]),
+    ]
+    result = ground_field_location("credit_score", "742", snippets)
+    assert result is not None
+
+
+def test_ground_commitment_number():
+    snippets = [
+        _snippet(45, [
+            {"field_name": "Commitment Number", "value": "CMT-12345", "bbox": [400, 80, 560, 95]},
+        ]),
+    ]
+    result = ground_field_location("commitment_number", "CMT-12345", snippets)
+    assert result is not None
+
+
+def test_ground_commission_expiration_date():
+    snippets = [
+        _snippet(72, [
+            {"field_name": "My Commission Expires", "value": "2027-06-30", "bbox": [400, 600, 560, 615]},
+        ]),
+    ]
+    result = ground_field_location("commission_expiration_date", "2027-06-30", snippets)
+    assert result is not None
+
+
+def test_ground_execution_date():
+    snippets = [
+        _snippet(50, [
+            {"field_name": "Execution Date", "value": "2025-10-15", "bbox": [400, 700, 560, 715]},
+        ]),
+    ]
+    result = ground_field_location("execution_date", "2025-10-15", snippets)
+    assert result is not None
+
+
+def test_new_canonical_keys_have_aliases():
+    """Lock in the new canonical keys added for the CD / appraisal /
+    credit / title / notary buckets — the highest-volume uncovered
+    label families on real loan packages.
+    """
+    must_have = {
+        "fee_description",
+        "cash_to_close",
+        "total_closing_costs",
+        "appraiser_name",
+        "effective_date_of_appraisal",
+        "sale_price",
+        "sales_contract_price",
+        "credit_score",
+        "commitment_number",
+        "commission_expiration_date",
+        "execution_date",
+    }
+    missing = must_have - FIELD_ALIASES.keys()
+    assert not missing, f"New canonical keys without aliases: {missing}"
+
+
+# ── Admin / structural label filter ───────────────────────────────────
+
+
+def test_admin_label_filter_strips_pagination():
+    assert is_extraction_worthy_label("Page") is False
+    assert is_extraction_worthy_label("Page Number") is False
+    assert is_extraction_worthy_label("page no.") is False
+
+
+def test_admin_label_filter_strips_form_metadata():
+    assert is_extraction_worthy_label("Form Number") is False
+    assert is_extraction_worthy_label("Revision Date") is False
+    assert is_extraction_worthy_label("Version") is False
+
+
+def test_admin_label_filter_strips_checkbox_stems():
+    assert is_extraction_worthy_label("Yes") is False
+    assert is_extraction_worthy_label("No") is False
+    assert is_extraction_worthy_label("N/A") is False
+    assert is_extraction_worthy_label("Check One") is False
+
+
+def test_admin_label_filter_strips_signature_scaffolding():
+    assert is_extraction_worthy_label("Signature") is False
+    assert is_extraction_worthy_label("Signature Line") is False
+    assert is_extraction_worthy_label("Initials") is False
+
+
+def test_admin_label_filter_strips_pure_numeric():
+    assert is_extraction_worthy_label("1.") is False
+    assert is_extraction_worthy_label("23") is False
+
+
+def test_admin_label_filter_strips_empty():
+    assert is_extraction_worthy_label("") is False
+    assert is_extraction_worthy_label(None) is False
+    assert is_extraction_worthy_label("   ") is False
+
+
+def test_admin_label_filter_keeps_real_field_labels():
+    # Sanity: actual extractable fields must NOT be filtered.
+    assert is_extraction_worthy_label("Borrower Name") is True
+    assert is_extraction_worthy_label("Social Security Number") is True
+    assert is_extraction_worthy_label("Loan Amount") is True
+    assert is_extraction_worthy_label("FICO Score") is True
+    assert is_extraction_worthy_label("My Commission Expires") is True
+    # 'Title' is borderline (form title vs job title) — currently
+    # filtered. If this changes, employment 'job_title' aliasing
+    # already covers the real-field case via the 'job title' / 'position'
+    # / 'occupation' aliases, so a bare 'Title' label is more often
+    # form scaffolding than a real field.
+    assert is_extraction_worthy_label("Title") is False

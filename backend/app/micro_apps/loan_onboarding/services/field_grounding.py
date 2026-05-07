@@ -378,7 +378,192 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "file id",
         "file",
     ),
+
+    # Closing Disclosure (CD) — by far the highest-volume uncovered
+    # bucket on real loan packages. The 5-page CD form repeats fee
+    # rows on pages 2–3 with a single label and many values, so
+    # ``fee_description`` is intentionally generic; consumers
+    # disambiguate by value.
+    "fee_description": (
+        "fee description",
+        "fee name",
+        "description of fee",
+        "loan cost description",
+        "other cost description",
+        "service",
+        "service description",
+    ),
+    "cash_to_close": (
+        "cash to close",
+        "estimated cash to close",
+        "total cash to close",
+        "cash from to borrower",
+        "from borrower",
+        "from to borrower",
+    ),
+    "total_closing_costs": (
+        "total closing costs",
+        "total loan costs",
+        "total other costs",
+        "closing costs",
+        "j total closing costs",
+        "d total loan costs",
+        "i total other costs",
+    ),
+
+    # Appraisal / sales contract
+    "appraiser_name": (
+        "appraiser name",
+        "appraiser",
+        "name of appraiser",
+        "appraiser signature",
+    ),
+    "effective_date_of_appraisal": (
+        "effective date of appraisal",
+        "effective date",
+        "date of appraisal",
+        "appraisal effective date",
+        "date of value",
+    ),
+    "sale_price": (
+        "sale price",
+        "sales price",
+        "contract sales price",
+        "purchase price",
+        "appraised value",
+    ),
+    "sales_contract_price": (
+        "sales contract price",
+        "contract price",
+        "contract sales price",
+        "purchase contract price",
+    ),
+
+    # Credit report
+    "credit_score": (
+        "credit score",
+        "fico score",
+        "fico",
+        "score",
+        "representative score",
+        "middle score",
+    ),
+
+    # Title commitment / policy
+    "commitment_number": (
+        "commitment number",
+        "commitment no",
+        "title commitment number",
+        "commitment id",
+    ),
+
+    # Notary / affidavit dates
+    "commission_expiration_date": (
+        "commission expiration date",
+        "commission expires",
+        "my commission expires",
+        "notary commission expiration",
+        "commission expiration",
+    ),
+    "execution_date": (
+        "execution date",
+        "executed on",
+        "date of execution",
+        "executed this date",
+    ),
 }
+
+
+# ── Admin / structural label filter ───────────────────────────────────
+# Labels the page classifier sometimes emits for *form scaffolding*
+# rather than *extractable data*: page navigation aids, form revision
+# stamps, section headers, checkbox stems, signature-line markers, etc.
+# These are real labels the classifier produces, but they don't
+# correspond to any LOS field. We exclude them from coverage probes so
+# the alias map's coverage % reflects real field gaps, not noise.
+#
+# All entries are matched against the *normalized* label (``_norm``):
+# lowercase, punctuation-stripped, single-spaced. Add patterns
+# conservatively — false-positives here turn a legitimate field into
+# an unground-able one.
+_ADMIN_LABELS: frozenset[str] = frozenset({
+    # Page navigation / pagination
+    "page",
+    "page number",
+    "page no",
+    "pg",
+    # Form metadata
+    "form",
+    "form number",
+    "form no",
+    "form name",
+    "form version",
+    "form revision",
+    "form date",
+    "revision",
+    "revision date",
+    "rev",
+    "rev date",
+    "version",
+    # Section / structural headers
+    "section",
+    "subsection",
+    "part",
+    "header",
+    "footer",
+    "title",  # form title, not employment "title" — see _ADMIN_LABEL_GUARD
+    # Boolean / checkbox stems
+    "yes",
+    "no",
+    "yes no",
+    "n a",
+    "na",
+    "not applicable",
+    "checkbox",
+    "check box",
+    "check one",
+    "select one",
+    # Signature scaffolding (the *line*, not a real signer field)
+    "signature",
+    "signature line",
+    "sign here",
+    "initials",
+    "x",
+    # Catch-all instruction labels
+    "instructions",
+    "note",
+    "notes",
+    "see attached",
+    "see below",
+    "see above",
+    "continued",
+    "continuation",
+})
+
+
+def is_extraction_worthy_label(label: str | None) -> bool:
+    """Return ``True`` if ``label`` looks like a real data field (and
+    therefore worth scoring for alias coverage), ``False`` if it's
+    form scaffolding the classifier sometimes emits.
+
+    Used by coverage probes to compute "% of *extractable* labels
+    aliased" rather than "% of *all* labels aliased" — the latter is
+    permanently capped by structural noise that no alias would ever
+    bridge to a real field.
+
+    The check is intentionally conservative: an unknown label is
+    treated as worthy. Only labels that exactly match an entry in
+    ``_ADMIN_LABELS`` (after normalization) are filtered out.
+    """
+    n = _norm(label)
+    if not n:
+        return False
+    if n in _ADMIN_LABELS:
+        return False
+    # Pure-digit labels (e.g. classifier emitting "1.", "23")
+    if n.replace(" ", "").isdigit():
+        return False
+    return True
 
 
 # ── Normalization helpers ─────────────────────────────────────────────
