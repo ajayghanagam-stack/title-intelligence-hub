@@ -878,6 +878,62 @@ function _normalizeAgentBbox(
  *      PyMuPDF word stream reorders).
  *   4. null (caller falls back to per-page resolver).
  */
+/**
+ * Look up the classifier's bbox for the row's `field_name` (or its value)
+ * on a given stack page, normalized to 0..1 PDF user-space. The page
+ * classifier emits `detected_fields[]` with a `field_name` and `bbox` per
+ * page during ingest — that bbox is grounded in real word positions and
+ * marks the exact location of the field. We use it as a proximity anchor
+ * to disambiguate among multiple page occurrences of the same value
+ * (borrower_name appears in headers AND signature lines on a 1003;
+ * SSN appears for borrower, co-borrower, employer, …). Returns null if
+ * the page has no matching entry or its bbox is unusable.
+ */
+function _findClassifierAnchor(
+  row: WorkbenchFieldRow,
+  page: { detected_fields?: unknown },
+  pageDims?: { width: number; height: number }
+): number[] | null {
+  const targetName = _norm(row.fieldName);
+  const targetValue = _norm(row.originalValue);
+  if (!targetName && !targetValue) return null;
+  const raw = (page.detected_fields ?? []) as unknown;
+  const list: Array<Record<string, unknown>> = Array.isArray(raw)
+    ? (raw as Array<Record<string, unknown>>)
+    : [];
+  if (list.length === 0) return null;
+
+  let entry: Record<string, unknown> | null = null;
+  if (targetName) {
+    for (const e of list) {
+      const n = _norm(typeof e.field_name === "string" ? e.field_name : null);
+      if (
+        n &&
+        (n === targetName || n.includes(targetName) || targetName.includes(n))
+      ) {
+        entry = e;
+        break;
+      }
+    }
+  }
+  if (!entry && targetValue) {
+    for (const e of list) {
+      const v = _norm(typeof e.value === "string" ? e.value : null);
+      if (
+        v &&
+        (v === targetValue ||
+          v.includes(targetValue) ||
+          targetValue.includes(v))
+      ) {
+        entry = e;
+        break;
+      }
+    }
+  }
+  if (!entry || !_isValidBboxShape(entry.bbox)) return null;
+  return _normalizeAgentBbox(entry.bbox as number[], pageDims);
+}
+
 function _resolveTarget(
   row: WorkbenchFieldRow | null,
   stack: LoanStack | null,
@@ -889,29 +945,36 @@ function _resolveTarget(
 
   const tryTextMatch = (
     text: string | null | undefined,
-    pageId: string
+    pageId: string,
+    anchor: number[] | null
   ): number[] | null => {
     if (!text || !text.trim()) return null;
     const words = wordsByPageId[pageId];
     if (!words || words.length === 0) return null;
-    return _findTextBbox(words, text);
+    return _findTextBbox(words, text, anchor);
   };
 
   if (target && target.trim()) {
-    // 1) Try declared page first when present.
+    // 1) Try declared page first when present. The classifier anchor for the
+    //    field on this page steers the text-match toward the right
+    //    occurrence when the value appears multiple times.
     if (row.page != null) {
       const declared = stack.pages.find((p) => p.page_number === row.page);
       if (declared && declared.page_id) {
-        const bbox = tryTextMatch(target, declared.page_id);
+        const dims = dimsByPageId[declared.page_id];
+        const anchor = _findClassifierAnchor(row, declared, dims);
+        const bbox = tryTextMatch(target, declared.page_id, anchor);
         if (bbox) return { page: declared.page_number, bbox };
       }
     }
 
-    // 2) Search the whole stack in page order.
+    // 2) Search the whole stack in page order — same anchor logic per page.
     for (const p of stack.pages) {
       if (!p.page_id) continue;
       if (row.page != null && p.page_number === row.page) continue; // already tried
-      const bbox = tryTextMatch(target, p.page_id);
+      const dims = dimsByPageId[p.page_id];
+      const anchor = _findClassifierAnchor(row, p, dims);
+      const bbox = tryTextMatch(target, p.page_id, anchor);
       if (bbox) return { page: p.page_number, bbox };
     }
   }
@@ -1013,6 +1076,15 @@ function _resolveDetectedFieldAcrossStack(
     const matched = findEntry(list);
     if (!matched) continue;
 
+    // The classifier's bbox is a proximity anchor — feed it into
+    // `_findTextBbox` so the page's first-occurrence default is overridden
+    // when the value appears multiple times (1003 borrower name in header
+    // + signature line, etc.).
+    const dims = p.page_id ? dimsByPageId[p.page_id] : undefined;
+    const anchor = _isValidBboxShape(matched.bbox)
+      ? _normalizeAgentBbox(matched.bbox as number[], dims)
+      : null;
+
     // Drive a text-match using the classifier's own `value` (what literally
     // appears on the page) — most reliable when it works.
     const classifierValue =
@@ -1020,7 +1092,7 @@ function _resolveDetectedFieldAcrossStack(
     if (classifierValue && p.page_id) {
       const words = wordsByPageId[p.page_id];
       if (words && words.length > 0) {
-        const bbox = _findTextBbox(words, classifierValue);
+        const bbox = _findTextBbox(words, classifierValue, anchor);
         if (bbox) return { page: p.page_number, bbox };
       }
     }
@@ -1029,7 +1101,7 @@ function _resolveDetectedFieldAcrossStack(
     if (row.originalValue && p.page_id) {
       const words = wordsByPageId[p.page_id];
       if (words && words.length > 0) {
-        const bbox = _findTextBbox(words, row.originalValue);
+        const bbox = _findTextBbox(words, row.originalValue, anchor);
         if (bbox) return { page: p.page_number, bbox };
       }
     }
@@ -1037,12 +1109,8 @@ function _resolveDetectedFieldAcrossStack(
     // Memoize the classifier's bbox as a fallback. Normalize using
     // `_normalizeAgentBbox` with the real PDF page dims (from /words) so
     // PDF user-space coords (the typical case) render at the right spot.
-    if (_isValidBboxShape(matched.bbox)) {
-      const dims = p.page_id ? dimsByPageId[p.page_id] : undefined;
-      const normalized = _normalizeAgentBbox(matched.bbox as number[], dims);
-      if (normalized) {
-        bboxFallbacks.push({ page: p.page_number, bbox: normalized });
-      }
+    if (anchor) {
+      bboxFallbacks.push({ page: p.page_number, bbox: anchor });
     }
   }
 
@@ -1078,11 +1146,22 @@ function _resolveOverlayBbox(
   // If the row has no page, we still try matching against the current page.
   if (row.page != null && row.page !== viewerPage) return null;
 
+  // Look up the classifier's anchor for this field on the viewer page up
+  // front so all text-match calls below can use it to disambiguate among
+  // multiple page occurrences (1003 borrower name in header + signature
+  // line; multiple SSNs across borrower / co-borrower fields).
+  const viewerPageRef = stack
+    ? stack.pages.find((p) => p.page_number === viewerPage)
+    : null;
+  const overlayAnchor = viewerPageRef
+    ? _findClassifierAnchor(row, viewerPageRef, pageDims)
+    : null;
+
   // 1) Text-search the word stream for the extracted value.
   if (pageWords && pageWords.length > 0) {
     const target = row.originalValue;
     if (target && target.trim().length > 0) {
-      const found = _findTextBbox(pageWords, target);
+      const found = _findTextBbox(pageWords, target, overlayAnchor);
       if (found) return found;
     }
   }
@@ -1099,7 +1178,7 @@ function _resolveOverlayBbox(
   //    classifier's literal `value`, then fall back to its bbox normalized
   //    against real PDF dims.
   if (!stack) return null;
-  const page = stack.pages.find((p) => p.page_number === viewerPage);
+  const page = viewerPageRef;
   if (!page || !page.detected_fields) return null;
   const raw = page.detected_fields as unknown;
   const list: Array<Record<string, unknown>> = Array.isArray(raw)
@@ -1150,7 +1229,14 @@ function _resolveOverlayBbox(
     pageWords &&
     pageWords.length > 0
   ) {
-    const found = _findTextBbox(pageWords, classifierValue);
+    // The matched entry's own bbox is the most precise anchor for this
+    // text-match call (overlayAnchor came from a name-or-value match on
+    // the same `list`, so they're typically identical, but use the entry's
+    // own bbox when it's better-formed).
+    const entryAnchor = _isValidBboxShape(matched.bbox)
+      ? _normalizeAgentBbox(matched.bbox as number[], pageDims)
+      : overlayAnchor;
+    const found = _findTextBbox(pageWords, classifierValue, entryAnchor);
     if (found) return found;
   }
 
@@ -1184,7 +1270,8 @@ function _resolveOverlayBbox(
  */
 function _findTextBbox(
   words: LoanPageWord[],
-  target: string
+  target: string,
+  anchor?: number[] | null
 ): number[] | null {
   const targetTokens = _tokenize(target);
   if (targetTokens.length === 0) return null;
@@ -1192,18 +1279,31 @@ function _findTextBbox(
   const pageTokens: string[] = words.map((w) => _normToken(w.text));
   if (pageTokens.length < 1) return null;
 
-  // Single-token: equality first, substring fallback.
+  // Single-token: equality first, substring fallback. With an anchor, prefer
+  // the page occurrence whose word bbox is closest to the anchor — this is
+  // the disambiguator on 1003-style forms where the same value (borrower
+  // last name, SSN) appears in many places.
   if (targetTokens.length === 1) {
     const t = targetTokens[0];
+    const exact: number[] = [];
     for (let i = 0; i < pageTokens.length; i++) {
-      if (pageTokens[i] === t) return _wordsToBbox([words[i]]);
+      if (pageTokens[i] === t) exact.push(i);
     }
+    if (exact.length > 0) {
+      const idx = anchor ? _pickClosestWordIndex(words, exact, anchor) : exact[0];
+      return _wordsToBbox([words[idx]]);
+    }
+    const sub: number[] = [];
     for (let i = 0; i < pageTokens.length; i++) {
       const p = pageTokens[i];
       if (!p) continue;
       if (p.length >= 3 && t.length >= 3 && (p.includes(t) || t.includes(p))) {
-        return _wordsToBbox([words[i]]);
+        sub.push(i);
       }
+    }
+    if (sub.length > 0) {
+      const idx = anchor ? _pickClosestWordIndex(words, sub, anchor) : sub[0];
+      return _wordsToBbox([words[idx]]);
     }
     return null;
   }
@@ -1218,9 +1318,13 @@ function _findTextBbox(
   // If the tail can't be located, fall back to spanning the target length —
   // the user explicitly wants the full value highlighted, so over-covering a
   // few neighboring words is preferable to under-highlighting.
+  //
+  // When an anchor is supplied, `_bestWindow` breaks ties between equally-
+  // scoring windows by proximity to the anchor — necessary on 1003s where
+  // "John A. Smith" appears in headers, body, and signature line.
   const seedLen = Math.min(targetTokens.length, 6);
   const seed = targetTokens.slice(0, seedLen);
-  const seedHit = _bestWindow(pageTokens, seed, 0);
+  const seedHit = _bestWindow(pageTokens, seed, 0, words, anchor ?? null);
   if (!seedHit) return null;
 
   const start = seedHit.start;
@@ -1232,10 +1336,12 @@ function _findTextBbox(
   let endExclusive = Math.min(start + seedLen, words.length);
 
   // Tail search — only useful when the value has more tokens than the seed.
+  // The tail is constrained to start AFTER the seed match, so anchor-based
+  // proximity isn't meaningful here; pass null.
   if (targetLen > seedLen) {
     const tailLen = Math.min(targetLen - seedLen, 6);
     const tail = targetTokens.slice(targetLen - tailLen);
-    const tailHit = _bestWindow(pageTokens, tail, start + seedLen);
+    const tailHit = _bestWindow(pageTokens, tail, start + seedLen, words, null);
     if (tailHit) {
       endExclusive = Math.min(tailHit.start + tailLen, words.length);
     }
@@ -1275,16 +1381,58 @@ function _findTextBbox(
  * Find the best-scoring contiguous window of `seed.length` tokens in
  * `pageTokens`, scanning from index `from` onward. Returns `{start, score}`
  * for the best window with score ≥ 0.5, or null.
+ *
+ * When `anchor` is supplied (along with the corresponding `words`), windows
+ * tied at the top score are broken by proximity of the window's bbox center
+ * to the anchor's center. This lets callers steer matches toward a known
+ * location — critical for 1003 forms where the borrower's name appears in
+ * many places and the first occurrence isn't necessarily the right one.
  */
 function _bestWindow(
   pageTokens: string[],
   seed: string[],
-  from: number
+  from: number,
+  words?: LoanPageWord[] | null,
+  anchor?: number[] | null
 ): { start: number; score: number } | null {
   const winLen = seed.length;
   if (winLen === 0) return null;
-  let bestStart = -1;
-  let bestScore = 0;
+  // Without an anchor, preserve the original "first highest-scoring window"
+  // behavior (with the early-out on a perfect 1.0 match).
+  if (!anchor || !words) {
+    let bestStart = -1;
+    let bestScore = 0;
+    const limit = pageTokens.length - winLen + 1;
+    for (let i = Math.max(0, from); i < limit; i++) {
+      let hits = 0;
+      for (let j = 0; j < winLen; j++) {
+        const a = pageTokens[i + j];
+        const b = seed[j];
+        if (!a || !b) continue;
+        if (a === b) {
+          hits += 1;
+        } else if (
+          (a.length >= 3 || b.length >= 3) &&
+          (a.includes(b) || b.includes(a))
+        ) {
+          hits += 0.6;
+        }
+      }
+      const score = hits / winLen;
+      if (score > bestScore) {
+        bestScore = score;
+        bestStart = i;
+        if (score >= 0.999) break;
+      }
+    }
+    if (bestStart < 0 || bestScore < 0.5) return null;
+    return { start: bestStart, score: bestScore };
+  }
+
+  // Anchored path: collect every passing window, then pick by (score desc,
+  // proximity to anchor asc).
+  const candidates: Array<{ start: number; score: number }> = [];
+  let topScore = 0;
   const limit = pageTokens.length - winLen + 1;
   for (let i = Math.max(0, from); i < limit; i++) {
     let hits = 0;
@@ -1302,14 +1450,63 @@ function _bestWindow(
       }
     }
     const score = hits / winLen;
-    if (score > bestScore) {
-      bestScore = score;
-      bestStart = i;
-      if (score >= 0.999) break;
+    if (score >= 0.5) {
+      candidates.push({ start: i, score });
+      if (score > topScore) topScore = score;
     }
   }
-  if (bestStart < 0 || bestScore < 0.5) return null;
-  return { start: bestStart, score: bestScore };
+  if (candidates.length === 0 || topScore < 0.5) return null;
+  // Tie-break only among the top-scoring candidates (within a tiny epsilon
+  // for the partial-match scoring). A worse-but-closer window should never
+  // beat a perfect match.
+  const top = candidates.filter((c) => c.score >= topScore - 1e-6);
+  let pick = top[0];
+  let pickD = Infinity;
+  for (const c of top) {
+    const slice = words.slice(c.start, c.start + winLen);
+    const wb = _wordsToBbox(slice);
+    if (!wb) continue;
+    const d = _bboxCenterDist2(wb, anchor);
+    if (d < pickD) {
+      pick = c;
+      pickD = d;
+    }
+  }
+  return pick;
+}
+
+/** Squared distance between centers of two normalized 0..1 bboxes. */
+function _bboxCenterDist2(a: number[], b: number[]): number {
+  const ax = (a[0] + a[2]) / 2;
+  const ay = (a[1] + a[3]) / 2;
+  const bx = (b[0] + b[2]) / 2;
+  const by = (b[1] + b[3]) / 2;
+  const dx = ax - bx;
+  const dy = ay - by;
+  return dx * dx + dy * dy;
+}
+
+/**
+ * Pick the candidate word index whose bbox center is closest to `anchor`.
+ * `candidates` must be non-empty.
+ */
+function _pickClosestWordIndex(
+  words: LoanPageWord[],
+  candidates: number[],
+  anchor: number[]
+): number {
+  let pick = candidates[0];
+  let pickD = Infinity;
+  for (const i of candidates) {
+    const w = words[i];
+    const wb = [w.x0, w.y0, w.x1, w.y1];
+    const d = _bboxCenterDist2(wb, anchor);
+    if (d < pickD) {
+      pick = i;
+      pickD = d;
+    }
+  }
+  return pick;
 }
 
 /** Lowercase + strip punctuation/whitespace; preserves digits, dots, slashes. */
