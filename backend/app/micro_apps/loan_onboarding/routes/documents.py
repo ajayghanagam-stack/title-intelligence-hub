@@ -71,6 +71,11 @@ async def get_page_image(
     image is rendered from the source PDF via PyMuPDF on each request. Tenant
     isolation is enforced by filtering LOPage on both `org_id` and
     `package_id`; per-user visibility is enforced by `get_visible_package_or_raise`.
+
+    Renders are cached to storage at `{org_id}/{package_id}/images/{page_id}.jpg`
+    so subsequent requests skip the PDF download + render altogether. Cache
+    is keyed by page_id, which is regenerated on any pipeline re-run, so it
+    self-invalidates correctly.
     """
     await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     page = (await db.execute(
@@ -82,6 +87,19 @@ async def get_page_image(
     )).scalar_one_or_none()
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
+
+    cache_key = f"{org_id}/{package_id}/images/{page_id}.jpg"
+    try:
+        cached = await storage.get_object(cache_key)
+        if cached:
+            return Response(
+                content=cached,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "private, max-age=31536000, immutable"},
+            )
+    except Exception:
+        # Treat any storage error (missing key, network blip) as cache miss.
+        pass
 
     file_row = (await db.execute(
         select(LOPackageFile).where(
@@ -104,12 +122,24 @@ async def get_page_image(
         finally:
             doc.close()
 
-    jpeg = await asyncio.to_thread(_render)
+    try:
+        jpeg = await asyncio.to_thread(_render)
+    except Exception as e:
+        logger.exception(
+            "lo image render failed package=%s page=%s source_page=%s: %s",
+            package_id, page_id, page.source_page_number, e,
+        )
+        raise HTTPException(status_code=500, detail="Failed to render page image")
+
+    # Best-effort cache write; never fail the response on cache miss.
+    try:
+        await storage.put_object(cache_key, jpeg, content_type="image/jpeg")
+    except Exception as e:
+        logger.warning(f"lo image cache write failed for page {page_id}: {e}")
+
     # Page bytes are immutable per (package_id, page_id) — source PDF doesn't
     # change once uploaded, page renders are deterministic. `private` because the
     # path is tenant-scoped; one-year max-age + `immutable` skips revalidation.
-    # This is especially valuable here because the current handler re-reads the
-    # PDF from S3 and re-renders on every miss.
     return Response(
         content=jpeg,
         media_type="image/jpeg",
@@ -132,8 +162,15 @@ async def get_page_thumb(
     `/image` renders would be wasteful (~80KB+ per page at DPI=100). This
     handler renders at DPI=30 with JPEG quality 70 — typically <10KB per
     thumb, fast enough to render the strip on stack expand without lag.
-    Same `Cache-Control: immutable` story as `/image`: source PDF doesn't
-    change, page renders are deterministic.
+
+    Renders are cached to storage at `{org_id}/{package_id}/thumbs/{page_id}.jpg`
+    so subsequent requests for the same page (every revisit, every other
+    user, every browser tab) skip the PDF download and PyMuPDF render
+    entirely. Without this cache, opening a 100-page packet hammered the
+    backend with 100 sequential PDF re-downloads + renders, which is what
+    made the strip feel laggy and triggered silent timeouts on individual
+    pages. Cache key is page_id, which is regenerated on every pipeline
+    re-run, so it self-invalidates.
     """
     await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     page = (await db.execute(
@@ -145,6 +182,18 @@ async def get_page_thumb(
     )).scalar_one_or_none()
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
+
+    cache_key = f"{org_id}/{package_id}/thumbs/{page_id}.jpg"
+    try:
+        cached = await storage.get_object(cache_key)
+        if cached:
+            return Response(
+                content=cached,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "private, max-age=31536000, immutable"},
+            )
+    except Exception:
+        pass
 
     file_row = (await db.execute(
         select(LOPackageFile).where(
@@ -183,7 +232,24 @@ async def get_page_thumb(
         finally:
             doc.close()
 
-    jpeg = await asyncio.to_thread(_render)
+    try:
+        jpeg = await asyncio.to_thread(_render)
+    except Exception as e:
+        # Without this branch, a single corrupt page silently 500s and the
+        # frontend shows a permanent red error box for that thumb (e.g. the
+        # missing pages 6 and 9 the user saw). Surface the failure in logs
+        # so we can tell which page broke and why.
+        logger.exception(
+            "lo thumb render failed package=%s page=%s source_page=%s: %s",
+            package_id, page_id, page.source_page_number, e,
+        )
+        raise HTTPException(status_code=500, detail="Failed to render page thumbnail")
+
+    try:
+        await storage.put_object(cache_key, jpeg, content_type="image/jpeg")
+    except Exception as e:
+        logger.warning(f"lo thumb cache write failed for page {page_id}: {e}")
+
     return Response(
         content=jpeg,
         media_type="image/jpeg",
@@ -426,13 +492,18 @@ async def list_stacks(
     clf_by_page = {c.page_number: c for c in classifications}
 
     # Include page_id per stack page so the Documents tab can call the
-    # per-page override endpoint without a separate /pages lookup.
+    # per-page override endpoint without a separate /pages lookup. Also
+    # surface content_signal ("text" | "image" | "blank") so the page
+    # viewer can render a "PDF" vs "Image" badge — useful for reviewers
+    # to know at a glance whether a page is a native digital PDF or a
+    # scanned image.
     pages = (await db.execute(
         select(LOPage).where(
             LOPage.package_id == package_id, LOPage.org_id == org_id
         )
     )).scalars().all()
     page_id_by_number = {p.page_number: p.id for p in pages}
+    content_signal_by_number = {p.page_number: p.content_signal for p in pages}
 
     out = []
     for s in stacks:
@@ -446,6 +517,7 @@ async def list_stacks(
                 "confidence": c.confidence if c else None,
                 "page_role": c.page_role if c else None,
                 "detected_fields": c.detected_fields if c else [],
+                "content_signal": content_signal_by_number.get(pn),
             })
         out.append({
             "id": str(s.id),

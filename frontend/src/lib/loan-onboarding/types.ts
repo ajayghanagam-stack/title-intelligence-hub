@@ -160,6 +160,15 @@ export interface LoanStackPage {
   confidence: number | null;
   page_role: string | null;
   detected_fields: Record<string, unknown> | null;
+  /**
+   * Heuristic from the ingest stage:
+   * - "text"  → page has embedded native PDF text
+   * - "image" → scanned/image-only page (no embedded text)
+   * - "blank" → effectively empty
+   * Drives the "PDF" vs "Image" badge in the page viewer so reviewers
+   * can tell at a glance whether the source was native or scanned.
+   */
+  content_signal: "text" | "image" | "blank" | null;
 }
 
 export interface LoanStack {

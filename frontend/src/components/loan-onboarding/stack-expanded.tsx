@@ -455,6 +455,20 @@ function ScoreRow({
  * fetches the JPEG via apiFetchBlob (which injects auth + org headers),
  * renders the result via URL.createObjectURL, and revokes on unmount or
  * path change to avoid leaking blob URLs.
+ *
+ * Two reliability features sit on top of the basic fetch:
+ *
+ * 1. **Lazy loading via IntersectionObserver.** A 100-page packet has 100
+ *    thumbs; without lazy loading every revisit fires 100 parallel auth-
+ *    fetches and the browser's per-host concurrency cap (~6) means the
+ *    last thumbs queue for seconds. We only fetch when the placeholder
+ *    enters the viewport (root margin 200px = pre-fetch a viewport ahead).
+ *
+ * 2. **One automatic retry on failure.** `/thumb` re-renders from the
+ *    source PDF on cache miss, and a single PyMuPDF/PIL hiccup used to
+ *    leave the thumb permanently red (the user reported pages 6 and 9
+ *    missing). One retry after a 600ms backoff catches the transient case;
+ *    permanent failures still surface as the red error tile.
  */
 function AuthImage({
   path,
@@ -471,33 +485,83 @@ function AuthImage({
 }) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<boolean>(false);
+  const [visible, setVisible] = useState<boolean>(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const srcRef = useRef<string | null>(null);
 
+  // IntersectionObserver gate — flip `visible=true` once and stay there.
+  // Re-fetching on every viewport re-entry would defeat the browser's HTTP
+  // cache (immutable response) and our blob URL is already mounted.
   useEffect(() => {
-    let revoked = false;
+    if (visible) return;
+    const node = containerRef.current;
+    if (!node) return;
+    if (typeof IntersectionObserver === "undefined") {
+      // SSR / older browsers — fall back to immediate load.
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setVisible(true);
+            observer.disconnect();
+            break;
+          }
+        }
+      },
+      { rootMargin: "200px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
     setError(false);
     setSrc(null);
 
-    apiFetchBlob(path, { orgId })
-      .then((blob) => {
-        if (revoked) return;
+    const load = async (attempt: number) => {
+      try {
+        const blob = await apiFetchBlob(path, { orgId });
+        if (cancelled) return;
         const url = URL.createObjectURL(blob);
+        // Revoke any prior URL on this consumer before swapping in the new one.
+        if (srcRef.current) URL.revokeObjectURL(srcRef.current);
         srcRef.current = url;
         setSrc(url);
-      })
-      .catch((err) => {
+      } catch (err) {
+        if (cancelled) return;
+        if (attempt === 0) {
+          // Single retry — covers the transient "PDF render hiccup" case
+          // without hammering the backend on permanent failures.
+          setTimeout(() => {
+            if (!cancelled) load(attempt + 1);
+          }, 600);
+          return;
+        }
         console.error(`Failed to load image ${path}:`, err);
-        if (!revoked) setError(true);
-      });
-    return () => {
-      revoked = true;
-      if (srcRef.current) URL.revokeObjectURL(srcRef.current);
+        setError(true);
+      }
     };
-  }, [path, orgId]);
+
+    load(0);
+
+    return () => {
+      cancelled = true;
+      if (srcRef.current) {
+        URL.revokeObjectURL(srcRef.current);
+        srcRef.current = null;
+      }
+    };
+  }, [path, orgId, visible]);
 
   if (error) {
     return (
       <div
+        ref={containerRef}
         className={cn(
           "bg-red-50 flex items-center justify-center text-red-400",
           className
@@ -511,12 +575,17 @@ function AuthImage({
   if (!src) {
     return (
       <div
+        ref={containerRef}
         className={cn("bg-muted/40 animate-pulse rounded", className)}
       />
     );
   }
 
-  return <img src={src} alt={alt} className={className} style={style} />;
+  return (
+    <div ref={containerRef} className={cn("contents")}>
+      <img src={src} alt={alt} className={className} style={style} />
+    </div>
+  );
 }
 
 interface PageViewerProps {
@@ -978,6 +1047,37 @@ function PageViewer({
                   {activePage.confidence != null &&
                     ` · ${Math.round(activePage.confidence * 100)}% conf.`}
                 </div>
+              )}
+              {/* PDF vs Image badge — content_signal comes from the ingest
+                  stage's heuristic over PyMuPDF text extraction. Lets a
+                  reviewer tell at a glance whether the page is a native
+                  digital PDF (selectable text) or a scanned image (OCR
+                  required for any field extraction). */}
+              {activePage?.content_signal && (
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm font-mono text-[9px] uppercase tracking-[0.1em] border shrink-0",
+                    activePage.content_signal === "text"
+                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      : activePage.content_signal === "image"
+                      ? "bg-blue-50 text-blue-700 border-blue-200"
+                      : "bg-muted text-muted-foreground border-border"
+                  )}
+                  title={
+                    activePage.content_signal === "text"
+                      ? "Native PDF — text is embedded and selectable"
+                      : activePage.content_signal === "image"
+                      ? "Scanned image — no embedded text (OCR-only)"
+                      : "Blank page — no extractable content"
+                  }
+                  data-testid="page-content-signal"
+                >
+                  {activePage.content_signal === "text"
+                    ? "PDF"
+                    : activePage.content_signal === "image"
+                    ? "Image"
+                    : "Blank"}
+                </span>
               )}
             </div>
             <div className="flex items-center gap-3 shrink-0">
