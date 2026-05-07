@@ -966,18 +966,25 @@ async def stage_extract(
     )
 
     def _apply_grounding(extraction: StackExtraction, snippets: list[dict]) -> int:
-        """Populate empty `location` on each ExtractedField using the
+        """Populate `location` on each ExtractedField using the
         classifier's grounded ``detected_fields`` bboxes from snippets.
 
-        Always overwrites — even when the agent emitted its own bbox —
-        because the agent only sees text and any bbox it returns is
-        hallucinated. The classifier *does* see the rendered PDF and
-        emits real coordinates. Returns the count of fields grounded.
+        Always replaces the existing location — both the agent's
+        hallucinated bbox (text-only model, no real coordinates) and
+        any stale cached location from a prior pipeline run with
+        weaker grounding rules. When the current grounder finds no
+        plausible match, the location is cleared to None rather than
+        left pointing at potentially-bad data. Returns the count of
+        fields successfully grounded.
         """
         grounded_count = 0
         for f in extraction.fields:
             located = ground_field_location(f.name, f.value, snippets)
             if located is None:
+                # Drop any stale location: the only legitimate source
+                # is the classifier; if grounding rejected every
+                # candidate as implausible, we have nothing to render.
+                f.location = None
                 continue
             page_num, bbox_unit = located
             f.location = FieldLocation(page=page_num, bbox=bbox_unit)
