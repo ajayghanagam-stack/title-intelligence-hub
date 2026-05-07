@@ -77,6 +77,11 @@ async def get_page_image(
     is keyed by page_id, which is regenerated on any pipeline re-run, so it
     self-invalidates correctly.
     """
+    # Tight DB scope: fetch all needed metadata, then release the session
+    # BEFORE we do slow S3 / PyMuPDF work. Without this, a client cancellation
+    # during slow I/O strands the connection in `idle in transaction` because
+    # FastAPI's `Depends(get_db)` keeps the session open until the handler
+    # returns. We saw 18 such stuck txns on stage holding the pool hostage.
     await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     page = (await db.execute(
         select(LOPage).where(
@@ -87,6 +92,20 @@ async def get_page_image(
     )).scalar_one_or_none()
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
+    file_row = (await db.execute(
+        select(LOPackageFile).where(
+            LOPackageFile.id == page.file_id,
+            LOPackageFile.org_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if not file_row:
+        raise HTTPException(status_code=404, detail="Source file not found")
+
+    # Capture as plain Python values so we can drop the ORM-bound objects
+    # along with the session.
+    source_page_number = page.source_page_number
+    storage_path = file_row.storage_path
+    await db.close()
 
     cache_key = f"{org_id}/{package_id}/images/{page_id}.jpg"
     try:
@@ -101,22 +120,13 @@ async def get_page_image(
         # Treat any storage error (missing key, network blip) as cache miss.
         pass
 
-    file_row = (await db.execute(
-        select(LOPackageFile).where(
-            LOPackageFile.id == page.file_id,
-            LOPackageFile.org_id == org_id,
-        )
-    )).scalar_one_or_none()
-    if not file_row:
-        raise HTTPException(status_code=404, detail="Source file not found")
-
-    pdf_bytes = await storage.get_object(file_row.storage_path)
+    pdf_bytes = await storage.get_object(storage_path)
 
     def _render() -> bytes:
         import fitz  # PyMuPDF
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         try:
-            idx = max(0, min(page.source_page_number - 1, len(doc) - 1))
+            idx = max(0, min(source_page_number - 1, len(doc) - 1))
             pix = doc[idx].get_pixmap(dpi=100)
             return pix.tobytes("jpeg")
         finally:
@@ -127,7 +137,7 @@ async def get_page_image(
     except Exception as e:
         logger.exception(
             "lo image render failed package=%s page=%s source_page=%s: %s",
-            package_id, page_id, page.source_page_number, e,
+            package_id, page_id, source_page_number, e,
         )
         raise HTTPException(status_code=500, detail="Failed to render page image")
 
@@ -172,6 +182,7 @@ async def get_page_thumb(
     pages. Cache key is page_id, which is regenerated on every pipeline
     re-run, so it self-invalidates.
     """
+    # See `/image` handler — same session-leak fix applies.
     await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     page = (await db.execute(
         select(LOPage).where(
@@ -182,6 +193,18 @@ async def get_page_thumb(
     )).scalar_one_or_none()
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
+    file_row = (await db.execute(
+        select(LOPackageFile).where(
+            LOPackageFile.id == page.file_id,
+            LOPackageFile.org_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if not file_row:
+        raise HTTPException(status_code=404, detail="Source file not found")
+
+    source_page_number = page.source_page_number
+    storage_path = file_row.storage_path
+    await db.close()
 
     cache_key = f"{org_id}/{package_id}/thumbs/{page_id}.jpg"
     try:
@@ -195,16 +218,7 @@ async def get_page_thumb(
     except Exception:
         pass
 
-    file_row = (await db.execute(
-        select(LOPackageFile).where(
-            LOPackageFile.id == page.file_id,
-            LOPackageFile.org_id == org_id,
-        )
-    )).scalar_one_or_none()
-    if not file_row:
-        raise HTTPException(status_code=404, detail="Source file not found")
-
-    pdf_bytes = await storage.get_object(file_row.storage_path)
+    pdf_bytes = await storage.get_object(storage_path)
 
     def _render() -> bytes:
         import io
@@ -213,7 +227,7 @@ async def get_page_thumb(
 
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         try:
-            idx = max(0, min(page.source_page_number - 1, len(doc) - 1))
+            idx = max(0, min(source_page_number - 1, len(doc) - 1))
             # DPI=30 puts a US Letter page at ~255×330 px; we resample to
             # 150px wide so the thumb strip stays crisp on retina without
             # blowing up payload size. PIL gives us JPEG quality control
@@ -241,7 +255,7 @@ async def get_page_thumb(
         # so we can tell which page broke and why.
         logger.exception(
             "lo thumb render failed package=%s page=%s source_page=%s: %s",
-            package_id, page_id, page.source_page_number, e,
+            package_id, page_id, source_page_number, e,
         )
         raise HTTPException(status_code=500, detail="Failed to render page thumbnail")
 
@@ -285,6 +299,9 @@ async def get_page_words(
           ]
         }
     """
+    # See `/image` handler — same session-leak fix. The OCR fallback path can
+    # take 5-10s on a scanned page, which is plenty of time for a stranded
+    # `idle in transaction` to pile up if we held the session open.
     await package_service.get_visible_package_or_raise(db, org_id, package_id, member)
     page = (await db.execute(
         select(LOPage).where(
@@ -305,7 +322,11 @@ async def get_page_words(
     if not file_row:
         raise HTTPException(status_code=404, detail="Source file not found")
 
-    pdf_bytes = await storage.get_object(file_row.storage_path)
+    source_page_number = page.source_page_number
+    storage_path = file_row.storage_path
+    await db.close()
+
+    pdf_bytes = await storage.get_object(storage_path)
 
     # Cache key for OCR fallback. Native-text pages are recomputed each call
     # (PyMuPDF is fast, ~ms). Image-only pages run Tesseract once then hit
@@ -324,7 +345,7 @@ async def get_page_words(
         import fitz  # PyMuPDF
         doc = fitz.open(stream=pdf_bytes_inner, filetype="pdf")
         try:
-            idx = max(0, min(page.source_page_number - 1, len(doc) - 1))
+            idx = max(0, min(source_page_number - 1, len(doc) - 1))
             pdf_page = doc[idx]
             rect = pdf_page.rect
             pw = float(rect.width) or 1.0
@@ -372,7 +393,7 @@ async def get_page_words(
 
         doc = fitz.open(stream=pdf_bytes_inner, filetype="pdf")
         try:
-            idx = max(0, min(page.source_page_number - 1, len(doc) - 1))
+            idx = max(0, min(source_page_number - 1, len(doc) - 1))
             pdf_page = doc[idx]
             rect = pdf_page.rect
             pw = float(rect.width) or 1.0
