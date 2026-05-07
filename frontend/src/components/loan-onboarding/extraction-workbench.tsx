@@ -916,25 +916,17 @@ function _resolveTarget(
     }
   }
 
-  // 3) Use the extraction's own bbox if it carries one. Despite the row
-  //    type claiming 0..1, the backend forwards the agent's raw coords
-  //    (typically PDF user-space pixels, e.g. [550, 140, 750, 151] on a
-  //    612×792 page). `_normalizeAgentBbox` divides by the real page dims
-  //    from `/words` when available, so the highlight lands on the right
-  //    spot — even on image-only PDFs where text-match is impossible.
-  if (row.page != null && _isValidBboxShape(row.bbox)) {
-    const declared = stack.pages.find((p) => p.page_number === row.page);
-    if (declared && declared.page_id) {
-      const dims = dimsByPageId[declared.page_id];
-      const normalized = _normalizeAgentBbox(row.bbox as number[], dims);
-      if (normalized) return { page: declared.page_number, bbox: normalized };
-    }
-  }
-
-  // 4) detected_fields-driven cross-page resolution. Uses the classifier's
+  // 3) detected_fields-driven cross-page resolution. Uses the classifier's
   //    own `value` (which is what literally appears on the page) to drive a
   //    text-match; falls back to the classifier bbox normalized against
   //    real PDF dims as a last resort.
+  //
+  // (The extraction agent's own raw bbox used to be path 3 here. It was
+  // dropped because `stage_extract` feeds the agent text + detected_fields
+  // only — zero coordinate signal — so any bbox the agent emits is
+  // hallucinated. Trusting it produced confidently-placed highlights in
+  // the wrong location. The classifier bbox below IS grounded — PyMuPDF
+  // emits it during ingest from real word positions.)
   return _resolveDetectedFieldAcrossStack(
     row,
     stack,
@@ -1233,7 +1225,11 @@ function _findTextBbox(
 
   const start = seedHit.start;
   const targetLen = targetTokens.length;
-  let endExclusive = Math.min(start + targetLen, words.length);
+  // Default to highlighting only what we matched (the seed). Extending past
+  // the seed without a confirmed tail anchor used to sweep in `targetLen`
+  // worth of unrelated neighbors when the value's tail words appeared
+  // elsewhere on the page or not at all.
+  let endExclusive = Math.min(start + seedLen, words.length);
 
   // Tail search — only useful when the value has more tokens than the seed.
   if (targetLen > seedLen) {
@@ -1249,7 +1245,30 @@ function _findTextBbox(
   endExclusive = Math.min(endExclusive, start + 250, words.length);
   if (endExclusive <= start) endExclusive = Math.min(start + seedLen, words.length);
 
-  return _wordsToBbox(words.slice(start, endExclusive));
+  const union = _wordsToBbox(words.slice(start, endExclusive));
+  if (!union) return null;
+
+  // Plausibility guard: a contiguous union that spans many lines almost
+  // always means we joined a real seed match with words from a different
+  // row/cell of the page (e.g. seed on line 1 + tail on line 6, with five
+  // lines of unrelated content in between). Better to fall through to the
+  // "precise location not detected" hint than render a confidently-wrong
+  // rectangle.
+  const wordHeights = words
+    .map((w) => Math.max(0, w.y1 - w.y0))
+    .filter((h) => h > 0)
+    .sort((a, b) => a - b);
+  const medianH =
+    wordHeights.length > 0
+      ? wordHeights[Math.floor(wordHeights.length / 2)]
+      : 0;
+  const [ux0, uy0, ux1, uy1] = union;
+  const uw = Math.max(0, ux1 - ux0);
+  const uh = Math.max(0, uy1 - uy0);
+  if (medianH > 0 && uh > medianH * 6) return null;
+  if (uw * uh > 0.35) return null;
+
+  return union;
 }
 
 /**
@@ -1341,12 +1360,23 @@ function BboxOverlay({
   label: string | null;
 }) {
   const [x1, y1, x2, y2] = bbox;
-  // Defensive clamp — the agent occasionally emits values slightly outside
-  // [0,1] when the source PDF was rotated or cropped pre-render.
-  const left = Math.max(0, Math.min(1, Math.min(x1, x2))) * 100;
-  const top = Math.max(0, Math.min(1, Math.min(y1, y2))) * 100;
-  const right = Math.max(0, Math.min(1, Math.max(x1, x2))) * 100;
-  const bottom = Math.max(0, Math.min(1, Math.max(y1, y2))) * 100;
+  // Pad the box a hair on each side (0.5% horizontal, 0.3% vertical) so
+  // the highlight visibly covers ascenders/descenders/whitespace instead
+  // of clipping at the glyph baseline. Padding is applied BEFORE the
+  // [0,1] clamp so the box never escapes the page edge.
+  const PAD_X = 0.005;
+  const PAD_Y = 0.003;
+  const minX = Math.min(x1, x2) - PAD_X;
+  const minY = Math.min(y1, y2) - PAD_Y;
+  const maxX = Math.max(x1, x2) + PAD_X;
+  const maxY = Math.max(y1, y2) + PAD_Y;
+  // Defensive clamp — coordinates occasionally fall slightly outside [0,1]
+  // when the source PDF was rotated or cropped pre-render, and after the
+  // padding above.
+  const left = Math.max(0, Math.min(1, minX)) * 100;
+  const top = Math.max(0, Math.min(1, minY)) * 100;
+  const right = Math.max(0, Math.min(1, maxX)) * 100;
+  const bottom = Math.max(0, Math.min(1, maxY)) * 100;
   const width = Math.max(0, right - left);
   const height = Math.max(0, bottom - top);
   return (
