@@ -191,24 +191,192 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "year",
     ),
 
-    # Asset statements
+    # Asset / bank statements
     "account_number": (
         "account number",
         "account no",
+        "account #",
         "acct number",
         "account",
+    ),
+    "account_holder_name": (
+        "account holder name",
+        "account holder",
+        "account name",
+        "name on account",
+        "accountholder name",
     ),
     "ending_balance": (
         "ending balance",
         "balance",
         "current balance",
         "available balance",
+        "ending account value",
+        "ending market value",
+        "ending portfolio value",
+    ),
+    "beginning_balance": (
+        "beginning balance",
+        "starting balance",
+        "opening balance",
     ),
     "statement_date": (
         "statement date",
         "as of date",
-        "date",
+    ),
+    "statement_period": (
+        "statement period",
+        "report period",
+        "report date range",
+        "report date",
+        "statement period start date",
+        "statement period end date",
         "period ending",
+        "period beginning",
+    ),
+    "institution_name": (
+        "institution name",
+        "bank name",
+        "financial institution",
+    ),
+
+    # Paystub
+    "pay_period": (
+        "pay period",
+        "pay date",
+        "period beginning",
+        "period ending",
+        "period start date",
+        "period end date",
+        "period start",
+        "period end",
+        "pay period beginning",
+        "pay period ending",
+    ),
+
+    # Loan-form metadata that LOs commonly extract
+    "loan_number": (
+        "loan number",
+        "loan no",
+        "loan id",
+        "loan identifier",
+        "lender loan no universal loan identifier",
+        "lender loan no",
+        "universal loan identifier",
+        "universal loan id",
+        "rsmc loan number",
+    ),
+    "lender_name": (
+        "lender name",
+        "lender",
+        "name of lender",
+        "lender broker",
+        "lender client",
+    ),
+    "loan_originator_name": (
+        "loan originator name",
+        "loan officer name",
+        "mlo name",
+        "mortgage loan originator",
+    ),
+    "nmls_id": (
+        "nmls id",
+        "nmlsr id",
+        "loan originator nmlsr id",
+        "mlo nmls",
+        "loan originator nmls id",
+    ),
+    "signature_date": (
+        "signature date",
+        "date signed",
+        "signed date",
+    ),
+
+    # Identity / IDs
+    "dl_number": (
+        "dl number",
+        "dl no",
+        "driver license number",
+        "drivers license number",
+        "license number",
+    ),
+
+    # Insurance / flood
+    "policy_number": (
+        "policy number",
+        "policy no",
+    ),
+    "policy_period": (
+        "policy period",
+        "effective period",
+    ),
+    "named_insured": (
+        "named insured",
+        "insured",
+        "insured name",
+    ),
+    "flood_zone": (
+        "flood zone",
+        "flood zone designation",
+    ),
+
+    # Title / deed parties
+    "grantor": (
+        "grantor",
+        "grantor name",
+        "name of grantor",
+    ),
+    "grantee": (
+        "grantee",
+        "grantee name",
+        "name of grantee",
+    ),
+    "seller_name": (
+        "seller",
+        "seller name",
+        "name of seller",
+    ),
+    "buyer_name": (
+        "buyer",
+        "buyer name",
+        "name of buyer",
+    ),
+
+    # Notary / affidavit
+    "notary_name": (
+        "notary name",
+        "notary public name",
+        "notary public",
+    ),
+    "affiant_name": (
+        "affiant name",
+        "affiant",
+        "declarant name",
+        "declarant",
+    ),
+    "donor_name": (
+        "donor name",
+        "name of donor",
+        "donor",
+    ),
+    "signer_name": (
+        "signer name",
+        "signed by",
+        "signer",
+    ),
+
+    # Tax forms
+    "taxpayer_name": (
+        "taxpayer name",
+        "name of taxpayer",
+    ),
+
+    # File / reference numbers
+    "file_number": (
+        "file number",
+        "file no",
+        "file id",
+        "file",
     ),
 }
 
@@ -262,8 +430,24 @@ def _candidate_labels(field_name: str) -> set[str]:
 
 def _label_score(detected_label: str, candidates: set[str]) -> float:
     """0..3 score for how well a classifier label matches the candidate
-    set. Higher is better. Exact = 3, substring either way = 2, partial
-    token overlap = 1, no overlap = 0.
+    set. Higher is better.
+      3.0 — exact normalized match
+      2.5 — shorter is contained in longer as a full token
+      2.0 — shorter is a non-token substring of longer (covers "ssn"
+            matching "ssn provided" once the substring rule fires —
+            gated by the token-or-substring containment check, NOT by
+            arbitrary character co-occurrence: "ssn" against "session"
+            never reaches this path because neither substring contains
+            the other)
+      0   — no usable signal
+
+    Note: a previous version returned 1.0 for any token co-occurrence
+    (e.g. "loan amount" vs "loan number" sharing the bare token
+    "number" or "loan"). That fallback proved too noisy — short
+    common tokens ("name", "number", "date", "id") show up across
+    unrelated fields and a coincidental value substring would then
+    push the combined score over threshold and ground the wrong
+    label. Removed: only exact-or-containment counts now.
     """
     nd = _norm(detected_label)
     if not nd or not candidates:
@@ -271,25 +455,12 @@ def _label_score(detected_label: str, candidates: set[str]) -> float:
     if nd in candidates:
         return 3.0
     for c in candidates:
-        if not c:
+        if not c or nd == c:
             continue
-        if nd == c:
-            return 3.0
         if nd in c or c in nd:
-            # Require that the longer of the two contains the shorter
-            # *as a token*, not just a substring — avoids "ssn" matching
-            # "occupation" via the substring "ss".
             shorter, longer = (nd, c) if len(nd) <= len(c) else (c, nd)
             longer_tokens = set(longer.split())
-            if shorter in longer_tokens or shorter in longer:
-                # Stronger signal when full-token contained
-                return 2.5 if shorter in longer_tokens else 2.0
-    # Token overlap fallback
-    nd_tokens = set(nd.split())
-    for c in candidates:
-        ct = set((c or "").split())
-        if nd_tokens & ct:
-            return 1.0
+            return 2.5 if shorter in longer_tokens else 2.0
     return 0.0
 
 
@@ -416,7 +587,10 @@ def ground_field_location(
             if not isinstance(label, str):
                 continue
             ls = _label_score(label, candidates)
-            if ls < 1.0:
+            # Require exact or containment label match (>=2.0). Token
+            # co-occurrence alone is filtered to avoid false grounds on
+            # ambiguous short tokens shared across unrelated fields.
+            if ls < 2.0:
                 continue
             vs = _value_score(
                 entry.get("value") if isinstance(entry.get("value"), str) else None,
@@ -427,8 +601,6 @@ def ground_field_location(
             # values can occur in multiple labelled rows (SSN under
             # borrower vs co-borrower).
             combined = (ls * 1.5) + vs
-            if combined < 2.0:
-                continue
             bbox = _normalize_bbox_to_unit(entry.get("bbox"))
             if bbox is None:
                 continue
