@@ -8,7 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.config import Settings, get_settings
 from app.core.auth import AuthenticatedUser
-from app.core.deps import get_db, get_current_member, require_platform_admin
+from app.core.deps import (
+    get_db, get_current_member, get_session_factory, require_platform_admin,
+)
 from app.models import Base, ensure_micro_app_models
 from app.models.organization import Organization
 from app.models.user import User
@@ -141,6 +143,7 @@ async def client(db_session: AsyncSession, seed_data):
     app.dependency_overrides[get_current_user] = override_current_user
     app.dependency_overrides[get_current_member] = override_current_member
     app.dependency_overrides[require_platform_admin] = override_platform_admin
+    app.dependency_overrides[get_session_factory] = lambda: test_session_factory
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

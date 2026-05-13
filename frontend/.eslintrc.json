@@ -7,6 +7,25 @@
   "rules": {
     "jsx-a11y/click-events-have-key-events": "warn",
     "jsx-a11y/no-static-element-interactions": "warn",
-    "jsx-a11y/heading-has-content": "off"
-  }
+    "jsx-a11y/heading-has-content": "off",
+    "no-restricted-syntax": [
+      "warn",
+      {
+        "selector": "JSXAttribute[name.name='className'] Literal[value=/#[0-9A-Fa-f]{3,8}\\b/]",
+        "message": "Phase 5.1 brand contract — no raw hex literals in className. Use brand tokens (brand-teal/purple/orange/charcoal/gray/white) defined in tailwind.config.ts."
+      },
+      {
+        "selector": "JSXAttribute[name.name='style'] Property[value.value=/#[0-9A-Fa-f]{3,8}\\b/]",
+        "message": "Phase 5.1 brand contract — no raw hex literals in style props. Use brand tokens or var(--brand-*) instead."
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["tailwind.config.ts", "tailwind.config.js"],
+      "rules": {
+        "no-restricted-syntax": "off"
+      }
+    }
+  ]
 }

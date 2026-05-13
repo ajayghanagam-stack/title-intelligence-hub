@@ -36,8 +36,11 @@ export const OTHERS_DOC_TYPE_KEY = "Others";
  * residential mortgage loan package. Flat list (no categories) so the UI can
  * render it as a paginated checklist and default-select every type.
  *
- * Keys are stable (UPPER_SNAKE_CASE) and sent to the classifier as the
- * doc_type enum for each package. Default-required types cover the backbone
+ * Keys are stable lower-snake-case and sent to the classifier as the
+ * doc_type enum for each package. They mirror the canonical
+ * `lo_doc_type_catalog` vocabulary (paystub, w2, urla_1003, …) so the per-loan
+ * overlay merges cleanly with global catalog rows. Default-required types
+ * cover the backbone
  * of a typical purchase package (URLA, paystubs, W-2, bank statements, credit
  * report). Everything else defaults to optional and can be toggled on per
  * order.
@@ -45,37 +48,37 @@ export const OTHERS_DOC_TYPE_KEY = "Others";
 export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
   // ── Borrower financial ─────────────────────────────────────────────────
   {
-    key: "URLA_1003",
+    key: "urla_1003",
     label: "URLA (1003)",
     description: "Uniform Residential Loan Application",
     required: true,
   },
   {
-    key: "PAYSTUB",
+    key: "paystub",
     label: "Paystub",
     description: "Recent pay statements (30 days)",
     required: true,
   },
   {
-    key: "W2",
+    key: "w2",
     label: "W-2",
     description: "Wage and Tax Statement",
     required: true,
   },
   {
-    key: "TAX_RETURN_1040",
+    key: "f1040",
     label: "Tax Return (1040)",
     description: "IRS Individual Tax Return",
     required: false,
   },
   {
-    key: "BANK_STATEMENT",
+    key: "bank_stmt",
     label: "Bank Statement",
     description: "Checking / savings statements (last 2 months)",
     required: true,
   },
   {
-    key: "CREDIT_REPORT",
+    key: "credit_report",
     label: "Credit Report",
     description: "Tri-merge credit report",
     required: true,
@@ -83,19 +86,19 @@ export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
 
   // ── Property & transaction ─────────────────────────────────────────────
   {
-    key: "APPRAISAL",
+    key: "appraisal",
     label: "Appraisal",
     description: "Form 1004 — Uniform Residential Appraisal Report",
     required: false,
   },
   {
-    key: "PURCHASE_CONTRACT",
+    key: "purchase_agmt",
     label: "Purchase Contract",
     description: "Executed sales contract",
     required: false,
   },
   {
-    key: "HOMEOWNERS_INS",
+    key: "hoi",
     label: "Homeowners Insurance",
     description: "Insurance declaration page",
     required: false,
@@ -103,13 +106,13 @@ export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
 
   // ── Title insurance ────────────────────────────────────────────────────
   {
-    key: "TITLE_COMMITMENT",
+    key: "title_commit",
     label: "Title Commitment",
     description: "Title insurance commitment",
     required: false,
   },
   {
-    key: "TITLE_POLICY",
+    key: "title_policy",
     label: "Title Policy",
     description: "Final title insurance policy",
     required: false,
@@ -117,25 +120,25 @@ export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
 
   // ── Recorded deeds ─────────────────────────────────────────────────────
   {
-    key: "WARRANTY_DEED",
+    key: "warranty_deed",
     label: "Warranty Deed",
     description: "Warranty deed conveying title",
     required: false,
   },
   {
-    key: "QUITCLAIM_DEED",
+    key: "quitclaim_deed",
     label: "Quitclaim Deed",
     description: "Quitclaim deed",
     required: false,
   },
   {
-    key: "DEED_OTHER",
+    key: "deed_other",
     label: "Deed (Other)",
     description: "Bargain & sale, trustee, special warranty, etc.",
     required: false,
   },
   {
-    key: "ASSIGNMENT_OF_MORTGAGE",
+    key: "assignment_of_mortgage",
     label: "Assignment of Mortgage",
     description: "Mortgage assignment to new holder",
     required: false,
@@ -143,37 +146,37 @@ export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
 
   // ── Other recorded instruments ─────────────────────────────────────────
   {
-    key: "MORTGAGE_DEED_OF_TRUST",
+    key: "mortgage_deed_of_trust",
     label: "Mortgage / Deed of Trust",
     description: "Recorded lien instrument",
     required: false,
   },
   {
-    key: "SATISFACTION_RELEASE",
+    key: "satisfaction_release",
     label: "Satisfaction / Release",
     description: "Lien satisfaction or release",
     required: false,
   },
   {
-    key: "SUBORDINATION_AGREEMENT",
+    key: "subordination_agreement",
     label: "Subordination Agreement",
     description: "Lien subordination",
     required: false,
   },
   {
-    key: "LIEN_JUDGMENT",
+    key: "lien_judgment",
     label: "Lien / Judgment",
     description: "Mechanic's lien, tax lien, judgment",
     required: false,
   },
   {
-    key: "EASEMENT_ENCROACHMENT",
+    key: "easement_encroachment",
     label: "Easement / Encroachment",
     description: "Easement or encroachment filing",
     required: false,
   },
   {
-    key: "POWER_OF_ATTORNEY",
+    key: "power_of_attorney",
     label: "Power of Attorney",
     description: "Signing authority document",
     required: false,
@@ -181,25 +184,25 @@ export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
 
   // ── Property records ───────────────────────────────────────────────────
   {
-    key: "TAX_CERTIFICATE",
+    key: "tax_certificate",
     label: "Tax Certificate / Tax Statement",
     description: "County tax certificate",
     required: false,
   },
   {
-    key: "TAX_BILL",
+    key: "tax_bill",
     label: "Tax Bill",
     description: "Property tax bill",
     required: false,
   },
   {
-    key: "SURVEY_PLAT",
+    key: "survey_plat",
     label: "Survey / Plat",
     description: "Survey or plat map",
     required: false,
   },
   {
-    key: "CCR_HOA",
+    key: "ccr_hoa",
     label: "CC&Rs / HOA",
     description: "Covenants, conditions & restrictions, HOA docs",
     required: false,
@@ -207,31 +210,31 @@ export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
 
   // ── Closing documents ──────────────────────────────────────────────────
   {
-    key: "LOAN_ESTIMATE",
+    key: "loan_estimate",
     label: "Loan Estimate (LE)",
     description: "TRID initial disclosure",
     required: false,
   },
   {
-    key: "CLOSING_DISCLOSURE",
+    key: "closing_disclosure",
     label: "Closing Disclosure (CD)",
     description: "TRID final disclosure",
     required: false,
   },
   {
-    key: "HUD1_SETTLEMENT",
+    key: "hud1_settlement",
     label: "HUD-1 / Settlement Statement",
     description: "Settlement statement",
     required: false,
   },
   {
-    key: "PROMISSORY_NOTE",
+    key: "promissory_note",
     label: "Promissory Note",
     description: "Borrower's note",
     required: false,
   },
   {
-    key: "FIRST_PAYMENT_LETTER",
+    key: "first_payment_letter",
     label: "First Payment Letter",
     description: "First payment notice",
     required: false,
@@ -239,55 +242,55 @@ export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
 
   // ── Loan disclosures ───────────────────────────────────────────────────
   {
-    key: "INITIAL_RESPA_DISCLOSURES",
+    key: "initial_respa_disclosures",
     label: "Initial / RESPA Disclosures",
     description: "RESPA initial disclosures",
     required: false,
   },
   {
-    key: "MI_PMI_DISCLOSURE",
+    key: "mi_certificate",
     label: "MI / PMI Disclosure",
     description: "Mortgage insurance disclosure",
     required: false,
   },
   {
-    key: "FLOOD_CERTIFICATION",
+    key: "flood_cert",
     label: "Flood Certification",
     description: "Flood zone determination",
     required: false,
   },
   {
-    key: "RIGHT_OF_RESCISSION_TIL",
+    key: "right_of_rescission_til",
     label: "Right of Rescission / TIL",
     description: "Truth in Lending, right of rescission",
     required: false,
   },
   {
-    key: "ANTI_COERCION",
+    key: "anti_coercion",
     label: "Anti-Coercion / Insurance Choice",
     description: "Insurance choice disclosure",
     required: false,
   },
   {
-    key: "HAZARD_INSURANCE_NOTIF",
+    key: "hazard_insurance_notif",
     label: "Hazard Insurance Notification",
     description: "Hazard insurance notice",
     required: false,
   },
   {
-    key: "HOMEOWNER_COUNSELING",
+    key: "homeowner_counseling",
     label: "Homeowner Counseling",
     description: "Counseling disclosure",
     required: false,
   },
   {
-    key: "ADVERSE_ACTION",
+    key: "adverse_action",
     label: "Adverse Action",
     description: "Adverse action notice",
     required: false,
   },
   {
-    key: "SERVICING_TRANSFER_NOTICE",
+    key: "servicing_transfer_notice",
     label: "Servicing Transfer Notice",
     description: "Notice of servicing transfer",
     required: false,
@@ -295,25 +298,25 @@ export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
 
   // ── Verifications & tax auth ───────────────────────────────────────────
   {
-    key: "VOE",
-    label: "Verification of Employment (VOE)",
-    description: "VOE form",
+    key: "voe",
+    label: "Verification of Employment (voe)",
+    description: "voe form",
     required: false,
   },
   {
-    key: "VOD",
-    label: "Verification of Deposit (VOD)",
-    description: "VOD form",
+    key: "vod",
+    label: "Verification of Deposit (vod)",
+    description: "vod form",
     required: false,
   },
   {
-    key: "FORM_4506T",
+    key: "f4506c",
     label: "4506-T / Tax Transcript Request",
     description: "IRS 4506-T authorization",
     required: false,
   },
   {
-    key: "FORM_1099",
+    key: "form_1099",
     label: "1099",
     description: "Miscellaneous income statement",
     required: false,
@@ -321,25 +324,25 @@ export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
 
   // ── Identity & compliance ──────────────────────────────────────────────
   {
-    key: "ID_DOCUMENT",
+    key: "gov_id",
     label: "ID Document",
     description: "Government-issued ID",
     required: false,
   },
   {
-    key: "PATRIOT_CIP",
+    key: "patriot_cip",
     label: "Patriot Act / CIP",
     description: "Customer identification program",
     required: false,
   },
   {
-    key: "PRIVACY_POLICY",
+    key: "privacy_policy",
     label: "Privacy Policy",
     description: "Privacy policy disclosure",
     required: false,
   },
   {
-    key: "FRAUD_NOTICE",
+    key: "fraud_notice",
     label: "Fraud / Misrepresentation Notice",
     description: "Fraud notice",
     required: false,
@@ -347,19 +350,19 @@ export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
 
   // ── Affidavits ─────────────────────────────────────────────────────────
   {
-    key: "AFFIDAVIT_GENERIC",
+    key: "affidavit_generic",
     label: "Affidavit (generic)",
     description: "Generic affidavit",
     required: false,
   },
   {
-    key: "NAME_AFFIDAVIT_AKA",
+    key: "name_affidavit_aka",
     label: "Name Affidavit / AKA",
     description: "Name / AKA affidavit",
     required: false,
   },
   {
-    key: "NOTARY_ACKNOWLEDGMENT",
+    key: "notary_acknowledgment",
     label: "Notary Acknowledgment / Jurat",
     description: "Notary acknowledgment page",
     required: false,
@@ -367,19 +370,19 @@ export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
 
   // ── Closing instructions & escrow ──────────────────────────────────────
   {
-    key: "WIRE_INSTRUCTIONS",
+    key: "wire_instructions",
     label: "Wire Instructions / Funding Authorization",
     description: "Funding wire instructions",
     required: false,
   },
   {
-    key: "ESCROW_WAIVER_AGREEMENT",
+    key: "escrow_waiver_agreement",
     label: "Escrow Waiver / Agreement",
     description: "Escrow account waiver or agreement",
     required: false,
   },
   {
-    key: "EO_COMPLIANCE",
+    key: "eo_compliance",
     label: "Errors & Omissions / Compliance Agreement",
     description: "E&O / compliance agreement",
     required: false,
@@ -387,13 +390,13 @@ export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
 
   // ── Property-type riders ───────────────────────────────────────────────
   {
-    key: "CONDO_PUD_CERT",
+    key: "condo_pud_cert",
     label: "Condo / PUD Certification",
     description: "Condominium or PUD certification",
     required: false,
   },
   {
-    key: "FHA_VA_SPECIFIC",
+    key: "fha_va_specific",
     label: "FHA / VA Specific",
     description: "FHA / VA program-specific attachments",
     required: false,
@@ -401,49 +404,49 @@ export const SUGGESTED_DOC_TYPES: LoanDocTypeSpec[] = [
 
   // ── Misc / catch-all ───────────────────────────────────────────────────
   {
-    key: "GIFT_LETTER",
+    key: "gift_letter",
     label: "Gift Letter",
     description: "Gift funds letter",
     required: false,
   },
   {
-    key: "UNDERWRITING_AUS",
+    key: "underwriting_aus",
     label: "Underwriting / AUS Findings",
     description: "DU / LP findings",
     required: false,
   },
   {
-    key: "INSURANCE_BINDER",
+    key: "insurance_binder",
     label: "Insurance Binder",
     description: "Temporary insurance binder",
     required: false,
   },
   {
-    key: "LEGAL_DESCRIPTION_EXHIBIT_A",
+    key: "legal_description_exhibit_a",
     label: "Legal Description / Exhibit A",
     description: "Legal description exhibit",
     required: false,
   },
   {
-    key: "RECORDING_COVER_SHEET",
+    key: "recording_cover_sheet",
     label: "Recording Cover Sheet",
     description: "County recording cover sheet",
     required: false,
   },
   {
-    key: "COVER_LETTER_TRANSMITTAL",
+    key: "cover_letter_transmittal",
     label: "Cover Letter / Transmittal",
     description: "Cover letter or transmittal",
     required: false,
   },
   {
-    key: "ESIGN_ECONSENT",
+    key: "esign_econsent",
     label: "eSign / eConsent",
     description: "Electronic signature consent",
     required: false,
   },
   {
-    key: "BORROWER_CERT_AUTHORIZATION",
+    key: "borrower_cert_authorization",
     label: "Borrower Certification / Authorization",
     description: "Borrower certification and authorization",
     required: false,
@@ -485,7 +488,7 @@ export const DEFAULT_HITL_THRESHOLD = 0.96;
  * which are nearly universal across mortgage paperwork.
  */
 export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
-  URLA_1003: [
+  urla_1003: [
     "borrower_name",
     "co_borrower_name",
     "ssn",
@@ -495,7 +498,7 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "monthly_income",
     "signature_date",
   ],
-  PAYSTUB: [
+  paystub: [
     "employee_name",
     "employer_name",
     "pay_period",
@@ -504,7 +507,7 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "ytd_gross",
     "pay_date",
   ],
-  W2: [
+  w2: [
     "employee_name",
     "employer_name",
     "employer_ein",
@@ -513,7 +516,7 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "federal_tax_withheld",
     "tax_year",
   ],
-  TAX_RETURN_1040: [
+  f1040: [
     "filer_name",
     "ssn",
     "filing_status",
@@ -522,21 +525,21 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "tax_year",
     "signature",
   ],
-  BANK_STATEMENT: [
+  bank_stmt: [
     "account_holder",
     "account_number",
     "statement_period",
     "beginning_balance",
     "ending_balance",
   ],
-  CREDIT_REPORT: [
+  credit_report: [
     "borrower_name",
     "ssn",
     "fico_score",
     "report_date",
     "tradelines",
   ],
-  APPRAISAL: [
+  appraisal: [
     "property_address",
     "appraised_value",
     "appraiser_name",
@@ -544,7 +547,7 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "effective_date",
     "sales_price",
   ],
-  PURCHASE_CONTRACT: [
+  purchase_agmt: [
     "buyer_name",
     "seller_name",
     "property_address",
@@ -553,7 +556,7 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "earnest_money",
     "signatures",
   ],
-  HOMEOWNERS_INS: [
+  hoi: [
     "insured_name",
     "property_address",
     "policy_number",
@@ -561,21 +564,21 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "effective_date",
     "expiration_date",
   ],
-  TITLE_COMMITMENT: [
+  title_commit: [
     "insured_name",
     "property_address",
     "policy_amount",
     "effective_date",
     "schedule_b_exceptions",
   ],
-  TITLE_POLICY: [
+  title_policy: [
     "insured_name",
     "property_address",
     "policy_amount",
     "policy_date",
     "policy_number",
   ],
-  WARRANTY_DEED: [
+  warranty_deed: [
     "grantor",
     "grantee",
     "property_legal_description",
@@ -583,28 +586,28 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "signatures",
     "notary_acknowledgment",
   ],
-  QUITCLAIM_DEED: [
+  quitclaim_deed: [
     "grantor",
     "grantee",
     "property_legal_description",
     "recording_date",
     "signatures",
   ],
-  DEED_OTHER: [
+  deed_other: [
     "grantor",
     "grantee",
     "property_legal_description",
     "recording_date",
     "signatures",
   ],
-  ASSIGNMENT_OF_MORTGAGE: [
+  assignment_of_mortgage: [
     "assignor",
     "assignee",
     "original_mortgagor",
     "recording_date",
     "signatures",
   ],
-  MORTGAGE_DEED_OF_TRUST: [
+  mortgage_deed_of_trust: [
     "borrower",
     "lender",
     "property_legal_description",
@@ -612,48 +615,48 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "recording_date",
     "signatures",
   ],
-  SATISFACTION_RELEASE: [
+  satisfaction_release: [
     "lender",
     "borrower",
     "original_mortgage_recording_info",
     "satisfaction_date",
     "signatures",
   ],
-  SUBORDINATION_AGREEMENT: [
+  subordination_agreement: [
     "subordinating_lender",
     "senior_lender",
     "property_address",
     "signatures",
   ],
-  LIEN_JUDGMENT: [
+  lien_judgment: [
     "claimant",
     "debtor",
     "amount",
     "recording_date",
     "property_description",
   ],
-  POWER_OF_ATTORNEY: [
+  power_of_attorney: [
     "principal_name",
     "agent_name",
     "signing_authority_scope",
     "effective_date",
     "notary_acknowledgment",
   ],
-  TAX_CERTIFICATE: [
+  tax_certificate: [
     "parcel_number",
     "owner_name",
     "tax_year",
     "amount_due",
     "certificate_date",
   ],
-  TAX_BILL: ["parcel_number", "owner_name", "tax_year", "amount_due", "due_date"],
-  SURVEY_PLAT: [
+  tax_bill: ["parcel_number", "owner_name", "tax_year", "amount_due", "due_date"],
+  survey_plat: [
     "surveyor_name",
     "property_legal_description",
     "survey_date",
     "plat_reference",
   ],
-  LOAN_ESTIMATE: [
+  loan_estimate: [
     "borrower_name",
     "loan_amount",
     "interest_rate",
@@ -661,7 +664,7 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "closing_costs",
     "issue_date",
   ],
-  CLOSING_DISCLOSURE: [
+  closing_disclosure: [
     "borrower_name",
     "loan_amount",
     "interest_rate",
@@ -670,14 +673,14 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "closing_date",
     "signatures",
   ],
-  HUD1_SETTLEMENT: [
+  hud1_settlement: [
     "borrower_name",
     "seller_name",
     "property_address",
     "settlement_date",
     "total_settlement_charges",
   ],
-  PROMISSORY_NOTE: [
+  promissory_note: [
     "borrower_name",
     "lender_name",
     "loan_amount",
@@ -685,25 +688,25 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "maturity_date",
     "signature",
   ],
-  FIRST_PAYMENT_LETTER: [
+  first_payment_letter: [
     "borrower_name",
     "loan_number",
     "first_payment_due_date",
     "payment_amount",
   ],
-  FLOOD_CERTIFICATION: [
+  flood_cert: [
     "property_address",
     "flood_zone",
     "certification_date",
     "determination_authority",
   ],
-  RIGHT_OF_RESCISSION_TIL: [
+  right_of_rescission_til: [
     "borrower_name",
     "transaction_date",
     "rescission_deadline",
     "signature",
   ],
-  VOE: [
+  voe: [
     "employee_name",
     "employer_name",
     "position",
@@ -711,7 +714,7 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "current_salary",
     "signature",
   ],
-  VOD: [
+  vod: [
     "account_holder",
     "bank_name",
     "account_number",
@@ -719,49 +722,49 @@ export const FIELD_HINTS_BY_DOC_TYPE: Record<string, string[]> = {
     "average_balance",
     "signature",
   ],
-  FORM_4506T: ["taxpayer_name", "ssn", "tax_year", "signature", "signature_date"],
-  FORM_1099: [
+  f4506c: ["taxpayer_name", "ssn", "tax_year", "signature", "signature_date"],
+  form_1099: [
     "recipient_name",
     "payer_name",
     "recipient_tin",
     "total_payments",
     "tax_year",
   ],
-  ID_DOCUMENT: [
+  gov_id: [
     "full_name",
     "date_of_birth",
     "id_number",
     "expiration_date",
   ],
-  NAME_AFFIDAVIT_AKA: [
+  name_affidavit_aka: [
     "affiant_name",
     "aka_names",
     "signature",
     "notary_acknowledgment",
   ],
-  NOTARY_ACKNOWLEDGMENT: [
+  notary_acknowledgment: [
     "notary_name",
     "notary_commission_expiry",
     "county",
     "signature_date",
     "principal_name",
   ],
-  WIRE_INSTRUCTIONS: [
+  wire_instructions: [
     "bank_name",
     "routing_number",
     "account_number",
     "beneficiary_name",
     "wire_amount",
   ],
-  GIFT_LETTER: [
+  gift_letter: [
     "donor_name",
     "recipient_name",
     "gift_amount",
     "relationship",
     "signature",
   ],
-  UNDERWRITING_AUS: ["borrower_name", "loan_number", "decision", "run_date"],
-  LEGAL_DESCRIPTION_EXHIBIT_A: ["property_legal_description", "parcel_id"],
+  underwriting_aus: ["borrower_name", "loan_number", "decision", "run_date"],
+  legal_description_exhibit_a: ["property_legal_description", "parcel_id"],
 };
 
 /**
@@ -792,12 +795,12 @@ export function getFieldHintsForDocType(docKey: string): string[] {
  * config survives label edits.
  *
  * Sourced from the prototype's `DEFAULT_EXTRACTION_FIELDS` (which uses
- * doc-type *labels* as keys). We re-key by our stable UPPER_SNAKE_CASE
- * keys so the data round-trips through the backend cleanly. The user can
+ * doc-type *labels* as keys). We re-key by our stable lower-snake-case
+ * catalog keys so the data round-trips through the backend cleanly. The user can
  * add / remove fields per doc type in the new-package form before submit.
  */
 export const DEFAULT_EXTRACTION_FIELDS_BY_DOC: Record<string, string[]> = {
-  URLA_1003: [
+  urla_1003: [
     "Borrower Name",
     "Co-Borrower Name",
     "Loan Amount",
@@ -806,7 +809,7 @@ export const DEFAULT_EXTRACTION_FIELDS_BY_DOC: Record<string, string[]> = {
     "Loan Term",
     "Interest Rate",
   ],
-  PAYSTUB: [
+  paystub: [
     "Employee Name",
     "Employer Name",
     "Pay Period",
@@ -814,71 +817,71 @@ export const DEFAULT_EXTRACTION_FIELDS_BY_DOC: Record<string, string[]> = {
     "Net Pay",
     "YTD Earnings",
   ],
-  W2: [
+  w2: [
     "Employee Name",
     "Employer Name",
     "Wages",
     "Federal Tax Withheld",
     "Tax Year",
   ],
-  TAX_RETURN_1040: [
+  f1040: [
     "Taxpayer Name",
     "Filing Status",
     "Adjusted Gross Income",
     "Total Tax",
     "Tax Year",
   ],
-  BANK_STATEMENT: [
+  bank_stmt: [
     "Account Holder",
     "Account Number",
     "Statement Period",
     "Beginning Balance",
     "Ending Balance",
   ],
-  CREDIT_REPORT: ["Borrower Name", "Credit Score", "Report Date", "Bureau"],
-  TITLE_COMMITMENT: [
+  credit_report: ["Borrower Name", "Credit Score", "Report Date", "Bureau"],
+  title_commit: [
     "Property Address",
     "Legal Description",
     "Title Holder",
     "Policy Amount",
     "Effective Date",
   ],
-  HOMEOWNERS_INS: [
+  hoi: [
     "Insured Name",
     "Policy Number",
     "Coverage Amount",
     "Effective Date",
     "Premium",
   ],
-  PURCHASE_CONTRACT: [
+  purchase_agmt: [
     "Buyer Name",
     "Seller Name",
     "Purchase Price",
     "Earnest Money",
     "Closing Date",
   ],
-  CLOSING_DISCLOSURE: [
+  closing_disclosure: [
     "Borrower Name",
     "Loan Amount",
     "Closing Date",
     "Cash to Close",
     "APR",
   ],
-  HUD1_SETTLEMENT: [
+  hud1_settlement: [
     "Borrower Name",
     "Loan Amount",
     "Closing Date",
     "Cash to Close",
     "APR",
   ],
-  APPRAISAL: [
+  appraisal: [
     "Property Address",
     "Appraised Value",
     "Appraiser Name",
     "Appraiser License",
     "Effective Date",
   ],
-  VOE: [
+  voe: [
     "Employee Name",
     "Employer Name",
     "Position",

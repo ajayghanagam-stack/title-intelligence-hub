@@ -33,6 +33,11 @@ class OrgInfo(BaseModel):
     name: str
     slug: str
     logo_url: str | None = None
+    # Per-org role of the authenticated user on this org. Surfaced so the
+    # frontend can gate admin-only UI (e.g. the Loan Onboarding Admin
+    # sidebar group) without an extra round-trip. Role is one of
+    # "owner", "admin", "member".
+    role: str | None = None
 
     model_config = {"from_attributes": True}
 

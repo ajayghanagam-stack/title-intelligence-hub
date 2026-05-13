@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from app.config import get_settings
 from app.api.v1.router import api_v1_router
 from app.core.deps import _POOL_KWARGS
-from app.core.middleware import MetricsMiddleware, RequestIdMiddleware, TenantContextMiddleware, MicroAppAccessMiddleware, UploadTimingMiddleware
+from app.core.middleware import LOLegacyRedirectMiddleware, MetricsMiddleware, RequestIdMiddleware, TenantContextMiddleware, MicroAppAccessMiddleware, UploadTimingMiddleware
 from app.micro_apps.registry import discover_micro_apps
 
 
@@ -61,6 +61,14 @@ def create_app(session_factory_override=None) -> FastAPI:
         engine = create_async_engine(settings.effective_database_url, **_POOL_KWARGS)
         sf = async_sessionmaker(engine, expire_on_commit=False)
     app.add_middleware(MicroAppAccessMiddleware, session_factory=sf)
+
+    # LO legacy /packages/* → /loans/* 301 redirect (Phase 4 Batch 4.9).
+    # Runs *before* tenant context + sub gating so the redirect fires
+    # without touching the DB. Flag-gated; default off.
+    app.add_middleware(
+        LOLegacyRedirectMiddleware,
+        enabled=settings.LO_LEGACY_REDIRECT_ENABLED,
+    )
 
     # Tenant context middleware (runs before MicroAppAccess)
     app.add_middleware(TenantContextMiddleware)

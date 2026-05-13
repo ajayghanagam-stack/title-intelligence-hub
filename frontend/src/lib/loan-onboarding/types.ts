@@ -171,6 +171,30 @@ export interface LoanStackPage {
   content_signal: "text" | "image" | "blank" | null;
 }
 
+/**
+ * Operator-facing classification pill state for a single stack. Derived
+ * server-side by `_derive_classification_status` in `routes/documents.py`
+ * — the backend's persisted `status` is a composite across all stages, so
+ * we surface a UI-aligned snapshot here.
+ */
+export type LoanClassificationStatus =
+  | "pending"
+  | "classified"
+  | "needs_review"
+  | "unclassifiable";
+
+/**
+ * Operator-facing extraction pill state for a single stack. Derived
+ * server-side by `_derive_extraction_status` — `extracting` is reserved
+ * for future progressive-extract emission (not currently produced).
+ */
+export type LoanExtractionStatus =
+  | "not_started"
+  | "extracting"
+  | "extracted"
+  | "needs_review"
+  | "confirmed";
+
 export interface LoanStack {
   id: string;
   stack_index: number;
@@ -181,6 +205,13 @@ export interface LoanStack {
   classification_confidence: number | null;
   overall_confidence: number | null;
   status: string;
+  /**
+   * Phase 5.2 pill states — see LoanClassificationStatus /
+   * LoanExtractionStatus. Derived from the persisted stack `status`,
+   * `requires_hitl`, and the per-stack LOExtraction row.
+   */
+  classification_status: LoanClassificationStatus;
+  extraction_status: LoanExtractionStatus;
   pages: LoanStackPage[];
 }
 
@@ -202,6 +233,14 @@ export interface LoanRuleEvaluation {
   passed: boolean;
   detail: string | null;
   config: Record<string, unknown>;
+  // Phase 4.6 ack fields — written in-place by the acknowledge endpoint.
+  // Optional because legacy results pre-Phase 4 don't carry them.
+  acknowledged?: boolean;
+  acknowledged_by?: string | null;
+  acknowledged_at?: string | null;
+  override_note?: string | null;
+  severity?: string | null;
+  type?: string | null;
 }
 
 export interface LoanValidationResult {

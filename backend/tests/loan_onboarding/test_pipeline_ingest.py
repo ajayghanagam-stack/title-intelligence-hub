@@ -248,7 +248,7 @@ async def test_run_pipeline_end_to_end_with_mocked_ai(
 
     async def fake_classify(**kwargs):
         return {"classifications": [
-            {"page_number": 1, "predicted_doc_type": "URLA_1003",
+            {"page_number": 1, "predicted_doc_type": "urla_1003",
              "confidence": 0.9, "page_role": "first_page"},
         ]}
 

@@ -194,17 +194,15 @@ async def delete_package(
 
     if hasattr(storage, "delete_dir"):
         # Package-scoped dir — uploaded PDFs, rendered page images, thumbs,
-        # any cached reports. Everything under `{org_id}/{package_id}/`.
-        # NOTE: we deliberately do NOT wipe the org-scoped AI cache
-        # (`{org_id}/ai_cache/...`) here. Cache entries are content-addressed
-        # (the cache key hashes the actual file bytes + model + prompt +
-        # schema), so cross-package leakage is structurally impossible:
-        # different content → different cache key. Preserving the cache lets
-        # delete-package + re-upload-same-PDF replay the deterministic AI
-        # output bit-for-bit, which is what users expect when they correct a
-        # mistaken upload. If org-level data deletion is ever required for
-        # compliance, add a separate explicit `purge_org_ai_cache` admin
-        # action — don't couple it to per-package delete.
+        # cached reports, AND the LO AI cache (classify/validate/extract/
+        # reason). LO writes its cache under `{org_id}/{package_id}/ai_cache/`
+        # via `_lo_cache_path()` (pipeline/stages.py) specifically so this
+        # one `delete_dir` call wipes everything. The shared
+        # `storage.make_ai_cache_path()` writes under `{org_id}/ai_cache/`
+        # which TI/TSA rely on for cross-pack cache hits — LO opts out
+        # because operators who delete a loan file and re-upload the same
+        # PDF expect the pipeline to run fresh, not snap back to cached
+        # output in milliseconds.
         try:
             await storage.delete_dir(f"{org_id}/{package_id}")
         except Exception as e:
@@ -255,11 +253,23 @@ async def mark_pipeline_status(
     pipeline_error: str | None = None,
     progress: dict | None = None,
 ) -> None:
+    from app.micro_apps.loan_onboarding.services.stage_advance import (
+        advance_stage,
+    )
+
     pkg = await get_package_or_raise(db, org_id, package_id)
     if status is not None:
         pkg.status = status
     if pipeline_stage is not None:
-        pkg.pipeline_stage = pipeline_stage
+        # Phase 3.5 monotonic-advance contract: a backward write (e.g. a
+        # remediation flow asking to "rewind" to classify) is silently
+        # coerced to the current stage. Forward writes proceed unchanged.
+        # The ``failed`` status is the one legal way to overwrite the
+        # stage label after a terminal — preserve that escape hatch.
+        if status == "failed":
+            pkg.pipeline_stage = pipeline_stage
+        else:
+            pkg.pipeline_stage = advance_stage(pkg.pipeline_stage, pipeline_stage)
     if pipeline_error is not None:
         pkg.pipeline_error = pipeline_error
     elif status in ("completed", "awaiting_review"):

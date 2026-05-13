@@ -23,7 +23,7 @@ HEADERS = {"X-Org-Id": str(TEST_ORG_ID)}
 async def _seed_stack(
     db: AsyncSession,
     stack_index: int = 0,
-    doc_type: str = "URLA_1003",
+    doc_type: str = "urla_1003",
     page_numbers: list[int] = None,
     requires_hitl: bool = True,
     overall_confidence: float = 0.6,
@@ -110,10 +110,10 @@ async def test_list_stacks_route_joins_classifications(
     data = resp.json()
     assert len(data) == 1
     s = data[0]
-    assert s["doc_type"] == "URLA_1003"
+    assert s["doc_type"] == "urla_1003"
     assert s["page_count"] == 2
     assert len(s["pages"]) == 2
-    assert s["pages"][0]["predicted_doc_type"] == "URLA_1003"
+    assert s["pages"][0]["predicted_doc_type"] == "urla_1003"
     # page_id needed by the "Move to…" override flow on the Documents tab
     assert s["pages"][0]["page_id"] is not None
 
@@ -153,7 +153,7 @@ async def test_list_validation_results_route(
         org_id=TEST_ORG_ID,
         package_id=TEST_PACKAGE_ID,
         stack_id=stack.id,
-        doc_type="URLA_1003",
+        doc_type="urla_1003",
         rules_evaluated=[{
             "rule_id": "missing_signatures",
             "rule_source": "preset",
@@ -188,7 +188,7 @@ async def test_review_queue_lists_hitl_stacks(
         org_id=TEST_ORG_ID,
         package_id=TEST_PACKAGE_ID,
         stack_id=stack.id,
-        doc_type="URLA_1003",
+        doc_type="urla_1003",
         rules_evaluated=[
             {"rule_id": "missing_signatures", "rule_source": "preset", "passed": False, "evidence": "No signature_page"},
             {"rule_id": "missing_pages", "rule_source": "preset", "passed": True, "evidence": "OK"},
@@ -280,20 +280,20 @@ async def test_reject_decision_keeps_stack_open_and_package_awaiting(
 async def test_reclassify_updates_doc_type(
     client: AsyncClient, sample_package, db_session: AsyncSession
 ):
-    stack = await _seed_stack(db_session, requires_hitl=True, doc_type="URLA_1003")
+    stack = await _seed_stack(db_session, requires_hitl=True, doc_type="urla_1003")
     await db_session.commit()
 
     resp = await client.post(
         f"{BASE}/packages/{TEST_PACKAGE_ID}/stacks/{stack.id}/review",
         headers=HEADERS,
-        json={"decision": "reclassify", "corrected_doc_type": "PAYSTUB"},
+        json={"decision": "reclassify", "corrected_doc_type": "paystub"},
     )
     assert resp.status_code == 201
 
     fresh_stack = (await db_session.execute(
         select(LOStack).where(LOStack.id == stack.id)
     )).scalar_one()
-    assert fresh_stack.doc_type == "PAYSTUB"
+    assert fresh_stack.doc_type == "paystub"
     assert fresh_stack.status == "accepted"
 
 

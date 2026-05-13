@@ -76,15 +76,15 @@ def test_confidence_weights_sum_to_one_and_are_pinned():
 
 GOLDEN_CLASSIFICATIONS = [
     # 1003 (pages 1–3): first_page, continuation, signature_page
-    ClassifiedPage(1, "URLA_1003", 0.95, "first_page"),
-    ClassifiedPage(2, "URLA_1003", 0.93, "continuation"),
-    ClassifiedPage(3, "URLA_1003", 0.92, "signature_page"),
+    ClassifiedPage(1, "urla_1003", 0.95, "first_page"),
+    ClassifiedPage(2, "urla_1003", 0.93, "continuation"),
+    ClassifiedPage(3, "urla_1003", 0.92, "signature_page"),
     # Paystub #1 (pages 4) — single-page, tagged first_page
-    ClassifiedPage(4, "PAYSTUB", 0.90, "first_page"),
+    ClassifiedPage(4, "paystub", 0.90, "first_page"),
     # Paystub #2 (pages 5) — single-page, tagged first_page (new instance)
-    ClassifiedPage(5, "PAYSTUB", 0.88, "first_page"),
+    ClassifiedPage(5, "paystub", 0.88, "first_page"),
     # W-2 (page 6) — single-page
-    ClassifiedPage(6, "W2", 0.91, "first_page"),
+    ClassifiedPage(6, "w2", 0.91, "first_page"),
     # Unknown junk (pages 7–8) — Others bucket
     ClassifiedPage(7, OTHERS_KEY, 0.60, "unknown"),
     ClassifiedPage(8, OTHERS_KEY, 0.55, "unknown"),
@@ -104,18 +104,18 @@ def test_build_stacks_golden_shape():
 
     # Stack 0: URLA_1003, pages 1-3
     assert stacks[0].stack_index == 0
-    assert stacks[0].doc_type == "URLA_1003"
+    assert stacks[0].doc_type == "urla_1003"
     assert stacks[0].page_numbers == [1, 2, 3]
     assert stacks[0].requires_hitl is False  # avg 0.933 >= 0.75
 
     # Stack 1: both paystubs collapsed into one PAYSTUB stack (pages 4, 5)
-    assert stacks[1].doc_type == "PAYSTUB"
+    assert stacks[1].doc_type == "paystub"
     assert stacks[1].page_numbers == [4, 5]
     assert stacks[1].first_page == 4
     assert stacks[1].last_page == 5
 
     # Stack 2: W-2
-    assert stacks[2].doc_type == "W2"
+    assert stacks[2].doc_type == "w2"
     assert stacks[2].page_numbers == [6]
 
     # Stack 3: Others — always HITL regardless of confidence
@@ -161,26 +161,26 @@ def _facts(doc_type: str, pages: list[tuple[int, str, set[str]]]) -> StackFacts:
 
 
 def test_missing_signatures_pass_when_signature_page_present():
-    stack = _facts("URLA_1003", [(1, "first_page", set()), (2, "signature_page", set())])
+    stack = _facts("urla_1003", [(1, "first_page", set()), (2, "signature_page", set())])
     result = evaluate_preset("missing_signatures", stack, {})
     assert result.passed is True
     assert result.location_page == 2
 
 
 def test_missing_signatures_fail_when_absent():
-    stack = _facts("URLA_1003", [(1, "first_page", set()), (2, "continuation", set())])
+    stack = _facts("urla_1003", [(1, "first_page", set()), (2, "continuation", set())])
     result = evaluate_preset("missing_signatures", stack, {})
     assert result.passed is False
     assert "No signature_page" in result.evidence
 
 
 def test_missing_pages_pass_when_both_markers_present():
-    stack = _facts("URLA_1003", [(1, "first_page", set()), (2, "last_page", set())])
+    stack = _facts("urla_1003", [(1, "first_page", set()), (2, "last_page", set())])
     assert evaluate_preset("missing_pages", stack, {}).passed is True
 
 
 def test_missing_pages_fail_when_missing_last():
-    stack = _facts("URLA_1003", [(1, "first_page", set()), (2, "continuation", set())])
+    stack = _facts("urla_1003", [(1, "first_page", set()), (2, "continuation", set())])
     result = evaluate_preset("missing_pages", stack, {})
     assert result.passed is False
     assert "last_page" in result.evidence
@@ -188,7 +188,7 @@ def test_missing_pages_fail_when_missing_last():
 
 def test_missing_fields_pass_when_all_required_present():
     stack = _facts(
-        "URLA_1003",
+        "urla_1003",
         [(1, "first_page", {"borrower_name", "loan_amount", "property_address"})],
     )
     result = evaluate_preset(
@@ -199,7 +199,7 @@ def test_missing_fields_pass_when_all_required_present():
 
 
 def test_missing_fields_fail_with_subset():
-    stack = _facts("URLA_1003", [(1, "first_page", {"borrower_name"})])
+    stack = _facts("urla_1003", [(1, "first_page", {"borrower_name"})])
     result = evaluate_preset(
         "missing_fields", stack,
         {"required_fields": ["borrower_name", "loan_amount", "property_address"]},
@@ -218,7 +218,7 @@ def test_others_bucket_short_circuits_all_presets():
 
 
 def test_unknown_rule_id_fails_conservatively():
-    stack = _facts("URLA_1003", [(1, "first_page", set())])
+    stack = _facts("urla_1003", [(1, "first_page", set())])
     result = evaluate_preset("nonexistent_rule", stack, {})
     assert result.passed is False
     assert "Unknown preset rule_id" in result.evidence
@@ -226,7 +226,7 @@ def test_unknown_rule_id_fails_conservatively():
 
 def test_evaluate_all_presets_preserves_order():
     """Output order must match input order for byte-stable cache keys."""
-    stack = _facts("URLA_1003", [(1, "first_page", set()), (2, "signature_page", set())])
+    stack = _facts("urla_1003", [(1, "first_page", set()), (2, "signature_page", set())])
     results = evaluate_all_presets(
         [
             ("missing_pages", {}),
@@ -261,15 +261,15 @@ def test_blend_confidence_clamps_to_unit_interval():
 
 def test_split_accuracy_golden_values():
     # Ideal shape: one first_page, last_page
-    ideal = _facts("URLA_1003", [(1, "first_page", set()), (2, "last_page", set())])
+    ideal = _facts("urla_1003", [(1, "first_page", set()), (2, "last_page", set())])
     assert split_accuracy_from_roles(ideal) == pytest.approx(1.0)
 
     # Single-page first_page
-    single = _facts("PAYSTUB", [(1, "first_page", set())])
+    single = _facts("paystub", [(1, "first_page", set())])
     assert split_accuracy_from_roles(single) == pytest.approx(0.95)
 
     # All unknown
-    unknown = _facts("W2", [(1, "unknown", set()), (2, "unknown", set())])
+    unknown = _facts("w2", [(1, "unknown", set()), (2, "unknown", set())])
     assert split_accuracy_from_roles(unknown) == pytest.approx(0.7)
 
 
@@ -359,8 +359,8 @@ def test_compute_stack_content_hash_is_stable_and_field_order_independent():
             ],
         },
     ]
-    assert compute_stack_content_hash("URLA_1003", pages_a) == \
-        compute_stack_content_hash("URLA_1003", pages_b)
+    assert compute_stack_content_hash("urla_1003", pages_a) == \
+        compute_stack_content_hash("urla_1003", pages_b)
 
 
 def test_compute_stack_content_hash_changes_on_field_value_change():
@@ -374,8 +374,8 @@ def test_compute_stack_content_hash_changes_on_field_value_change():
         "text": "page",
         "detected_fields": [{"field_name": "borrower_name", "value": "John"}],
     }]
-    assert compute_stack_content_hash("URLA_1003", base) != \
-        compute_stack_content_hash("URLA_1003", mutated)
+    assert compute_stack_content_hash("urla_1003", base) != \
+        compute_stack_content_hash("urla_1003", mutated)
 
 
 def test_compute_validate_rule_cache_key_changes_on_rule_text_change():
@@ -472,7 +472,7 @@ async def _seed_validate_fixture(db: AsyncSession) -> None:
             package_id=TEST_PACKAGE_ID,
             page_id=page.id,
             page_number=pn,
-            predicted_doc_type="URLA_1003",
+            predicted_doc_type="urla_1003",
             predicted_doc_type_alternatives=[],
             confidence=0.95,
             page_role=role,

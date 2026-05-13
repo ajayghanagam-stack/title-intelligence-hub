@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     # FILE_UPLOAD_MAX_SIZE for the loan-onboarding upload route only.
     LO_FILE_UPLOAD_MAX_SIZE: int = 524288000  # 500 MB
 
+    # Phase 4.9 — when True, legacy ``/packages/*`` paths return ``301`` to
+    # the corresponding ``/loans/*`` route. Defaults to False so the existing
+    # frontend keeps working unchanged during Phase 4-5 rollout. Flip to True
+    # only after the frontend has fully ported.
+    LO_LEGACY_REDIRECT_ENABLED: bool = False
+
     # Pipeline mode: native_pdf sends PDF chunks directly to Gemini; legacy renders to JPEG first
     PIPELINE_MODE: Literal["native_pdf", "legacy"] = "native_pdf"
 

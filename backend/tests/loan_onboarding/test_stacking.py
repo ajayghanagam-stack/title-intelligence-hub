@@ -25,15 +25,15 @@ from tests.loan_onboarding.conftest import TEST_PACKAGE_ID
 
 def test_build_stacks_single_type_single_stack():
     pages = [
-        ClassifiedPage(1, "URLA_1003", 0.9, "first_page"),
-        ClassifiedPage(2, "URLA_1003", 0.85, "continuation"),
-        ClassifiedPage(3, "URLA_1003", 0.95, "last_page"),
+        ClassifiedPage(1, "urla_1003", 0.9, "first_page"),
+        ClassifiedPage(2, "urla_1003", 0.85, "continuation"),
+        ClassifiedPage(3, "urla_1003", 0.95, "last_page"),
     ]
     stacks = build_stacks(pages, hitl_threshold=0.75)
     assert len(stacks) == 1
     s = stacks[0]
     assert s.stack_index == 0
-    assert s.doc_type == "URLA_1003"
+    assert s.doc_type == "urla_1003"
     assert s.page_numbers == [1, 2, 3]
     assert s.first_page == 1
     assert s.last_page == 3
@@ -43,14 +43,14 @@ def test_build_stacks_single_type_single_stack():
 
 def test_build_stacks_breaks_on_doc_type_change():
     pages = [
-        ClassifiedPage(1, "URLA_1003", 0.9, "first_page"),
-        ClassifiedPage(2, "URLA_1003", 0.9, "continuation"),
-        ClassifiedPage(3, "PAYSTUB", 0.88, "first_page"),
-        ClassifiedPage(4, "PAYSTUB", 0.88, "last_page"),
-        ClassifiedPage(5, "W2", 0.92, "first_page"),
+        ClassifiedPage(1, "urla_1003", 0.9, "first_page"),
+        ClassifiedPage(2, "urla_1003", 0.9, "continuation"),
+        ClassifiedPage(3, "paystub", 0.88, "first_page"),
+        ClassifiedPage(4, "paystub", 0.88, "last_page"),
+        ClassifiedPage(5, "w2", 0.92, "first_page"),
     ]
     stacks = build_stacks(pages)
-    assert [s.doc_type for s in stacks] == ["URLA_1003", "PAYSTUB", "W2"]
+    assert [s.doc_type for s in stacks] == ["urla_1003", "paystub", "w2"]
     assert [s.page_numbers for s in stacks] == [[1, 2], [3, 4], [5]]
     assert [s.stack_index for s in stacks] == [0, 1, 2]
 
@@ -59,19 +59,19 @@ def test_build_stacks_collapses_same_doc_type_into_one_stack():
     """Multiple runs of the same doc_type collapse into a single stack.
 
     Previously this created one stack per `first_page` boundary, which
-    produced duplicate entries in the UI (two "PAYSTUB" rows, two "Others"
+    produced duplicate entries in the UI (two "paystub" rows, two "Others"
     rows, etc.). The reviewer's mental model is "one entry per document
     type," so same-doc-type pages now merge regardless of position.
     """
     pages = [
-        ClassifiedPage(1, "PAYSTUB", 0.9, "first_page"),
-        ClassifiedPage(2, "PAYSTUB", 0.9, "last_page"),
-        ClassifiedPage(3, "PAYSTUB", 0.9, "first_page"),  # new paystub instance
-        ClassifiedPage(4, "PAYSTUB", 0.9, "last_page"),
+        ClassifiedPage(1, "paystub", 0.9, "first_page"),
+        ClassifiedPage(2, "paystub", 0.9, "last_page"),
+        ClassifiedPage(3, "paystub", 0.9, "first_page"),  # new paystub instance
+        ClassifiedPage(4, "paystub", 0.9, "last_page"),
     ]
     stacks = build_stacks(pages)
     assert len(stacks) == 1
-    assert stacks[0].doc_type == "PAYSTUB"
+    assert stacks[0].doc_type == "paystub"
     assert stacks[0].page_numbers == [1, 2, 3, 4]
     assert stacks[0].first_page == 1
     assert stacks[0].last_page == 4
@@ -115,8 +115,8 @@ def test_build_stacks_others_always_requires_hitl_even_if_high_confidence():
 
 def test_build_stacks_low_confidence_triggers_hitl():
     pages = [
-        ClassifiedPage(1, "URLA_1003", 0.6, "first_page"),
-        ClassifiedPage(2, "URLA_1003", 0.7, "continuation"),
+        ClassifiedPage(1, "urla_1003", 0.6, "first_page"),
+        ClassifiedPage(2, "urla_1003", 0.7, "continuation"),
     ]
     stacks = build_stacks(pages, hitl_threshold=0.75)
     assert stacks[0].requires_hitl is True
@@ -126,9 +126,9 @@ def test_build_stacks_low_confidence_triggers_hitl():
 def test_build_stacks_is_deterministic_and_sorts_input():
     """Same input (even out-of-order) → byte-identical output every call."""
     pages = [
-        ClassifiedPage(3, "PAYSTUB", 0.9, "first_page"),
-        ClassifiedPage(1, "URLA_1003", 0.9, "first_page"),
-        ClassifiedPage(2, "URLA_1003", 0.9, "continuation"),
+        ClassifiedPage(3, "paystub", 0.9, "first_page"),
+        ClassifiedPage(1, "urla_1003", 0.9, "first_page"),
+        ClassifiedPage(2, "urla_1003", 0.9, "continuation"),
     ]
     s1 = build_stacks(pages)
     s2 = build_stacks(pages)
@@ -145,11 +145,11 @@ def test_build_stacks_empty_input():
 def test_build_stacks_accepts_dict_rows():
     """Callers can pass dicts as well as ClassifiedPage objects."""
     stacks = build_stacks([
-        {"page_number": 1, "predicted_doc_type": "W2", "confidence": 0.8, "page_role": "first_page"},
-        {"page_number": 2, "predicted_doc_type": "W2", "confidence": 0.9, "page_role": "last_page"},
+        {"page_number": 1, "predicted_doc_type": "w2", "confidence": 0.8, "page_role": "first_page"},
+        {"page_number": 2, "predicted_doc_type": "w2", "confidence": 0.9, "page_role": "last_page"},
     ])
     assert len(stacks) == 1
-    assert stacks[0].doc_type == "W2"
+    assert stacks[0].doc_type == "w2"
     assert stacks[0].page_numbers == [1, 2]
 
 
@@ -214,11 +214,11 @@ async def test_stage_stack_groups_classifications_into_stacks(
     sample_package, db_session: AsyncSession
 ):
     await _seed_classifications(db_session, [
-        (1, "URLA_1003", 0.92, "first_page"),
-        (2, "URLA_1003", 0.90, "continuation"),
-        (3, "URLA_1003", 0.88, "last_page"),
-        (4, "PAYSTUB", 0.85, "first_page"),
-        (5, "PAYSTUB", 0.80, "last_page"),
+        (1, "urla_1003", 0.92, "first_page"),
+        (2, "urla_1003", 0.90, "continuation"),
+        (3, "urla_1003", 0.88, "last_page"),
+        (4, "paystub", 0.85, "first_page"),
+        (5, "paystub", 0.80, "last_page"),
         (6, OTHERS_KEY, 1.0, "unknown"),  # blank page
     ])
 
@@ -233,7 +233,7 @@ async def test_stage_stack_groups_classifications_into_stacks(
         .where(LOStack.package_id == TEST_PACKAGE_ID)
         .order_by(LOStack.stack_index)
     )).scalars().all()
-    assert [r.doc_type for r in rows] == ["URLA_1003", "PAYSTUB", OTHERS_KEY]
+    assert [r.doc_type for r in rows] == ["urla_1003", "paystub", OTHERS_KEY]
     assert [r.first_page for r in rows] == [1, 4, 6]
     assert [r.last_page for r in rows] == [3, 5, 6]
     assert [r.page_numbers for r in rows] == [[1, 2, 3], [4, 5], [6]]
@@ -246,8 +246,8 @@ async def test_stage_stack_groups_classifications_into_stacks(
 @pytest.mark.asyncio
 async def test_stage_stack_is_idempotent(sample_package, db_session: AsyncSession):
     await _seed_classifications(db_session, [
-        (1, "URLA_1003", 0.9, "first_page"),
-        (2, "URLA_1003", 0.9, "last_page"),
+        (1, "urla_1003", 0.9, "first_page"),
+        (2, "urla_1003", 0.9, "last_page"),
     ])
 
     storage = get_storage()
@@ -278,8 +278,8 @@ async def test_stage_stack_respects_package_hitl_threshold(
     """If classification_confidence < package.hitl_threshold, stack is HITL-flagged."""
     # Package default hitl_threshold is 0.75 (set in conftest). Seed with 0.7 avg.
     await _seed_classifications(db_session, [
-        (1, "URLA_1003", 0.7, "first_page"),
-        (2, "URLA_1003", 0.7, "last_page"),
+        (1, "urla_1003", 0.7, "first_page"),
+        (2, "urla_1003", 0.7, "last_page"),
     ])
 
     storage = get_storage()

@@ -48,8 +48,33 @@ from app.micro_apps.loan_onboarding.services.confidence_scorer import (
 )
 from app.services.storage import StorageProvider
 
+
+def _lo_cache_path(org_id: str, package_id: str, stage: str, cache_key: str) -> str:
+    """LO AI cache path — package-scoped (not org-scoped).
+
+    Why this isn't `storage.make_ai_cache_path()`: the shared helper writes
+    under `{org_id}/ai_cache/...` so that re-uploads of identical content
+    across packages hit the cache. TI/TSA rely on that. LO deliberately
+    doesn't, because when an operator deletes a loan file they expect the
+    re-uploaded copy to run through the pipeline fresh — not snap back to
+    cached results in milliseconds. Anchoring the cache under
+    `{org_id}/{package_id}/ai_cache/` means `delete_dir({org_id}/{package_id})`
+    in `package_service.delete_package` wipes it for free.
+    """
+    return f"{org_id}/{package_id}/ai_cache/{stage}/v_{cache_key[:12]}.json"
+
+
 # Heuristic blank-page threshold — matches the TI pipeline value
 HEURISTIC_BLANK_THRESHOLD = 20
+
+# Phase 2 hallucination guardrail: scanned/image-only pages with effectively
+# no embedded text (PyMuPDF text_length < HEURISTIC_BLANK_THRESHOLD) have
+# historically produced confident-but-wrong classifications (e.g. labeling a
+# VA Certificate of Eligibility page as "voe" at 0.99 because the model
+# matched on visual layout alone). We clamp the LLM's confidence on these
+# pages to a hard ceiling so the page's stack lands below the default HITL
+# threshold (0.75) and an operator confirms the call.
+HALLUCINATION_CONFIDENCE_CEILING = 0.30
 
 # Per-classify-chunk page count — split large packages for parallelism.
 # Kept conservative (20) because image-heavy scanned pages can blow Gemini's
@@ -267,8 +292,17 @@ async def stage_classify(
         OTHERS_KEY,
         PageClassifierAgent,
     )
+    from app.micro_apps.loan_onboarding.services.config_resolver import (
+        effective_config,
+    )
 
     log = get_logger(__name__, org_id=org_id, pack_id=package_id, stage="classify")
+
+    # Phase 2: resolved org/profile/loan config. ``allowed_doc_type_keys()``
+    # is preferred over the per-loan ``LODocTypeConfig`` for shaping the
+    # classifier's enum; ``cfg.config_hash`` is folded into the classify
+    # cache key so an org-level catalog edit busts dependent slots.
+    cfg = await effective_config(db, package_id)
 
     pages = (await db.execute(
         select(LOPage)
@@ -278,16 +312,23 @@ async def stage_classify(
     if not pages:
         raise ValueError("No pages to classify — run ingest first")
 
-    config = (await db.execute(
-        select(LODocTypeConfig).where(
-            LODocTypeConfig.package_id == package_id,
-            LODocTypeConfig.org_id == org_id,
-        )
-    )).scalar_one_or_none()
-    if config is None or not config.doc_types:
-        raise ValueError("Package has no doc-type configuration — cannot classify")
-
-    allowed_keys = [d["key"] for d in config.doc_types if isinstance(d, dict) and d.get("key")]
+    # Prefer resolver-supplied allowed keys (drives auto-classify gating
+    # via ``ResolvedDocType.auto_classify_enabled``). Fall back to the
+    # per-loan LODocTypeConfig for loans not yet on the catalog model.
+    allowed_keys = list(cfg.allowed_doc_type_keys())
+    if not allowed_keys:
+        config = (await db.execute(
+            select(LODocTypeConfig).where(
+                LODocTypeConfig.package_id == package_id,
+                LODocTypeConfig.org_id == org_id,
+            )
+        )).scalar_one_or_none()
+        if config is None or not config.doc_types:
+            raise ValueError("Package has no doc-type configuration — cannot classify")
+        allowed_keys = [
+            d["key"] for d in config.doc_types
+            if isinstance(d, dict) and d.get("key")
+        ]
     if not allowed_keys:
         raise ValueError("doc-type config is empty")
 
@@ -361,8 +402,13 @@ async def stage_classify(
             )
         )).scalars().all()
         content_hash = await compute_package_content_hash(storage, files)
-        cache_key = compute_classify_cache_key(content_hash, allowed_keys, version_info)
-        cache_path = storage.make_ai_cache_path(org_id, package_id, "lo_classify", cache_key)
+        cache_key = compute_classify_cache_key(
+            content_hash,
+            allowed_keys,
+            version_info,
+            effective_config_hash=cfg.config_hash,
+        )
+        cache_path = _lo_cache_path(org_id, package_id, "lo_classify", cache_key)
 
         cached_classifications: list | None = None
         if await storage.exists(cache_path):
@@ -429,12 +475,34 @@ async def stage_classify(
 
         # Map page_number → LOPage for FK lookup
         pages_by_num = {p.page_number: p for p in content_pages}
+        guard_clamped = 0
         for clf in classifications_iter:
             page_num = clf["page_number"]
             page = pages_by_num.get(page_num)
             if page is None:
                 log.warning(f"Classifier returned unknown page_number={page_num}, skipping")
                 continue
+
+            confidence = clf["confidence"]
+            # Phase 2 hallucination guardrail. A scanned/image-only page with
+            # effectively no embedded text has no textual signal — the model
+            # is guessing from visual layout alone, which produces the worst
+            # known failure mode (high-confidence wrong label, e.g. VA COE →
+            # "voe" at 0.99). Clamp the confidence so the stack drops below
+            # the HITL threshold and an operator confirms. Real Others/blank
+            # pages were already short-circuited above.
+            is_image_only = (page.content_signal == "image")
+            is_text_empty = (page.text_length or 0) < HEURISTIC_BLANK_THRESHOLD
+            if is_image_only and is_text_empty and confidence > HALLUCINATION_CONFIDENCE_CEILING:
+                guard_clamped += 1
+                log.info(
+                    f"hallucination guard: page {page_num} "
+                    f"({clf['predicted_doc_type']} @ {confidence:.2f}) "
+                    f"clamped to {HALLUCINATION_CONFIDENCE_CEILING} "
+                    f"(content_signal=image, text_length={page.text_length or 0})"
+                )
+                confidence = HALLUCINATION_CONFIDENCE_CEILING
+
             db.add(LOClassification(
                 org_id=org_id,
                 package_id=package_id,
@@ -442,10 +510,15 @@ async def stage_classify(
                 page_number=page_num,
                 predicted_doc_type=clf["predicted_doc_type"],
                 predicted_doc_type_alternatives=clf.get("predicted_doc_type_alternatives") or [],
-                confidence=clf["confidence"],
+                confidence=confidence,
                 page_role=clf["page_role"],
                 detected_fields=clf.get("detected_fields") or [],
             ))
+        if guard_clamped:
+            log.info(
+                f"hallucination guard fired on {guard_clamped}/"
+                f"{len(classifications_iter)} pages"
+            )
 
     await db.flush()
     log.info(
@@ -623,8 +696,18 @@ async def stage_validate(
     from app.micro_apps.loan_onboarding.ai.stack_validator_agent import (
         StackValidatorAgent,
     )
+    from app.micro_apps.loan_onboarding.services.config_resolver import (
+        effective_config,
+    )
 
     log = get_logger(__name__, org_id=org_id, pack_id=package_id, stage="validate")
+
+    # Phase 2: ``cfg.config_hash`` is folded into every per-rule cache key
+    # so an org-level rule edit (or profile threshold tighten) busts
+    # dependent validate slots. The rule list itself still comes from
+    # ``LOValidationRule`` rows for now — the resolver-driven rule wiring
+    # ships in a later batch.
+    cfg = await effective_config(db, package_id)
 
     pkg = (await db.execute(
         select(LOPackage).where(
@@ -785,9 +868,13 @@ async def stage_validate(
                 # unchanged rules get a cache hit on re-run.
                 stack_hash = compute_stack_content_hash(stack.doc_type, snippets)
                 cache_key = compute_validate_rule_cache_key(
-                    stack_hash, rule_id, rule_text, version_info
+                    stack_hash,
+                    rule_id,
+                    rule_text,
+                    version_info,
+                    effective_config_hash=cfg.config_hash,
                 )
-                cache_path = storage.make_ai_cache_path(
+                cache_path = _lo_cache_path(
                     org_id, package_id, "lo_validate_rule", cache_key
                 )
 
@@ -961,37 +1048,22 @@ async def stage_extract(
         FieldLocation,
         StackExtraction,
     )
-    from app.micro_apps.loan_onboarding.services.field_grounding import (
-        ground_field_location,
+    from app.micro_apps.loan_onboarding.services.config_resolver import (
+        effective_config,
+    )
+    from app.micro_apps.loan_onboarding.services.ocr_words import (
+        ocr_pdf_page,
     )
 
-    def _apply_grounding(extraction: StackExtraction, snippets: list[dict]) -> int:
-        """Populate `location` on each ExtractedField using the
-        classifier's grounded ``detected_fields`` bboxes from snippets.
-
-        Always replaces the existing location — both the agent's
-        hallucinated bbox (text-only model, no real coordinates) and
-        any stale cached location from a prior pipeline run with
-        weaker grounding rules. When the current grounder finds no
-        plausible match, the location is cleared to None rather than
-        left pointing at potentially-bad data. Returns the count of
-        fields successfully grounded.
-        """
-        grounded_count = 0
-        for f in extraction.fields:
-            located = ground_field_location(f.name, f.value, snippets)
-            if located is None:
-                # Drop any stale location: the only legitimate source
-                # is the classifier; if grounding rejected every
-                # candidate as implausible, we have nothing to render.
-                f.location = None
-                continue
-            page_num, bbox_unit = located
-            f.location = FieldLocation(page=page_num, bbox=bbox_unit)
-            grounded_count += 1
-        return grounded_count
-
     log = get_logger(__name__, org_id=org_id, pack_id=package_id, stage="extract")
+
+    # Phase 2: resolve org/profile/loan config once. ``cfg.config_hash`` is
+    # folded into every extract cache key so any change to a higher layer
+    # (org schema edit, profile threshold tighten, etc.) busts dependent
+    # cache slots. ``cfg.schema(doc_type)`` is the preferred source for
+    # the per-doc-type field list — falls back to the per-loan
+    # ``extraction_fields_by_doc`` for loans without resolved schemas yet.
+    cfg = await effective_config(db, package_id)
 
     pkg = (await db.execute(
         select(LOPackage).where(
@@ -1015,13 +1087,30 @@ async def stage_extract(
         log.info("Extraction disabled for package; skipping stage")
         return {"stacks_extracted": 0, "fields_total": 0, "located_total": 0, "skipped": True}
 
-    fields_by_doc: dict[str, list[str]] = pkg.extraction_fields_by_doc or {}
-    # Normalize: drop empties, strip whitespace, dedupe-preserving-order
+    # Resolved org/profile schemas take precedence per doc type. For doc
+    # types absent from ``cfg.schemas_by_doc_type`` (loans not yet migrated
+    # to the catalog model), fall back to the per-loan
+    # ``extraction_fields_by_doc`` JSON. Field order is preserved — the
+    # extractor emits records in request order and the cache key folds in
+    # the ordered tuple.
     cleaned_by_doc: dict[str, list[str]] = {}
-    for k, v in fields_by_doc.items():
-        if not isinstance(v, list):
-            continue
+    for resolved in cfg.schemas_by_doc_type:
+        labels: list[str] = []
         seen: set[str] = set()
+        for f in resolved.fields:
+            label = (f.label or f.key or "").strip()
+            if not label or label in seen:
+                continue
+            seen.add(label)
+            labels.append(label)
+        if labels:
+            cleaned_by_doc[resolved.doc_type_key] = labels
+
+    fields_by_doc: dict[str, list[str]] = pkg.extraction_fields_by_doc or {}
+    for k, v in fields_by_doc.items():
+        if k in cleaned_by_doc or not isinstance(v, list):
+            continue
+        seen = set()
         cleaned: list[str] = []
         for label in v:
             label = str(label or "").strip()
@@ -1070,7 +1159,40 @@ async def stage_extract(
     )).scalars().all()
     pages_by_num = {p.page_number: p for p in pages}
 
+    # Group pages by source file for batched PDF reads (avoid re-fetching
+    # the same PDF from storage once per page).
+    file_ids = list({p.file_id for p in pages})
+    files_by_id: dict[uuid.UUID, LOPackageFile] = {}
+    if file_ids:
+        rows = (await db.execute(
+            select(LOPackageFile).where(LOPackageFile.id.in_(file_ids))
+        )).scalars().all()
+        files_by_id = {f.id: f for f in rows}
+    pdf_bytes_cache: dict[uuid.UUID, bytes] = {}
+
+    async def _get_pdf_bytes(file_id: uuid.UUID) -> bytes | None:
+        if file_id in pdf_bytes_cache:
+            return pdf_bytes_cache[file_id]
+        f = files_by_id.get(file_id)
+        if f is None or not f.storage_path:
+            return None
+        try:
+            data = await storage.get_object(f.storage_path)
+        except Exception as e:
+            log.warning("Could not load PDF for file %s: %s", file_id, e)
+            return None
+        pdf_bytes_cache[file_id] = data
+        return data
+
     def _build_snippets(stack: LOStack) -> list[dict]:
+        """Cache-key inputs only — same shape used by ``compute_stack_content_hash``.
+
+        The agent itself no longer consumes snippets (text + detected_fields);
+        Phase 1 feeds it ``pages: [{page_number, image_bytes, words}]``. We
+        keep snippets purely so the cache key continues to flip when the
+        page text changes — bumping ``GROUNDING_CONTRACT_VERSION`` already
+        invalidated every pre-v2 cache slot.
+        """
         snippets: list[dict] = []
         for pn in stack.page_numbers:
             pg = pages_by_num.get(pn)
@@ -1081,6 +1203,67 @@ async def stage_extract(
                 "detected_fields": (clf.detected_fields if clf else []) or [],
             })
         return snippets
+
+    async def _build_pages(stack: LOStack) -> list[dict]:
+        """Render image + load ocr_words for each page in the stack.
+
+        Output shape: ``[{page_number, image_bytes, words}, ...]`` keyed by
+        the *stack-local* page number (1-indexed within the stack's
+        ``page_numbers``) so the model's evidence cite is interpretable
+        without leaking package-global numbering.
+
+        OCR fallback: if ``LOPage.ocr_words`` is null (legacy row) we
+        invoke ``ocr_pdf_page`` JIT and persist the result so the next
+        run is a cache hit. If rendering fails the page is silently
+        dropped — the validator will mark every field that cited it as
+        ``ungrounded``.
+        """
+        out: list[dict] = []
+        for local_idx, pn in enumerate(stack.page_numbers, start=1):
+            pg = pages_by_num.get(pn)
+            if pg is None:
+                continue
+            pdf_bytes = await _get_pdf_bytes(pg.file_id)
+            if not pdf_bytes:
+                continue
+
+            words = pg.ocr_words
+            engine = pg.ocr_engine
+            if not words:
+                jit_words, jit_engine = await ocr_pdf_page(
+                    pdf_bytes,
+                    pg.source_page_number,
+                    org_id=org_id,
+                    allow_fallback=True,
+                )
+                if jit_words:
+                    pg.ocr_words = jit_words
+                    pg.ocr_engine = jit_engine or "tesseract"
+                    db.add(pg)
+                    words = jit_words
+                    engine = jit_engine
+                else:
+                    words = []
+
+            # Render the JPEG once for the model.
+            from app.micro_apps.loan_onboarding.services.ocr_words import (
+                _render_pdf_page_to_jpeg,
+            )
+            image_bytes = await _asyncio.to_thread(
+                _render_pdf_page_to_jpeg,
+                pdf_bytes, pg.source_page_number, 200,
+            )
+            if not image_bytes:
+                continue
+
+            out.append({
+                "page_number": local_idx,
+                "image_bytes": image_bytes,
+                "words": words or [],
+                "_global_page": pn,
+                "_engine": engine,
+            })
+        return out
 
     settings = get_settings()
     version_info = collect_version_info(settings)
@@ -1117,9 +1300,18 @@ async def stage_extract(
                 bbox = loc_raw.get("bbox")
                 if isinstance(bbox, list) and len(bbox) == 4:
                     try:
+                        evidence = loc_raw.get("evidence_token_indices")
+                        if isinstance(evidence, list):
+                            evidence = [int(i) for i in evidence]
+                        else:
+                            evidence = None
+                        ocr_count = loc_raw.get("ocr_word_count")
+                        ocr_count = int(ocr_count) if isinstance(ocr_count, (int, float)) else None
                         location = FieldLocation(
                             page=int(loc_raw.get("page", 1)),
                             bbox=[float(x) for x in bbox],
+                            evidence_token_indices=evidence,
+                            ocr_word_count=ocr_count,
                         )
                     except (TypeError, ValueError):
                         location = None
@@ -1137,8 +1329,13 @@ async def stage_extract(
             requested = cleaned_by_doc[stack.doc_type]
             snippets = _build_snippets(stack)
             stack_hash = compute_stack_content_hash(stack.doc_type, snippets)
-            cache_key = compute_extract_cache_key(stack_hash, requested, version_info)
-            cache_path = storage.make_ai_cache_path(
+            cache_key = compute_extract_cache_key(
+                stack_hash,
+                requested,
+                version_info,
+                effective_config_hash=cfg.config_hash,
+            )
+            cache_path = _lo_cache_path(
                 org_id, package_id, "lo_extract", cache_key
             )
 
@@ -1160,46 +1357,50 @@ async def stage_extract(
                     )
 
             if extraction is None:
-                try:
-                    extraction = await agent.extract_fields(
-                        stack_id=str(stack.id),
-                        doc_type=stack.doc_type,
-                        page_snippets=snippets,
-                        requested_fields=requested,
-                    )
-                except Exception as e:
+                stack_pages = await _build_pages(stack)
+                if not stack_pages:
                     log.warning(
-                        f"ExtractionAgent failed for stack={stack.stack_index}: {e}"
+                        "stack=%s had no renderable pages; emitting all-missing",
+                        stack.stack_index,
                     )
                     extraction = _conservative_fallback(
                         str(stack.id), stack.doc_type, requested
                     )
                 else:
                     try:
-                        await storage.put_object(
-                            cache_path,
-                            json.dumps(_serialize(extraction), sort_keys=True).encode("utf-8"),
-                            content_type="application/json",
+                        extraction = await agent.extract_fields(
+                            stack_id=str(stack.id),
+                            doc_type=stack.doc_type,
+                            pages=stack_pages,
+                            requested_fields=requested,
                         )
                     except Exception as e:
                         log.warning(
-                            f"extract cache write failed ({cache_key[:12]}…): {e}"
+                            f"ExtractionAgent failed for stack={stack.stack_index}: {e}"
                         )
-
-            # Ground each field against the classifier's detected_fields[]
-            # AFTER cache read/write — improvements to the alias map or
-            # bbox normalization propagate without invalidating the cache.
-            try:
-                grounded = _apply_grounding(extraction, snippets)
-                if grounded:
-                    log.info(
-                        f"grounded {grounded}/{len(extraction.fields)} fields "
-                        f"on stack={stack.stack_index} ({stack.doc_type})"
-                    )
-            except Exception as e:
-                log.warning(
-                    f"field grounding failed for stack={stack.stack_index}: {e}"
-                )
+                        extraction = _conservative_fallback(
+                            str(stack.id), stack.doc_type, requested
+                        )
+                    else:
+                        # Remap evidence page (stack-local) → global page
+                        # so persisted bboxes are addressable from the
+                        # workbench without context.
+                        local_to_global = {
+                            sp["page_number"]: sp["_global_page"] for sp in stack_pages
+                        }
+                        for f in extraction.fields:
+                            if f.location and f.location.page in local_to_global:
+                                f.location.page = local_to_global[f.location.page]
+                        try:
+                            await storage.put_object(
+                                cache_path,
+                                json.dumps(_serialize(extraction), sort_keys=True).encode("utf-8"),
+                                content_type="application/json",
+                            )
+                        except Exception as e:
+                            log.warning(
+                                f"extract cache write failed ({cache_key[:12]}…): {e}"
+                            )
             return stack, extraction
 
     results = await _asyncio.gather(*[_run_one(s) for s in targets])
@@ -1217,13 +1418,14 @@ async def stage_extract(
                 "status": f.status,
                 "location": f.location.model_dump() if f.location else None,
             })
-            # Count both "located" and "low_confidence" as found — the agent
-            # only emits low_confidence when a value was actually extracted
-            # but its confidence fell below the LOW_CONFIDENCE_THRESHOLD
-            # (see _coerce in extraction_agent.py). Treating it as missing
-            # here under-reports vs. what the UI renders ("Not found" is
-            # gated on status="missing", which forces value="" + conf=0).
-            if f.status in ("located", "low_confidence"):
+            # Count any field with a value as "found" for the dashboard
+            # tally. After Phase 1: "located" (high-confidence + grounded
+            # bbox), "tentative" (mid-confidence + grounded bbox), and
+            # "ungrounded" (value extracted but evidence cite failed) all
+            # surface a value to the operator. Only "missing" is hidden.
+            # ``low_confidence`` is the deprecated alias for tentative kept
+            # for one release of cache back-compat.
+            if f.status in ("located", "tentative", "ungrounded", "low_confidence"):
                 located += 1
         fields_total += len(rows)
         located_total += located
@@ -1267,8 +1469,16 @@ async def stage_review(
     """
     from app.config import get_settings
     from app.micro_apps.loan_onboarding.ai.reasoning_agent import ReasoningAgent
+    from app.micro_apps.loan_onboarding.services.config_resolver import (
+        effective_config,
+    )
 
     log = get_logger(__name__, org_id=org_id, pack_id=package_id, stage="review")
+
+    # Phase 2: resolved config feeds two places — ``required_doc_types``
+    # for the package summary, and ``effective_config_hash`` into the
+    # reason cache key.
+    cfg = await effective_config(db, package_id)
 
     pkg = (await db.execute(
         select(LOPackage).where(
@@ -1286,19 +1496,31 @@ async def stage_review(
     if not stacks:
         raise ValueError("No stacks to review — run validate first")
 
-    # Load config to get required doc types
-    config = (await db.execute(
-        select(LODocTypeConfig).where(
-            LODocTypeConfig.package_id == package_id,
-            LODocTypeConfig.org_id == org_id,
-        )
-    )).scalar_one_or_none()
-    required_doc_types = []
-    if config and config.doc_types:
-        required_doc_types = [
-            d["key"] for d in config.doc_types
-            if isinstance(d, dict) and d.get("required")
-        ]
+    # Required doc types: prefer the resolved tuple. For loans not on the
+    # catalog model yet, fall back to per-loan LODocTypeConfig.
+    resolved_required = [d.key for d in cfg.required_doc_types()]
+    if resolved_required:
+        required_doc_types = resolved_required
+    else:
+        config = (await db.execute(
+            select(LODocTypeConfig).where(
+                LODocTypeConfig.package_id == package_id,
+                LODocTypeConfig.org_id == org_id,
+            )
+        )).scalar_one_or_none()
+        required_doc_types = []
+        if config and config.doc_types:
+            # Defensive lowercase: legacy rows may carry UPPER_SNAKE keys.
+            # The ReasoningAgent compares these against stack doc_types
+            # (always lowercase) so an unnormalized key produces phantom
+            # "missing required document" findings.
+            required_doc_types = [
+                d["key"].strip().lower()
+                for d in config.doc_types
+                if isinstance(d, dict)
+                and isinstance(d.get("key"), str)
+                and d.get("required")
+            ]
 
     # Build a lean package summary for the reasoning agent
     validation_rows = (await db.execute(
@@ -1364,8 +1586,12 @@ async def stage_review(
 
     version_info = collect_version_info(settings)
     summary_hash = compute_package_summary_hash(package_summary)
-    reason_cache_key = compute_reason_cache_key(summary_hash, version_info)
-    reason_cache_path = storage.make_ai_cache_path(
+    reason_cache_key = compute_reason_cache_key(
+        summary_hash,
+        version_info,
+        effective_config_hash=cfg.config_hash,
+    )
+    reason_cache_path = _lo_cache_path(
         org_id, package_id, "lo_reason", reason_cache_key
     )
 

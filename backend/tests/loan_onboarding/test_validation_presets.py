@@ -34,7 +34,7 @@ def test_rules_version_is_versioned():
 
 
 def test_missing_signatures_pass_when_signature_page_present():
-    stack = _make_stack("URLA_1003", [
+    stack = _make_stack("urla_1003", [
         (1, "first_page", []),
         (2, "signature_page", []),
     ])
@@ -44,7 +44,7 @@ def test_missing_signatures_pass_when_signature_page_present():
 
 
 def test_missing_signatures_fail_when_none():
-    stack = _make_stack("URLA_1003", [
+    stack = _make_stack("urla_1003", [
         (1, "first_page", []),
         (2, "last_page", []),
     ])
@@ -57,7 +57,7 @@ def test_missing_signatures_fail_when_none():
 
 
 def test_missing_pages_pass_on_first_and_last():
-    stack = _make_stack("URLA_1003", [
+    stack = _make_stack("urla_1003", [
         (1, "first_page", []),
         (2, "continuation", []),
         (3, "last_page", []),
@@ -67,7 +67,7 @@ def test_missing_pages_pass_on_first_and_last():
 
 
 def test_missing_pages_fail_when_no_last():
-    stack = _make_stack("URLA_1003", [
+    stack = _make_stack("urla_1003", [
         (1, "first_page", []),
         (2, "continuation", []),
     ])
@@ -77,13 +77,13 @@ def test_missing_pages_fail_when_no_last():
 
 
 def test_missing_pages_single_page_with_first_role_passes():
-    stack = _make_stack("W2", [(1, "first_page", [])])
+    stack = _make_stack("w2", [(1, "first_page", [])])
     ev = evaluate_preset("missing_pages", stack)
     assert ev.passed is True
 
 
 def test_missing_pages_single_page_unknown_role_fails():
-    stack = _make_stack("W2", [(1, "unknown", [])])
+    stack = _make_stack("w2", [(1, "unknown", [])])
     ev = evaluate_preset("missing_pages", stack)
     assert ev.passed is False
 
@@ -92,7 +92,7 @@ def test_missing_pages_single_page_unknown_role_fails():
 
 
 def test_missing_fields_pass_when_all_present():
-    stack = _make_stack("URLA_1003", [
+    stack = _make_stack("urla_1003", [
         (1, "first_page", ["Borrower Name", "Loan Amount"]),
         (2, "last_page", ["Property Address"]),
     ])
@@ -105,7 +105,7 @@ def test_missing_fields_pass_when_all_present():
 
 
 def test_missing_fields_fail_when_any_missing():
-    stack = _make_stack("URLA_1003", [
+    stack = _make_stack("urla_1003", [
         (1, "first_page", ["Borrower Name"]),
     ])
     ev = evaluate_preset(
@@ -118,7 +118,7 @@ def test_missing_fields_fail_when_any_missing():
 
 
 def test_missing_fields_empty_config_is_noop_pass():
-    stack = _make_stack("URLA_1003", [(1, "first_page", [])])
+    stack = _make_stack("urla_1003", [(1, "first_page", [])])
     ev = evaluate_preset("missing_fields", stack, {"required_fields": []})
     assert ev.passed is True
     assert "skipped" in ev.evidence.lower()
@@ -128,7 +128,7 @@ def test_missing_fields_empty_config_is_noop_pass():
 
 
 def test_missing_fields_by_doc_pass_when_all_present_for_matching_doc():
-    stack = _make_stack("URLA_1003", [
+    stack = _make_stack("urla_1003", [
         (1, "first_page", ["Borrower Name", "Loan Amount"]),
         (2, "last_page", ["Property Address"]),
     ])
@@ -137,8 +137,8 @@ def test_missing_fields_by_doc_pass_when_all_present_for_matching_doc():
         stack,
         {
             "required_fields_by_doc": {
-                "URLA_1003": ["Borrower Name", "Loan Amount", "Property Address"],
-                "PAYSTUB": ["Gross Pay"],
+                "urla_1003": ["Borrower Name", "Loan Amount", "Property Address"],
+                "paystub": ["Gross Pay"],
             },
         },
     )
@@ -147,7 +147,7 @@ def test_missing_fields_by_doc_pass_when_all_present_for_matching_doc():
 
 def test_missing_fields_by_doc_only_enforces_matching_doc_type():
     """A stack of doc_type X must NOT be evaluated against doc_type Y's fields."""
-    stack = _make_stack("PAYSTUB", [
+    stack = _make_stack("paystub", [
         (1, "first_page", ["Gross Pay"]),
     ])
     ev = evaluate_preset(
@@ -157,8 +157,8 @@ def test_missing_fields_by_doc_only_enforces_matching_doc_type():
             "required_fields_by_doc": {
                 # The URLA list would fail if applied; but the stack is PAYSTUB,
                 # so only its own list ("Gross Pay") is enforced and passes.
-                "URLA_1003": ["Borrower Name", "Loan Amount"],
-                "PAYSTUB": ["Gross Pay"],
+                "urla_1003": ["Borrower Name", "Loan Amount"],
+                "paystub": ["Gross Pay"],
             },
         },
     )
@@ -166,7 +166,7 @@ def test_missing_fields_by_doc_only_enforces_matching_doc_type():
 
 
 def test_missing_fields_by_doc_fail_when_required_field_missing_for_doc():
-    stack = _make_stack("URLA_1003", [
+    stack = _make_stack("urla_1003", [
         (1, "first_page", ["Borrower Name"]),
     ])
     ev = evaluate_preset(
@@ -174,7 +174,7 @@ def test_missing_fields_by_doc_fail_when_required_field_missing_for_doc():
         stack,
         {
             "required_fields_by_doc": {
-                "URLA_1003": ["Borrower Name", "Loan Amount"],
+                "urla_1003": ["Borrower Name", "Loan Amount"],
             },
         },
     )
@@ -190,7 +190,7 @@ def test_missing_fields_by_doc_skips_unconfigured_doc_type():
         stack,
         {
             "required_fields_by_doc": {
-                "URLA_1003": ["Borrower Name"],
+                "urla_1003": ["Borrower Name"],
             },
         },
     )
@@ -200,11 +200,11 @@ def test_missing_fields_by_doc_skips_unconfigured_doc_type():
 
 
 def test_missing_fields_by_doc_skips_when_entry_is_empty_list():
-    stack = _make_stack("URLA_1003", [(1, "first_page", [])])
+    stack = _make_stack("urla_1003", [(1, "first_page", [])])
     ev = evaluate_preset(
         "missing_fields",
         stack,
-        {"required_fields_by_doc": {"URLA_1003": []}},
+        {"required_fields_by_doc": {"urla_1003": []}},
     )
     assert ev.passed is True
     assert "skipped" in ev.evidence.lower()
@@ -212,7 +212,7 @@ def test_missing_fields_by_doc_skips_when_entry_is_empty_list():
 
 def test_missing_fields_by_doc_takes_precedence_over_legacy_flat():
     """When both shapes are present, by_doc wins so old-shape leakage doesn't override."""
-    stack = _make_stack("URLA_1003", [(1, "first_page", ["Borrower Name"])])
+    stack = _make_stack("urla_1003", [(1, "first_page", ["Borrower Name"])])
     ev = evaluate_preset(
         "missing_fields",
         stack,
@@ -220,7 +220,7 @@ def test_missing_fields_by_doc_takes_precedence_over_legacy_flat():
             # Legacy list would pass — but per-doc list demands an extra field
             # which is missing. by_doc must win.
             "required_fields": ["Borrower Name"],
-            "required_fields_by_doc": {"URLA_1003": ["Borrower Name", "Loan Amount"]},
+            "required_fields_by_doc": {"urla_1003": ["Borrower Name", "Loan Amount"]},
         },
     )
     assert ev.passed is False
@@ -244,30 +244,30 @@ def test_others_stacks_short_circuit_to_pass():
 def test_applies_to_doc_keys_skips_when_doc_type_not_in_scope():
     """When the rule scope lists specific doc_types, stacks of other types
     no-op pass — the rule is "not configured" for them."""
-    stack = _make_stack("PAYSTUB", [
+    stack = _make_stack("paystub", [
         (1, "first_page", []),
         (2, "last_page", []),
     ])
     ev = evaluate_preset(
         "missing_signatures",
         stack,
-        config={"applies_to_doc_keys": ["URLA_1003", "W2"]},
+        config={"applies_to_doc_keys": ["urla_1003", "w2"]},
     )
     assert ev.passed is True
     assert "not configured" in ev.evidence
-    assert "PAYSTUB" in ev.evidence
+    assert "paystub" in ev.evidence
 
 
 def test_applies_to_doc_keys_runs_when_doc_type_in_scope():
     """When the stack's doc_type is in scope, the rule evaluates normally."""
-    stack = _make_stack("PAYSTUB", [
+    stack = _make_stack("paystub", [
         (1, "first_page", []),
         (2, "last_page", []),
     ])
     ev = evaluate_preset(
         "missing_signatures",
         stack,
-        config={"applies_to_doc_keys": ["PAYSTUB"]},
+        config={"applies_to_doc_keys": ["paystub"]},
     )
     # No signature page → fails (real evaluation)
     assert ev.passed is False
@@ -276,7 +276,7 @@ def test_applies_to_doc_keys_runs_when_doc_type_in_scope():
 
 def test_applies_to_doc_keys_empty_list_falls_through_to_legacy_behavior():
     """Empty list = no scope = legacy package-wide evaluation."""
-    stack = _make_stack("PAYSTUB", [
+    stack = _make_stack("paystub", [
         (1, "first_page", []),
         (2, "signature_page", []),
     ])
@@ -291,7 +291,7 @@ def test_applies_to_doc_keys_empty_list_falls_through_to_legacy_behavior():
 
 def test_applies_to_doc_keys_missing_falls_through_to_legacy_behavior():
     """Missing key = no scope = legacy package-wide evaluation."""
-    stack = _make_stack("PAYSTUB", [
+    stack = _make_stack("paystub", [
         (1, "first_page", []),
         (2, "last_page", []),
     ])
@@ -303,7 +303,7 @@ def test_applies_to_doc_keys_missing_falls_through_to_legacy_behavior():
 
 
 def test_unknown_rule_id_conservatively_fails():
-    stack = _make_stack("URLA_1003", [(1, "first_page", [])])
+    stack = _make_stack("urla_1003", [(1, "first_page", [])])
     ev = evaluate_preset("does_not_exist", stack)
     assert ev.passed is False
     assert "Unknown preset" in ev.evidence
@@ -313,7 +313,7 @@ def test_unknown_rule_id_conservatively_fails():
 
 
 def test_evaluate_all_presets_runs_multiple_rules():
-    stack = _make_stack("PAYSTUB", [
+    stack = _make_stack("paystub", [
         (1, "first_page", ["Gross Pay"]),
         (2, "last_page", []),
     ])
@@ -330,7 +330,7 @@ def test_evaluate_all_presets_runs_multiple_rules():
 
 
 def test_evaluate_is_deterministic():
-    stack = _make_stack("URLA_1003", [
+    stack = _make_stack("urla_1003", [
         (1, "first_page", ["Name"]),
         (2, "last_page", ["Amount"]),
     ])

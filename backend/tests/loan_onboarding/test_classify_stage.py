@@ -32,31 +32,31 @@ from tests.loan_onboarding.conftest import TEST_PACKAGE_ID
 # ── unit tests for helpers ────────────────────────────────────────────────
 
 def test_build_json_schema_adds_others_bucket():
-    schema = _build_json_schema(["URLA_1003", "PAYSTUB"])
+    schema = _build_json_schema(["urla_1003", "paystub"])
     enum = schema["properties"]["classifications"]["items"]["properties"]["predicted_doc_type"]["enum"]
-    assert "URLA_1003" in enum
-    assert "PAYSTUB" in enum
+    assert "urla_1003" in enum
+    assert "paystub" in enum
     assert OTHERS_KEY in enum
 
 
 def test_coerce_unknown_doc_type_falls_back_to_others():
     clf = _coerce_classification(
         {"page_number": 2, "predicted_doc_type": "UNKNOWN_TYPE", "confidence": 0.5},
-        allowed_set={"URLA_1003", OTHERS_KEY},
+        allowed_set={"urla_1003", OTHERS_KEY},
     )
     assert clf.predicted_doc_type == OTHERS_KEY
 
 
 def test_coerce_clamps_confidence_out_of_range():
     clf = _coerce_classification(
-        {"page_number": 1, "predicted_doc_type": "URLA_1003", "confidence": 1.7},
-        allowed_set={"URLA_1003", OTHERS_KEY},
+        {"page_number": 1, "predicted_doc_type": "urla_1003", "confidence": 1.7},
+        allowed_set={"urla_1003", OTHERS_KEY},
     )
     assert clf.confidence == 1.0
 
     clf = _coerce_classification(
-        {"page_number": 1, "predicted_doc_type": "URLA_1003", "confidence": -0.2},
-        allowed_set={"URLA_1003", OTHERS_KEY},
+        {"page_number": 1, "predicted_doc_type": "urla_1003", "confidence": -0.2},
+        allowed_set={"urla_1003", OTHERS_KEY},
     )
     assert clf.confidence == 0.0
 
@@ -64,14 +64,14 @@ def test_coerce_clamps_confidence_out_of_range():
 def test_coerce_drops_bad_bbox_fields():
     clf = _coerce_classification(
         {
-            "page_number": 1, "predicted_doc_type": "URLA_1003", "confidence": 0.9,
+            "page_number": 1, "predicted_doc_type": "urla_1003", "confidence": 0.9,
             "detected_fields": [
                 {"field_name": "Name", "value": "Jane", "bbox": [1, 2, 3, 4]},
                 {"field_name": "Bad", "value": "x", "bbox": [1, 2]},  # wrong length
                 {"field_name": "Missing", "value": "x"},               # no bbox
             ],
         },
-        allowed_set={"URLA_1003", OTHERS_KEY},
+        allowed_set={"urla_1003", OTHERS_KEY},
     )
     assert len(clf.detected_fields) == 1
     assert clf.detected_fields[0].field_name == "Name"
@@ -80,23 +80,23 @@ def test_coerce_drops_bad_bbox_fields():
 def test_coerce_filters_invalid_alternatives():
     clf = _coerce_classification(
         {
-            "page_number": 1, "predicted_doc_type": "URLA_1003", "confidence": 0.9,
+            "page_number": 1, "predicted_doc_type": "urla_1003", "confidence": 0.9,
             "predicted_doc_type_alternatives": [
-                {"type": "PAYSTUB", "confidence": 0.1},
+                {"type": "paystub", "confidence": 0.1},
                 {"type": "UNKNOWN", "confidence": 0.05},   # not in enum → dropped
             ],
         },
-        allowed_set={"URLA_1003", "PAYSTUB", OTHERS_KEY},
+        allowed_set={"urla_1003", "paystub", OTHERS_KEY},
     )
     assert len(clf.predicted_doc_type_alternatives) == 1
-    assert clf.predicted_doc_type_alternatives[0].type == "PAYSTUB"
+    assert clf.predicted_doc_type_alternatives[0].type == "paystub"
 
 
 def test_agent_rejects_reserved_others_in_config():
     with pytest.raises(ValueError, match="reserved"):
         PageClassifierAgent(
             org_id=uuid.uuid4(),
-            allowed_doc_types=["URLA_1003", OTHERS_KEY],
+            allowed_doc_types=["urla_1003", OTHERS_KEY],
         )
 
 
@@ -112,14 +112,14 @@ async def test_classify_pdf_overwrites_page_numbers_with_caller_numbering():
     """The caller supplies global page numbers; the agent stamps them onto output."""
     agent = PageClassifierAgent(
         org_id=uuid.uuid4(),
-        allowed_doc_types=["URLA_1003", "PAYSTUB"],
+        allowed_doc_types=["urla_1003", "paystub"],
     )
 
     # Mock out the LLM — returns local (1..N) numbering
     mock_llm = AsyncMock(return_value={
         "classifications": [
-            {"page_number": 1, "predicted_doc_type": "URLA_1003", "confidence": 0.9, "page_role": "first_page"},
-            {"page_number": 2, "predicted_doc_type": "PAYSTUB", "confidence": 0.88, "page_role": "first_page"},
+            {"page_number": 1, "predicted_doc_type": "urla_1003", "confidence": 0.9, "page_role": "first_page"},
+            {"page_number": 2, "predicted_doc_type": "paystub", "confidence": 0.88, "page_role": "first_page"},
         ]
     })
 
@@ -133,7 +133,7 @@ async def test_classify_pdf_overwrites_page_numbers_with_caller_numbering():
     # Global page numbers stamped onto output
     assert result.classifications[0].page_number == 5
     assert result.classifications[1].page_number == 9
-    assert result.classifications[0].predicted_doc_type == "URLA_1003"
+    assert result.classifications[0].predicted_doc_type == "urla_1003"
 
 
 @pytest.mark.asyncio
@@ -142,7 +142,7 @@ async def test_classify_pdf_raises_on_llm_failure():
     chunked dispatcher can split-and-retry rather than silently zeroing pages."""
     agent = PageClassifierAgent(
         org_id=uuid.uuid4(),
-        allowed_doc_types=["URLA_1003"],
+        allowed_doc_types=["urla_1003"],
     )
     fail = AsyncMock(side_effect=RuntimeError("gemini is down"))
     with patch.object(PageClassifierAgent, "call_json_structured", fail):
@@ -159,7 +159,7 @@ async def test_classify_pdf_raises_on_empty_response():
     Others/0.0 — it must raise so the caller splits and retries."""
     agent = PageClassifierAgent(
         org_id=uuid.uuid4(),
-        allowed_doc_types=["URLA_1003"],
+        allowed_doc_types=["urla_1003"],
     )
     empty = AsyncMock(return_value={})
     with patch.object(PageClassifierAgent, "call_json_structured", empty):
@@ -176,12 +176,12 @@ async def test_classify_pdf_raises_on_short_response():
     and must raise so the outer dispatcher can retry with smaller splits."""
     agent = PageClassifierAgent(
         org_id=uuid.uuid4(),
-        allowed_doc_types=["URLA_1003"],
+        allowed_doc_types=["urla_1003"],
     )
     # 10 pages requested, only 3 returned → 70% missing, well past the 30% floor
     short = AsyncMock(return_value={
         "classifications": [
-            {"page_number": i + 1, "predicted_doc_type": "URLA_1003",
+            {"page_number": i + 1, "predicted_doc_type": "urla_1003",
              "confidence": 0.9, "page_role": "continuation"}
             for i in range(3)
         ]
@@ -205,7 +205,7 @@ async def test_classify_pdf_chunked_split_retries_down_to_single_pages():
     """
     agent = PageClassifierAgent(
         org_id=uuid.uuid4(),
-        allowed_doc_types=["URLA_1003"],
+        allowed_doc_types=["urla_1003"],
     )
     pdf_bytes = _make_pdf(["p1", "p2", "p3", "p4"])
 
@@ -228,7 +228,7 @@ async def test_classify_pdf_chunked_split_retries_down_to_single_pages():
             raise RuntimeError("simulated truncation on multi-page batch")
         return {
             "classifications": [
-                {"page_number": 1, "predicted_doc_type": "URLA_1003",
+                {"page_number": 1, "predicted_doc_type": "urla_1003",
                  "confidence": 0.9, "page_role": "continuation"},
             ]
         }
@@ -241,7 +241,7 @@ async def test_classify_pdf_chunked_split_retries_down_to_single_pages():
 
     # All 4 pages eventually classified (via single-page retries)
     assert [c.page_number for c in result.classifications] == [10, 11, 12, 13]
-    assert all(c.predicted_doc_type == "URLA_1003" for c in result.classifications)
+    assert all(c.predicted_doc_type == "urla_1003" for c in result.classifications)
     # Sanity: the dispatcher actually drilled down to 1-page calls
     assert 1 in call_page_counts, f"expected single-page calls, got {call_page_counts}"
     # And the original 4-page call failed at least once
@@ -256,7 +256,7 @@ async def test_classify_pdf_chunked_single_page_failure_falls_back_to_others():
     routes the stack to HITL review)."""
     agent = PageClassifierAgent(
         org_id=uuid.uuid4(),
-        allowed_doc_types=["URLA_1003"],
+        allowed_doc_types=["urla_1003"],
     )
     pdf_bytes = _make_pdf(["only page"])
 
@@ -279,16 +279,16 @@ async def test_classify_pdf_chunked_single_page_failure_falls_back_to_others():
 async def test_classify_pdf_chunked_merges_in_global_order():
     agent = PageClassifierAgent(
         org_id=uuid.uuid4(),
-        allowed_doc_types=["URLA_1003"],
+        allowed_doc_types=["urla_1003"],
     )
 
     async def fake_call(*, system_prompt, messages, json_schema, **kwargs):
-        # Return N 'URLA_1003' entries, matching the batch size requested
+        # Return N 'urla_1003' entries, matching the batch size requested
         n = len(messages[0]["content"][0]["text"].split())  # noqa — placeholder
         # Use a cleaner signal: count pages by counting the requested page_numbers
         return {
             "classifications": [
-                {"page_number": i + 1, "predicted_doc_type": "URLA_1003",
+                {"page_number": i + 1, "predicted_doc_type": "urla_1003",
                  "confidence": 0.9, "page_role": "continuation"}
                 for i in range(10)  # upper bound; agent only uses first N
             ]
@@ -362,9 +362,9 @@ async def test_stage_classify_skips_blank_pages_and_writes_rows(
     async def fake_call(*, system_prompt, messages, json_schema, **kwargs):
         return {
             "classifications": [
-                {"page_number": 1, "predicted_doc_type": "URLA_1003",
+                {"page_number": 1, "predicted_doc_type": "urla_1003",
                  "confidence": 0.92, "page_role": "first_page"},
-                {"page_number": 2, "predicted_doc_type": "PAYSTUB",
+                {"page_number": 2, "predicted_doc_type": "paystub",
                  "confidence": 0.88, "page_role": "first_page"},
             ]
         }
@@ -383,10 +383,10 @@ async def test_stage_classify_skips_blank_pages_and_writes_rows(
         .order_by(LOClassification.page_number)
     )).scalars().all()
     assert [r.page_number for r in rows] == [1, 2, 3]
-    assert rows[0].predicted_doc_type == "URLA_1003"
+    assert rows[0].predicted_doc_type == "urla_1003"
     assert rows[1].predicted_doc_type == OTHERS_KEY   # blank page
     assert rows[1].confidence == 1.0
-    assert rows[2].predicted_doc_type == "PAYSTUB"
+    assert rows[2].predicted_doc_type == "paystub"
 
 
 @pytest.mark.asyncio
@@ -402,7 +402,7 @@ async def test_stage_classify_is_idempotent(
 
     async def fake_call(**kwargs):
         return {"classifications": [
-            {"page_number": 1, "predicted_doc_type": "URLA_1003",
+            {"page_number": 1, "predicted_doc_type": "urla_1003",
              "confidence": 0.9, "page_role": "first_page"},
         ]}
 
@@ -461,9 +461,9 @@ async def test_stage_classify_routes_image_pages_to_llm(
         captured_page_counts.append(text_block.count("page"))
         return {
             "classifications": [
-                {"page_number": 1, "predicted_doc_type": "URLA_1003",
+                {"page_number": 1, "predicted_doc_type": "urla_1003",
                  "confidence": 0.85, "page_role": "first_page"},
-                {"page_number": 2, "predicted_doc_type": "URLA_1003",
+                {"page_number": 2, "predicted_doc_type": "urla_1003",
                  "confidence": 0.82, "page_role": "continuation"},
             ]
         }
@@ -483,7 +483,7 @@ async def test_stage_classify_routes_image_pages_to_llm(
         .where(LOClassification.package_id == TEST_PACKAGE_ID)
         .order_by(LOClassification.page_number)
     )).scalars().all()
-    assert [r.predicted_doc_type for r in rows] == ["URLA_1003", "URLA_1003"]
+    assert [r.predicted_doc_type for r in rows] == ["urla_1003", "urla_1003"]
     # The LLM was invoked (not short-circuited)
     assert captured_page_counts, "classifier was not called — image pages were auto-Othered"
 

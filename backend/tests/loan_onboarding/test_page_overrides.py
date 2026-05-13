@@ -91,7 +91,7 @@ async def test_apply_override_rejects_unknown_doc_type(
     sample_package, db_session: AsyncSession
 ):
     page_ids = await _seed_pages_and_classifications(
-        db_session, [(1, "URLA_1003", 0.9, "first_page")]
+        db_session, [(1, "urla_1003", 0.9, "first_page")]
     )
     with pytest.raises(Exception):
         await page_override_service.apply_override(
@@ -108,7 +108,7 @@ async def test_apply_override_allows_others_bucket(
     sample_package, db_session: AsyncSession
 ):
     page_ids = await _seed_pages_and_classifications(
-        db_session, [(1, "URLA_1003", 0.9, "first_page")]
+        db_session, [(1, "urla_1003", 0.9, "first_page")]
     )
     override = await page_override_service.apply_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID, page_ids[0],
@@ -118,7 +118,7 @@ async def test_apply_override_allows_others_bucket(
         note="not a real doc",
     )
     assert override.assigned_doc_type == OTHERS_KEY
-    assert override.previous_doc_type == "URLA_1003"
+    assert override.previous_doc_type == "urla_1003"
 
 
 @pytest.mark.asyncio
@@ -126,13 +126,13 @@ async def test_apply_override_rejects_noop(
     sample_package, db_session: AsyncSession
 ):
     page_ids = await _seed_pages_and_classifications(
-        db_session, [(1, "URLA_1003", 0.9, "first_page")]
+        db_session, [(1, "urla_1003", 0.9, "first_page")]
     )
     # Target matches ML prediction with no role change → no-op
     with pytest.raises(Exception):
         await page_override_service.apply_override(
             db_session, TEST_ORG_ID, TEST_PACKAGE_ID, page_ids[0],
-            assigned_doc_type="URLA_1003",
+            assigned_doc_type="urla_1003",
             page_role_override=None,
             reviewer_id=TEST_USER_ID,
             note=None,
@@ -144,32 +144,32 @@ async def test_apply_override_upserts_preserving_previous_doc_type(
     sample_package, db_session: AsyncSession
 ):
     page_ids = await _seed_pages_and_classifications(
-        db_session, [(1, "URLA_1003", 0.9, "first_page")]
+        db_session, [(1, "urla_1003", 0.9, "first_page")]
     )
     # First override: 1003 → PAYSTUB
     first = await page_override_service.apply_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID, page_ids[0],
-        assigned_doc_type="PAYSTUB",
+        assigned_doc_type="paystub",
         page_role_override="first_page",
         reviewer_id=TEST_USER_ID,
         note="thought it was a paystub",
     )
-    assert first.previous_doc_type == "URLA_1003"
-    assert first.assigned_doc_type == "PAYSTUB"
+    assert first.previous_doc_type == "urla_1003"
+    assert first.assigned_doc_type == "paystub"
 
     # Second override of same page: PAYSTUB → W2. `previous_doc_type` stays
     # at the ML's original prediction (1003), NOT the intermediate PAYSTUB —
     # this is what the audit trail needs.
     second = await page_override_service.apply_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID, page_ids[0],
-        assigned_doc_type="W2",
+        assigned_doc_type="w2",
         page_role_override=None,
         reviewer_id=TEST_USER_ID,
         note="actually a W2",
     )
     assert second.id == first.id  # same row, upserted
-    assert second.previous_doc_type == "URLA_1003"
-    assert second.assigned_doc_type == "W2"
+    assert second.previous_doc_type == "urla_1003"
+    assert second.assigned_doc_type == "w2"
     assert second.page_role_override is None
 
 
@@ -178,11 +178,11 @@ async def test_remove_override_returns_to_ml_classification(
     sample_package, db_session: AsyncSession
 ):
     page_ids = await _seed_pages_and_classifications(
-        db_session, [(1, "URLA_1003", 0.9, "first_page")]
+        db_session, [(1, "urla_1003", 0.9, "first_page")]
     )
     await page_override_service.apply_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID, page_ids[0],
-        assigned_doc_type="PAYSTUB",
+        assigned_doc_type="paystub",
         page_role_override=None,
         reviewer_id=TEST_USER_ID,
         note=None,
@@ -200,7 +200,7 @@ async def test_remove_override_returns_to_ml_classification(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID
     )
     assert len(effective) == 1
-    assert effective[0].doc_type == "URLA_1003"
+    assert effective[0].doc_type == "urla_1003"
     assert effective[0].is_overridden is False
 
 
@@ -215,10 +215,10 @@ async def test_rebuild_regroups_stacks_after_override(
     page_ids = await _seed_pages_and_classifications(
         db_session,
         [
-            (1, "URLA_1003", 0.95, "first_page"),
-            (2, "URLA_1003", 0.95, "continuation"),
-            (3, "URLA_1003", 0.95, "last_page"),
-            (4, "PAYSTUB", 0.95, "first_page"),
+            (1, "urla_1003", 0.95, "first_page"),
+            (2, "urla_1003", 0.95, "continuation"),
+            (3, "urla_1003", 0.95, "last_page"),
+            (4, "paystub", 0.95, "first_page"),
         ],
     )
     storage = get_storage()
@@ -232,13 +232,13 @@ async def test_rebuild_regroups_stacks_after_override(
         .order_by(LOStack.stack_index.asc())
     )).scalars().all()
     assert [(s.doc_type, s.first_page, s.last_page) for s in before] == [
-        ("URLA_1003", 1, 3), ("PAYSTUB", 4, 4),
+        ("urla_1003", 1, 3), ("paystub", 4, 4),
     ]
 
     # Move page 3 → PAYSTUB and rebuild
     await page_override_service.apply_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID, page_ids[2],
-        assigned_doc_type="PAYSTUB",
+        assigned_doc_type="paystub",
         page_role_override="first_page",
         reviewer_id=TEST_USER_ID,
         note=None,
@@ -255,7 +255,7 @@ async def test_rebuild_regroups_stacks_after_override(
         .order_by(LOStack.stack_index.asc())
     )).scalars().all()
     doc_types = [(s.doc_type, s.first_page, s.last_page) for s in after]
-    assert ("URLA_1003", 1, 2) in doc_types
+    assert ("urla_1003", 1, 2) in doc_types
     assert summary["pages"] == 4
 
 
@@ -270,20 +270,20 @@ async def test_override_set_hash_is_stable(
     page_ids = await _seed_pages_and_classifications(
         db_session,
         [
-            (1, "URLA_1003", 0.9, "first_page"),
-            (2, "URLA_1003", 0.9, "last_page"),
+            (1, "urla_1003", 0.9, "first_page"),
+            (2, "urla_1003", 0.9, "last_page"),
         ],
     )
     await page_override_service.apply_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID, page_ids[0],
-        assigned_doc_type="PAYSTUB",
+        assigned_doc_type="paystub",
         page_role_override=None,
         reviewer_id=TEST_USER_ID,
         note=None,
     )
     await page_override_service.apply_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID, page_ids[1],
-        assigned_doc_type="W2",
+        assigned_doc_type="w2",
         page_role_override=None,
         reviewer_id=TEST_USER_ID,
         note=None,
@@ -306,8 +306,8 @@ async def test_rebuild_records_override_set_hash_in_pipeline_run(
     page_ids = await _seed_pages_and_classifications(
         db_session,
         [
-            (1, "URLA_1003", 0.9, "first_page"),
-            (2, "URLA_1003", 0.9, "last_page"),
+            (1, "urla_1003", 0.9, "first_page"),
+            (2, "urla_1003", 0.9, "last_page"),
         ],
     )
     # Pre-seed a pipeline run so the rebuild has something to stamp
@@ -333,7 +333,7 @@ async def test_rebuild_records_override_set_hash_in_pipeline_run(
 
     await page_override_service.apply_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID, page_ids[0],
-        assigned_doc_type="PAYSTUB",
+        assigned_doc_type="paystub",
         page_role_override=None,
         reviewer_id=TEST_USER_ID,
         note=None,
@@ -362,19 +362,19 @@ async def test_override_route_applies_and_returns_rebuild_summary(
     page_ids = await _seed_pages_and_classifications(
         db_session,
         [
-            (1, "URLA_1003", 0.9, "first_page"),
-            (2, "URLA_1003", 0.9, "last_page"),
+            (1, "urla_1003", 0.9, "first_page"),
+            (2, "urla_1003", 0.9, "last_page"),
         ],
     )
     resp = await client.post(
         f"{BASE}/packages/{TEST_PACKAGE_ID}/pages/{page_ids[0]}/override",
         headers=HEADERS,
-        json={"assigned_doc_type": "PAYSTUB", "note": "moved"},
+        json={"assigned_doc_type": "paystub", "note": "moved"},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["override"]["assigned_doc_type"] == "PAYSTUB"
-    assert body["override"]["previous_doc_type"] == "URLA_1003"
+    assert body["override"]["assigned_doc_type"] == "paystub"
+    assert body["override"]["previous_doc_type"] == "urla_1003"
     assert body["rebuild"]["pages"] == 2
     assert body["rebuild"]["stacks"] >= 1
 
@@ -386,15 +386,15 @@ async def test_override_route_delete_returns_null_override(
     page_ids = await _seed_pages_and_classifications(
         db_session,
         [
-            (1, "URLA_1003", 0.9, "first_page"),
-            (2, "URLA_1003", 0.9, "last_page"),
+            (1, "urla_1003", 0.9, "first_page"),
+            (2, "urla_1003", 0.9, "last_page"),
         ],
     )
     # Create an override first
     await client.post(
         f"{BASE}/packages/{TEST_PACKAGE_ID}/pages/{page_ids[0]}/override",
         headers=HEADERS,
-        json={"assigned_doc_type": "PAYSTUB"},
+        json={"assigned_doc_type": "paystub"},
     )
     resp = await client.delete(
         f"{BASE}/packages/{TEST_PACKAGE_ID}/pages/{page_ids[0]}/override",
@@ -413,14 +413,14 @@ async def test_list_overrides_route(
     page_ids = await _seed_pages_and_classifications(
         db_session,
         [
-            (1, "URLA_1003", 0.9, "first_page"),
-            (2, "URLA_1003", 0.9, "last_page"),
+            (1, "urla_1003", 0.9, "first_page"),
+            (2, "urla_1003", 0.9, "last_page"),
         ],
     )
     await client.post(
         f"{BASE}/packages/{TEST_PACKAGE_ID}/pages/{page_ids[0]}/override",
         headers=HEADERS,
-        json={"assigned_doc_type": "PAYSTUB"},
+        json={"assigned_doc_type": "paystub"},
     )
     resp = await client.get(
         f"{BASE}/packages/{TEST_PACKAGE_ID}/overrides", headers=HEADERS,
@@ -428,4 +428,4 @@ async def test_list_overrides_route(
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 1
-    assert data[0]["assigned_doc_type"] == "PAYSTUB"
+    assert data[0]["assigned_doc_type"] == "paystub"

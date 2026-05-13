@@ -85,8 +85,8 @@ async def test_stage_validate_runs_preset_rules(
 ):
     """Preset rule `missing_signatures` is already seeded on sample_package."""
     await _seed_full_package(db_session, [
-        (1, "URLA_1003", 0.9, "first_page", []),
-        (2, "URLA_1003", 0.9, "last_page", []),
+        (1, "urla_1003", 0.9, "first_page", []),
+        (2, "urla_1003", 0.9, "last_page", []),
     ])
     storage = get_storage()
     await stage_stack(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
@@ -126,8 +126,8 @@ async def test_stage_validate_passes_when_signature_page_present(
     sample_package, db_session: AsyncSession
 ):
     await _seed_full_package(db_session, [
-        (1, "URLA_1003", 0.95, "first_page", []),
-        (2, "URLA_1003", 0.95, "signature_page", []),
+        (1, "urla_1003", 0.95, "first_page", []),
+        (2, "urla_1003", 0.95, "signature_page", []),
     ])
     storage = get_storage()
     await stage_stack(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
@@ -151,8 +151,8 @@ async def test_stage_validate_is_idempotent(
     sample_package, db_session: AsyncSession
 ):
     await _seed_full_package(db_session, [
-        (1, "URLA_1003", 0.9, "first_page", []),
-        (2, "URLA_1003", 0.9, "signature_page", []),
+        (1, "urla_1003", 0.9, "first_page", []),
+        (2, "urla_1003", 0.9, "signature_page", []),
     ])
     storage = get_storage()
     await stage_stack(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
@@ -187,8 +187,8 @@ async def test_stage_validate_runs_custom_nl_rules_through_agent(
     await db_session.commit()
 
     await _seed_full_package(db_session, [
-        (1, "URLA_1003", 0.95, "first_page", []),
-        (2, "URLA_1003", 0.95, "signature_page", []),
+        (1, "urla_1003", 0.95, "first_page", []),
+        (2, "urla_1003", 0.95, "signature_page", []),
     ])
     storage = get_storage()
     await stage_stack(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
@@ -233,8 +233,8 @@ async def test_stage_review_accepts_clean_stacks(
     sample_package, db_session: AsyncSession
 ):
     await _seed_full_package(db_session, [
-        (1, "URLA_1003", 0.95, "first_page", []),
-        (2, "URLA_1003", 0.95, "signature_page", []),
+        (1, "urla_1003", 0.95, "first_page", []),
+        (2, "urla_1003", 0.95, "signature_page", []),
     ])
     storage = get_storage()
     await stage_stack(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)
@@ -321,8 +321,8 @@ async def test_stage_review_persists_package_level_issues(
     sample_package, db_session: AsyncSession
 ):
     await _seed_full_package(db_session, [
-        (1, "URLA_1003", 0.95, "first_page", []),
-        (2, "URLA_1003", 0.95, "signature_page", []),
+        (1, "urla_1003", 0.95, "first_page", []),
+        (2, "urla_1003", 0.95, "signature_page", []),
     ])
     storage = get_storage()
     await stage_stack(TEST_PACKAGE_ID, TEST_ORG_ID, db_session, storage)

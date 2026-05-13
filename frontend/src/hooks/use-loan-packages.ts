@@ -34,7 +34,7 @@ const TERMINAL_STATUSES = new Set([
 // unmount when the user clicks away and comes back.
 const PACKAGE_STALE_TIME = 30_000;
 const PACKAGE_GC_TIME = 5 * 60_000;
-const PACKAGE_POLL_MS = 3000;
+const PACKAGE_POLL_MS = 1000;
 
 export function useLoanPackages() {
   const { currentOrgId } = useOrg();
@@ -124,8 +124,10 @@ export function useLoanPackage(packageId: string | null | undefined) {
     staleTime: PACKAGE_STALE_TIME,
     gcTime: PACKAGE_GC_TIME,
     // Stop polling once the pipeline reaches a terminal state. While running,
-    // 3s polling keeps the status pip + processing tab in sync without
-    // requiring an SSE pipe for the package row itself.
+    // 1s polling keeps the status pip + processing tab in sync without
+    // requiring an SSE pipe for the package row itself. 1s (down from 3s) so
+    // the rail visibly steps through fast stages (stack ~100ms, validate ~1s)
+    // instead of jumping from "ingest" straight to "complete".
     refetchInterval: (q) => {
       const data = q.state.data;
       if (!data) return PACKAGE_POLL_MS;

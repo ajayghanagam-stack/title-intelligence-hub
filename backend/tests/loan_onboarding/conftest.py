@@ -30,15 +30,31 @@ def _wipe_lo_ai_cache():
     classify/validate/review JSON can mask mocks on a later test (cache hit
     skips the LLM call entirely). We also reset the process-cached
     version_info so each test sees a freshly-computed version snapshot.
+
+    Two cache layouts to scrub:
+    1. Legacy org-scoped: `{org_id}/ai_cache/...` (still used by TI/TSA
+       and any LO code paths that route through the shared helper)
+    2. Package-scoped: `{org_id}/{package_id}/ai_cache/...` (LO writes
+       here via `_lo_cache_path()` so package deletion is self-cleaning)
     """
+    def _wipe():
+        storage_path = Path(get_settings().STORAGE_PATH)
+        org_dir = storage_path / str(TEST_ORG_ID)
+        # Legacy org-scoped cache
+        legacy = org_dir / "ai_cache"
+        if legacy.exists():
+            shutil.rmtree(legacy, ignore_errors=True)
+        # Package-scoped caches under any package id in this org
+        if org_dir.exists():
+            for child in org_dir.iterdir():
+                pkg_cache = child / "ai_cache"
+                if pkg_cache.exists():
+                    shutil.rmtree(pkg_cache, ignore_errors=True)
+
     reset_version_info_cache()
-    storage_path = Path(get_settings().STORAGE_PATH)
-    cache_dir = storage_path / str(TEST_ORG_ID) / "ai_cache"
-    if cache_dir.exists():
-        shutil.rmtree(cache_dir, ignore_errors=True)
+    _wipe()
     yield
-    if cache_dir.exists():
-        shutil.rmtree(cache_dir, ignore_errors=True)
+    _wipe()
 
 # LO-specific test UUIDs (use a distinct range from TI/TSA)
 TEST_LO_APP_ID = uuid.UUID("00000000-0000-0000-0000-000000003000")
@@ -94,9 +110,9 @@ async def sample_package(db_session: AsyncSession, lo_app_and_subscription):
         org_id=TEST_ORG_ID,
         package_id=package.id,
         doc_types=[
-            {"key": "URLA_1003", "label": "Uniform Residential Loan App (1003)", "required": True},
-            {"key": "PAYSTUB", "label": "Pay Stub", "required": True},
-            {"key": "W2", "label": "W-2", "required": False},
+            {"key": "urla_1003", "label": "Uniform Residential Loan App (1003)", "required": True},
+            {"key": "paystub", "label": "Pay Stub", "required": True},
+            {"key": "w2", "label": "W-2", "required": False},
         ],
     )
     db_session.add(config)

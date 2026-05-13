@@ -48,6 +48,18 @@ class LOPackage(Base, TenantMixin, TimestampMixin):
     # migrations as new scenario flags or AUS waivers are added.
     loan_context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # Phase 2 — Selected program profile (loan_program or investor_overlay).
+    # Nullable: when null, the resolver falls back to Global + per-loan
+    # overrides only. The frontend captures this as a (loan_program,
+    # investor_overlay) tuple but persists only the overlay's id when
+    # present (since overlays carry stacks_with → loan_program).
+    program_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("lo_program_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     files = relationship("LOPackageFile", back_populates="package", lazy="noload", passive_deletes=True)
     pages = relationship("LOPage", back_populates="package", lazy="noload", passive_deletes=True)
     doc_type_config = relationship(

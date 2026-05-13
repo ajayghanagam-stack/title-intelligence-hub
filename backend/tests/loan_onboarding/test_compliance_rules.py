@@ -571,11 +571,11 @@ def _stack(doc_type, *, page_count=1, conf=0.99, status="accepted"):
 def test_doc_checks_missing_required_lands_first():
     """A missing required doc precedes everything else in the sort order."""
     specs = [
-        {"key": "PAYSTUB", "label": "Paystubs", "required": False},
-        {"key": "URLA_1003", "label": "Form 1003", "required": True},
+        {"key": "paystub", "label": "Paystubs", "required": False},
+        {"key": "urla_1003", "label": "Form 1003", "required": True},
     ]
     rows = cr.derive_doc_checks([], specs, hitl_threshold=0.75)
-    assert rows[0]["docKey"] == "URLA_1003"
+    assert rows[0]["docKey"] == "urla_1003"
     assert rows[0]["status"] == "missing"
     assert rows[0]["required"] is True
     assert "Required" in rows[0]["notes"][0]
@@ -584,24 +584,24 @@ def test_doc_checks_missing_required_lands_first():
 def test_doc_checks_matches_stack_by_key_or_label():
     """Match works whether stack.doc_type is the spec key or the spec label."""
     specs = [
-        {"key": "URLA_1003", "label": "Form 1003", "required": True},
-        {"key": "PAYSTUB", "label": "Paystubs", "required": True},
+        {"key": "urla_1003", "label": "Form 1003", "required": True},
+        {"key": "paystub", "label": "Paystubs", "required": True},
     ]
     rows = cr.derive_doc_checks(
-        [_stack("URLA_1003"), _stack("Paystubs")],  # one by key, one by label
+        [_stack("urla_1003"), _stack("Paystubs")],  # one by key, one by label
         specs,
         hitl_threshold=0.75,
     )
     statuses = {r["docKey"]: r["status"] for r in rows}
-    assert statuses["URLA_1003"] == "ok"
-    assert statuses["PAYSTUB"] == "ok"
+    assert statuses["urla_1003"] == "ok"
+    assert statuses["paystub"] == "ok"
 
 
 def test_doc_checks_low_confidence_fires_below_threshold():
     """Confidence below threshold (and not yet `accepted`) → low_confidence."""
-    specs = [{"key": "PAYSTUB", "label": "Paystubs", "required": True}]
+    specs = [{"key": "paystub", "label": "Paystubs", "required": True}]
     rows = cr.derive_doc_checks(
-        [_stack("PAYSTUB", conf=0.5, status="validated")],
+        [_stack("paystub", conf=0.5, status="validated")],
         specs,
         hitl_threshold=0.75,
     )
@@ -611,9 +611,9 @@ def test_doc_checks_low_confidence_fires_below_threshold():
 
 def test_doc_checks_accepted_overrides_low_confidence():
     """A reviewer-`accepted` stack stays `ok` even if confidence is low."""
-    specs = [{"key": "PAYSTUB", "label": "Paystubs", "required": True}]
+    specs = [{"key": "paystub", "label": "Paystubs", "required": True}]
     rows = cr.derive_doc_checks(
-        [_stack("PAYSTUB", conf=0.4, status="accepted")],
+        [_stack("paystub", conf=0.4, status="accepted")],
         specs,
         hitl_threshold=0.75,
     )
@@ -622,9 +622,9 @@ def test_doc_checks_accepted_overrides_low_confidence():
 
 def test_doc_checks_needs_review_status_propagates():
     """A stack already routed to review surfaces as `needs_review`."""
-    specs = [{"key": "PAYSTUB", "label": "Paystubs", "required": True}]
+    specs = [{"key": "paystub", "label": "Paystubs", "required": True}]
     rows = cr.derive_doc_checks(
-        [_stack("PAYSTUB", conf=0.99, status="needs_review")],
+        [_stack("paystub", conf=0.99, status="needs_review")],
         specs,
         hitl_threshold=0.75,
     )
@@ -635,10 +635,10 @@ def test_doc_checks_skips_others_bucket():
     """The `Others` reserved bucket is filtered out of doc_checks."""
     specs = [
         {"key": "Others", "label": "Others", "required": False},
-        {"key": "URLA_1003", "label": "Form 1003", "required": True},
+        {"key": "urla_1003", "label": "Form 1003", "required": True},
     ]
     rows = cr.derive_doc_checks([], specs, hitl_threshold=0.75)
-    assert [r["docKey"] for r in rows] == ["URLA_1003"]
+    assert [r["docKey"] for r in rows] == ["urla_1003"]
 
 
 def test_doc_checks_required_outranks_optional_at_same_status():
@@ -654,10 +654,10 @@ def test_doc_checks_required_outranks_optional_at_same_status():
 def test_doc_checks_is_byte_deterministic():
     """Same inputs → byte-identical doc_checks JSON."""
     specs = [
-        {"key": "URLA_1003", "label": "Form 1003", "required": True},
-        {"key": "PAYSTUB", "label": "Paystubs", "required": True},
+        {"key": "urla_1003", "label": "Form 1003", "required": True},
+        {"key": "paystub", "label": "Paystubs", "required": True},
     ]
-    stacks = [_stack("URLA_1003"), _stack("PAYSTUB", conf=0.5, status="validated")]
+    stacks = [_stack("urla_1003"), _stack("paystub", conf=0.5, status="validated")]
     a = cr.derive_doc_checks(stacks, specs, hitl_threshold=0.75)
     b = cr.derive_doc_checks(stacks, specs, hitl_threshold=0.75)
     assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)

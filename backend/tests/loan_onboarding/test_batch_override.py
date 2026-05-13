@@ -80,21 +80,21 @@ async def test_batch_applies_multiple_overrides(
     page_ids = await _seed(
         db_session,
         [
-            (1, "URLA_1003", 0.9, "first_page"),
-            (2, "URLA_1003", 0.9, "continuation"),
-            (3, "URLA_1003", 0.9, "last_page"),
+            (1, "urla_1003", 0.9, "first_page"),
+            (2, "urla_1003", 0.9, "continuation"),
+            (3, "urla_1003", 0.9, "last_page"),
         ],
     )
     items = [
-        BatchOverrideItem(page_id=page_ids[1], assigned_doc_type="PAYSTUB"),
-        BatchOverrideItem(page_id=page_ids[2], assigned_doc_type="PAYSTUB"),
+        BatchOverrideItem(page_id=page_ids[1], assigned_doc_type="paystub"),
+        BatchOverrideItem(page_id=page_ids[2], assigned_doc_type="paystub"),
     ]
     applied = await page_override_service.apply_overrides_batch(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID, items, reviewer_id=TEST_USER_ID,
     )
     assert len(applied) == 2
-    assert {o.assigned_doc_type for o in applied} == {"PAYSTUB"}
-    assert all(o.previous_doc_type == "URLA_1003" for o in applied)
+    assert {o.assigned_doc_type for o in applied} == {"paystub"}
+    assert all(o.previous_doc_type == "urla_1003" for o in applied)
 
 
 @pytest.mark.asyncio
@@ -106,15 +106,15 @@ async def test_batch_silently_skips_noops(
     page_ids = await _seed(
         db_session,
         [
-            (1, "URLA_1003", 0.9, "first_page"),
-            (2, "URLA_1003", 0.9, "last_page"),
+            (1, "urla_1003", 0.9, "first_page"),
+            (2, "urla_1003", 0.9, "last_page"),
         ],
     )
     items = [
         # Real move
-        BatchOverrideItem(page_id=page_ids[1], assigned_doc_type="PAYSTUB"),
+        BatchOverrideItem(page_id=page_ids[1], assigned_doc_type="paystub"),
         # No-op: page 1 already classified as URLA_1003 with first_page role
-        BatchOverrideItem(page_id=page_ids[0], assigned_doc_type="URLA_1003"),
+        BatchOverrideItem(page_id=page_ids[0], assigned_doc_type="urla_1003"),
     ]
     applied = await page_override_service.apply_overrides_batch(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID, items, reviewer_id=TEST_USER_ID,
@@ -128,7 +128,7 @@ async def test_batch_rejects_unknown_doc_type(
     sample_package, db_session: AsyncSession
 ):
     page_ids = await _seed(
-        db_session, [(1, "URLA_1003", 0.9, "first_page")]
+        db_session, [(1, "urla_1003", 0.9, "first_page")]
     )
     items = [
         BatchOverrideItem(page_id=page_ids[0], assigned_doc_type="NOT_A_TYPE"),
@@ -145,12 +145,12 @@ async def test_batch_upserts_existing_override(
 ):
     """If a page already has an override, batch should update it, not insert."""
     page_ids = await _seed(
-        db_session, [(1, "URLA_1003", 0.9, "first_page")]
+        db_session, [(1, "urla_1003", 0.9, "first_page")]
     )
     # Existing single override: 1003 → PAYSTUB
     await page_override_service.apply_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID, page_ids[0],
-        assigned_doc_type="PAYSTUB",
+        assigned_doc_type="paystub",
         page_role_override=None,
         reviewer_id=TEST_USER_ID,
         note=None,
@@ -159,15 +159,15 @@ async def test_batch_upserts_existing_override(
 
     # Batch moves the same page → W2
     items = [
-        BatchOverrideItem(page_id=page_ids[0], assigned_doc_type="W2"),
+        BatchOverrideItem(page_id=page_ids[0], assigned_doc_type="w2"),
     ]
     applied = await page_override_service.apply_overrides_batch(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID, items, reviewer_id=TEST_USER_ID,
     )
     assert len(applied) == 1
-    assert applied[0].assigned_doc_type == "W2"
+    assert applied[0].assigned_doc_type == "w2"
     # previous_doc_type stays at the ML's original prediction
-    assert applied[0].previous_doc_type == "URLA_1003"
+    assert applied[0].previous_doc_type == "urla_1003"
 
     rows = (await db_session.execute(
         select(LOPageOverride).where(LOPageOverride.page_id == page_ids[0])
@@ -185,9 +185,9 @@ async def test_batch_route_returns_overrides_and_rebuild(
     page_ids = await _seed(
         db_session,
         [
-            (1, "URLA_1003", 0.9, "first_page"),
-            (2, "URLA_1003", 0.9, "continuation"),
-            (3, "URLA_1003", 0.9, "last_page"),
+            (1, "urla_1003", 0.9, "first_page"),
+            (2, "urla_1003", 0.9, "continuation"),
+            (3, "urla_1003", 0.9, "last_page"),
         ],
     )
     resp = await client.post(
@@ -195,15 +195,15 @@ async def test_batch_route_returns_overrides_and_rebuild(
         headers=HEADERS,
         json={
             "overrides": [
-                {"page_id": str(page_ids[1]), "assigned_doc_type": "PAYSTUB"},
-                {"page_id": str(page_ids[2]), "assigned_doc_type": "PAYSTUB"},
+                {"page_id": str(page_ids[1]), "assigned_doc_type": "paystub"},
+                {"page_id": str(page_ids[2]), "assigned_doc_type": "paystub"},
             ]
         },
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert len(body["overrides"]) == 2
-    assert {o["assigned_doc_type"] for o in body["overrides"]} == {"PAYSTUB"}
+    assert {o["assigned_doc_type"] for o in body["overrides"]} == {"paystub"}
     assert body["rebuild"]["pages"] == 3
     assert body["rebuild"]["stacks"] >= 1
 
@@ -226,7 +226,7 @@ async def test_batch_route_rejects_unknown_doc_type(
     client: AsyncClient, sample_package, db_session: AsyncSession
 ):
     page_ids = await _seed(
-        db_session, [(1, "URLA_1003", 0.9, "first_page")]
+        db_session, [(1, "urla_1003", 0.9, "first_page")]
     )
     resp = await client.post(
         f"{BASE}/packages/{TEST_PACKAGE_ID}/pages/overrides:batch",

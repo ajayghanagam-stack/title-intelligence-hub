@@ -20,14 +20,25 @@ import {
   Loader2,
   XCircle,
   X,
+  Eye,
   FileText,
   FileStack,
+  FileCheck,
+  FormInput,
+  Inbox,
   Receipt,
+  ListChecks,
+  Layers,
+  ShieldCheck,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { useOrg } from "@/hooks/use-org";
 import { useOrgSlug } from "@/hooks/use-org-slug";
+import { useLoanDocuments } from "@/hooks/use-loan-operator";
+import { useLoanPackage } from "@/hooks/use-loan-packages";
+import type { LoanStack } from "@/lib/loan-onboarding/types";
 import { OrgSwitcher } from "./org-switcher";
 
 interface RecentPack {
@@ -101,10 +112,39 @@ function formatRelativeDate(dateStr: string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+/**
+ * Pick the first stack that still needs operator action in the Classification
+ * stage, so the sidebar deep-link lands somewhere actionable instead of doc #1
+ * every time. Falls back to the first stack when nothing needs review.
+ */
+function pickClassifyDoc(docs: LoanStack[]): LoanStack | null {
+  if (docs.length === 0) return null;
+  return (
+    docs.find(
+      (d) =>
+        d.classification_status === "needs_review" ||
+        d.classification_status === "unclassifiable",
+    ) ?? docs[0]
+  );
+}
+
+/** Same idea for Extraction Review — prefer `needs_review`, then `extracted`. */
+function pickExtractDoc(docs: LoanStack[]): LoanStack | null {
+  if (docs.length === 0) return null;
+  return (
+    docs.find(
+      (d) =>
+        d.extraction_status === "needs_review" ||
+        d.extraction_status === "extracted",
+    ) ?? docs[0]
+  );
+}
+
 export function Sidebar() {
   const pathname = usePathname();
-  const { isPlatformAdmin } = useAuth();
+  const { isPlatformAdmin, orgs: authOrgs } = useAuth();
   const { orgFetch, currentOrgId, currentOrgName, currentOrgLogoUrl } = useOrg();
+  const [hasLoSubscription, setHasLoSubscription] = useState(false);
   const { orgPath } = useOrgSlug();
   const [recentPacks, setRecentPacks] = useState<RecentPack[]>([]);
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
@@ -114,6 +154,18 @@ export function Sidebar() {
 
   // Strip /org/{slug} prefix for path matching
   const normalizedPath = pathname.replace(/^\/org\/[^/]+/, "");
+
+  // When the user is inside a specific loan file we surface the Review Stages
+  // group (Classification / Doc Validation / Extraction Review / Data
+  // Validation). The active loan is whatever the URL pins — null on the queue
+  // page or other LO routes — so the section auto-shows on /loans/{id}/* and
+  // hides again on the queue. Mirrors the prototype's logik-intake sidebar.
+  const activeLoanIdMatch = normalizedPath.match(
+    /^\/apps\/loan-onboarding\/loans\/([^/]+)/,
+  );
+  const activeLoanId = activeLoanIdMatch?.[1] ?? null;
+  const { data: activeLoanDocs = [] } = useLoanDocuments(activeLoanId);
+  const { package: activeLoan } = useLoanPackage(activeLoanId);
 
   const isInsideTI = normalizedPath.startsWith("/apps/title-intelligence");
   const isInsideTSA = normalizedPath.startsWith("/apps/title-search");
@@ -156,19 +208,113 @@ export function Sidebar() {
     },
   ];
 
+  // Phase 6 cutover (2026-05-10) — legacy /packages/new wizard is gone;
+  // the new loan-file flow opens a modal from the queue page itself, so
+  // the sidebar just deep-links to the queue and the user clicks
+  // "New File" there.
   const loanOnboardingNavItems = [
     {
-      href: orgPath("/apps/loan-onboarding/packages/new"),
-      label: "New Package",
-      icon: Plus,
-      isButton: true,
-    },
-    {
       href: orgPath("/apps/loan-onboarding"),
-      label: "Packages",
-      icon: FileStack,
+      label: "File Queue",
+      icon: Inbox,
     },
   ];
+
+  // Loan Onboarding admin links — surfaced only when the operator is
+  // inside the Loan Onboarding app (so it doesn't pollute the sidebar of
+  // Title Intelligence / Title Search / the customer dashboard).
+  // Visibility additionally requires that the active org has the LO
+  // subscription and the signed-in user is an org Owner or Admin.
+  // Platform admins are explicitly excluded (they are Logikality staff,
+  // not customer-side admins).
+  const loanOnboardingAdminItems = [
+    {
+      href: orgPath("/apps/loan-onboarding/admin"),
+      label: "Configuration Hub",
+      icon: LayoutGrid,
+    },
+    {
+      href: orgPath("/apps/loan-onboarding/admin/document-types"),
+      label: "Document Types",
+      icon: FileText,
+    },
+    {
+      href: orgPath("/apps/loan-onboarding/admin/extraction-schemas"),
+      label: "Extraction Schemas",
+      icon: Layers,
+    },
+    {
+      href: orgPath("/apps/loan-onboarding/admin/validation-rules"),
+      label: "Validation Rules",
+      icon: ShieldCheck,
+    },
+    {
+      href: orgPath("/apps/loan-onboarding/admin/program-profiles"),
+      label: "Program Profiles",
+      icon: ListChecks,
+    },
+    {
+      href: orgPath("/apps/loan-onboarding/admin/global-settings"),
+      label: "Global Settings",
+      icon: Settings,
+    },
+  ];
+
+  // Active-org role lookup. `authOrgs` carries per-org role from /auth/me;
+  // we resolve to the org currently selected in the org-store. Falls back
+  // to null for platform admins (who have no customer-side membership) or
+  // before auth has hydrated.
+  const currentOrgRole =
+    authOrgs.find((o) => o.id === currentOrgId)?.role ?? null;
+  const isOrgAdminOrOwner =
+    currentOrgRole === "admin" || currentOrgRole === "owner";
+
+  // Probe the active org's subscriptions to decide whether to render the
+  // LO admin group. Scoped to the LO app context — no point fetching this
+  // when the user is inside TI/TSA or on the dashboard. Platform admins
+  // are also excluded.
+  useEffect(() => {
+    if (
+      !currentOrgId ||
+      isPlatformAdmin ||
+      !isOrgAdminOrOwner ||
+      !isInsideLoanOnboarding
+    ) {
+      setHasLoSubscription(false);
+      return;
+    }
+    let cancelled = false;
+    orgFetch<{ id: string; status: string; micro_app: { slug: string } | null }[]>(
+      "/api/v1/subscriptions"
+    )
+      .then((subs) => {
+        if (cancelled) return;
+        const hasLo = subs.some(
+          (s) =>
+            s.status === "active" &&
+            s.micro_app?.slug === "loan-onboarding"
+        );
+        setHasLoSubscription(hasLo);
+      })
+      .catch(() => {
+        if (!cancelled) setHasLoSubscription(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentOrgId,
+    isPlatformAdmin,
+    isOrgAdminOrOwner,
+    isInsideLoanOnboarding,
+    orgFetch,
+  ]);
+
+  const showLoAdminGroup =
+    !isPlatformAdmin &&
+    isOrgAdminOrOwner &&
+    isInsideLoanOnboarding &&
+    hasLoSubscription;
 
   const fetchRecentPacks = useCallback(() => {
     if (!isInsideTI || isPlatformAdmin) return;
@@ -310,7 +456,7 @@ export function Sidebar() {
     appLabel = "Title Search";
   } else if (isInsideLoanOnboarding) {
     navItems = loanOnboardingNavItems;
-    appLabel = "Loan Onboarding";
+    appLabel = "Loan Boarding";
   } else {
     navItems = customerNavItems;
     adminItems = customerAdminItems;
@@ -401,6 +547,11 @@ export function Sidebar() {
           </Link>
         )}
 
+        {isInsideLoanOnboarding && !isPlatformAdmin && (
+          <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.15em] text-sidebar-foreground/40">
+            Workspace
+          </p>
+        )}
         <div className="space-y-1">
           {navItems.map((item) => {
             const itemNormalized = item.href.replace(/^\/org\/[^/]+/, "");
@@ -428,6 +579,189 @@ export function Sidebar() {
             );
           })}
         </div>
+
+        {/* Active File + Review Stages — visible when inside a specific loan.
+            Mirrors the LogikIntake prototype: a single top-level link to the
+            loan overview followed by deep-links into each of the four review
+            stages. Classify and Extract auto-target the first stack that
+            still needs operator attention; Doc Validation and Data Validation
+            are loan-scoped and don't take a docId. */}
+        {isInsideLoanOnboarding && activeLoanId && (() => {
+          const fileHref = orgPath(
+            `/apps/loan-onboarding/loans/${activeLoanId}`,
+          );
+          const docValidationHref = orgPath(
+            `/apps/loan-onboarding/loans/${activeLoanId}/doc-validation`,
+          );
+          const dataValidationHref = orgPath(
+            `/apps/loan-onboarding/loans/${activeLoanId}/validation`,
+          );
+          const classifyBase = `/apps/loan-onboarding/loans/${activeLoanId}/classify`;
+          const extractBase = `/apps/loan-onboarding/loans/${activeLoanId}/extract`;
+          // If the user is already viewing a specific doc (/classify/{X} or
+          // /extract/{X}), reuse that docId for both stage links so jumping
+          // between Classification ↔ Extraction Review stays on the SAME
+          // stack. Without this the sidebar would re-pick the first HITL
+          // stack via pickClassifyDoc/pickExtractDoc, dragging the operator
+          // away from the doc they were reviewing (see
+          // https://github.com/.../issues/loan-onboarding-doc-switch).
+          const activeDocIdMatch = normalizedPath.match(
+            new RegExp(
+              `^/apps/loan-onboarding/loans/${activeLoanId}/(?:classify|extract)/([^/]+)`,
+            ),
+          );
+          const activeDocId = activeDocIdMatch?.[1] ?? null;
+          const activeDoc = activeDocId
+            ? activeLoanDocs.find((d) => d.id === activeDocId) ?? null
+            : null;
+          // Resolve the "target doc" for each stage link:
+          //   - If the URL already names a docId, reuse it so Classification ↔
+          //     Extraction Review keep the user on the SAME stack.
+          //   - Otherwise fall back to the first stack still needing operator
+          //     attention (pickClassifyDoc / pickExtractDoc). We surface that
+          //     stack's doc_type as a sublabel next to the stage row so the
+          //     operator can SEE which doc the sidebar shortcut targets —
+          //     prior versions silently jumped to the first HITL stack with
+          //     no visual hint, which read as "the sidebar always shows the
+          //     first file's data" when two different stages happened to
+          //     pre-pick the same stack (e.g. flood_cert HITL on both).
+          const classifyTarget = activeDoc ?? pickClassifyDoc(activeLoanDocs);
+          const extractTarget = activeDoc ?? pickExtractDoc(activeLoanDocs);
+          // When the doc list hasn't loaded yet (or the loan is mid-pipeline
+          // with zero stacks) we fall back to the loan overview — gives the
+          // operator a working link instead of a broken /classify/undefined.
+          const classifyHref = classifyTarget
+            ? orgPath(`${classifyBase}/${classifyTarget.id}`)
+            : fileHref;
+          const extractHref = extractTarget
+            ? orgPath(`${extractBase}/${extractTarget.id}`)
+            : fileHref;
+
+          const reviewStages: {
+            href: string;
+            label: string;
+            sublabel: string | null;
+            icon: typeof Eye;
+            isActive: boolean;
+          }[] = [
+            {
+              href: classifyHref,
+              label: "Classification",
+              sublabel: classifyTarget?.doc_type ?? null,
+              icon: Eye,
+              // Any /classify/<docId> under this loan keeps the row active,
+              // even if the user clicked through to a different doc than the
+              // sidebar's default target.
+              isActive: normalizedPath.startsWith(`${classifyBase}/`),
+            },
+            {
+              href: docValidationHref,
+              label: "Doc Validation",
+              sublabel: null,
+              icon: FileCheck,
+              isActive:
+                normalizedPath ===
+                `/apps/loan-onboarding/loans/${activeLoanId}/doc-validation`,
+            },
+            {
+              href: extractHref,
+              label: "Extraction Review",
+              sublabel: extractTarget?.doc_type ?? null,
+              icon: FormInput,
+              isActive: normalizedPath.startsWith(`${extractBase}/`),
+            },
+            {
+              href: dataValidationHref,
+              label: "Data Validation",
+              sublabel: null,
+              icon: ShieldCheck,
+              isActive:
+                normalizedPath ===
+                `/apps/loan-onboarding/loans/${activeLoanId}/validation`,
+            },
+          ];
+
+          const fileLabel = activeLoan?.name ?? activeLoanId;
+          const fileSublabel = activeLoan?.borrower_name ?? undefined;
+          const fileActive =
+            normalizedPath ===
+            `/apps/loan-onboarding/loans/${activeLoanId}`;
+
+          return (
+            <>
+              <div className="mt-5 pt-4 border-t border-sidebar-border/60">
+                <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.15em] text-sidebar-foreground/40">
+                  Active File
+                </p>
+                <Link
+                  href={fileHref}
+                  aria-current={fileActive ? "page" : undefined}
+                  className={cn(
+                    "flex items-start gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
+                    fileActive
+                      ? "sidebar-nav-active"
+                      : "text-sidebar-foreground/70 sidebar-nav-hover hover:text-sidebar-foreground",
+                  )}
+                >
+                  <FileText className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate">{fileLabel}</span>
+                    {fileSublabel && (
+                      <span
+                        className={cn(
+                          "truncate text-[10px] font-normal",
+                          fileActive
+                            ? "text-sidebar-foreground/60"
+                            : "text-sidebar-foreground/40",
+                        )}
+                      >
+                        {fileSublabel}
+                      </span>
+                    )}
+                  </span>
+                </Link>
+              </div>
+
+              <div className="mt-4">
+                <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.15em] text-sidebar-foreground/40">
+                  Review Stages
+                </p>
+                <div className="space-y-1">
+                  {reviewStages.map((s) => (
+                    <Link
+                      key={s.label}
+                      href={s.href}
+                      aria-current={s.isActive ? "page" : undefined}
+                      className={cn(
+                        "flex items-start gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
+                        s.isActive
+                          ? "sidebar-nav-active"
+                          : "text-sidebar-foreground/70 sidebar-nav-hover hover:text-sidebar-foreground",
+                      )}
+                    >
+                      <s.icon className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate">{s.label}</span>
+                        {s.sublabel && (
+                          <span
+                            className={cn(
+                              "truncate text-[10px] font-normal lowercase tracking-wide",
+                              s.isActive
+                                ? "text-sidebar-foreground/60"
+                                : "text-sidebar-foreground/40",
+                            )}
+                          >
+                            {s.sublabel}
+                          </span>
+                        )}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            </>
+          );
+        })()}
 
         {/* Recent Packages — below nav actions, visually separated */}
         {isInsideTI && recentPacks.length > 0 && (
@@ -605,7 +939,7 @@ export function Sidebar() {
                   >
                     <Link
                       href={orgPath(
-                        `/apps/loan-onboarding/packages/${pkg.id}`
+                        `/apps/loan-onboarding/loans/${pkg.id}`
                       )}
                       className="flex items-center gap-2.5 min-w-0 flex-1"
                     >
@@ -662,6 +996,41 @@ export function Sidebar() {
               const itemNormalized = item.href.replace(/^\/org\/[^/]+/, "");
               const isActive =
                 normalizedPath === itemNormalized || normalizedPath.startsWith(itemNormalized + "/");
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={isActive ? "page" : undefined}
+                  className={cn(
+                    "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
+                    isActive
+                      ? "sidebar-nav-active"
+                      : "text-sidebar-foreground/70 sidebar-nav-hover hover:text-sidebar-foreground"
+                  )}
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        )}
+
+        {showLoAdminGroup && (
+          <div className="mt-5 pt-4 border-t border-sidebar-border/60">
+            <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.15em] text-sidebar-foreground/40">
+              Admin
+            </p>
+            {loanOnboardingAdminItems.map((item) => {
+              const itemNormalized = item.href.replace(/^\/org\/[^/]+/, "");
+              // The Configuration Hub root path is a prefix of every leaf
+              // admin page; require an exact match for it so the hub link
+              // only highlights when the user is actually on the hub page.
+              const isHub = itemNormalized === "/apps/loan-onboarding/admin";
+              const isActive = isHub
+                ? normalizedPath === itemNormalized
+                : normalizedPath === itemNormalized ||
+                  normalizedPath.startsWith(itemNormalized + "/");
               return (
                 <Link
                   key={item.href}

@@ -35,6 +35,21 @@ from app.micro_apps.loan_onboarding.services.validation_presets import (
 logger = logging.getLogger(__name__)
 
 
+# Phase 1 (Loan Onboarding refactor) — vision-grounded extraction contract.
+# Bumping this constant retroactively invalidates every cached extraction so
+# stale bboxes from the legacy text-only extractor + post-hoc grounding join
+# can never leak into a response served by the new pipeline. See
+# docs/phase0/grounding-contract.md and §1.4 of Loan_Onboarding_Refactoring.md.
+#
+# Bump sequence:
+#   v1 (implicit, pre-bump) — text-only ExtractionAgent + heuristic alias
+#                             match in services/field_grounding.py.
+#   v2 — vision-grounded extractor returning {value, evidence: {page,
+#        token_indices}, confidence}; bbox computed server-side from cited
+#        OCR tokens by services/grounding_validator.py.
+GROUNDING_CONTRACT_VERSION = "lo_grounding_v2"
+
+
 def hash_string(s: str) -> str:
     """SHA-256 hex digest of a string."""
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
@@ -80,6 +95,8 @@ def compute_classify_cache_key(
     package_content_hash: str,
     allowed_doc_types: list[str],
     version_info: dict[str, Any],
+    *,
+    effective_config_hash: str = "",
 ) -> str:
     """Cache key for the classify stage.
 
@@ -87,6 +104,8 @@ def compute_classify_cache_key(
       - package_content_hash (every uploaded PDF byte)
       - allowed_doc_types (the per-order enum shapes the model's output)
       - classifier model + prompt + schema
+      - effective_config_hash (Phase 2): captures auto_classify_enabled
+        and any profile/loan tweaks to the doc-type catalog.
     """
     parts = (
         package_content_hash
@@ -94,6 +113,7 @@ def compute_classify_cache_key(
         + "|" + ",".join(sorted(allowed_doc_types))
         + "|" + version_info["classify_prompt_hash"]
         + "|" + version_info["classify_schema_hash"]
+        + "|" + effective_config_hash
     )
     return hashlib.sha256(parts.encode("utf-8")).hexdigest()
 
@@ -103,11 +123,14 @@ def compute_validate_rule_cache_key(
     rule_id: str,
     rule_text: str,
     version_info: dict[str, Any],
+    *,
+    effective_config_hash: str = "",
 ) -> str:
     """Cache key for a single (stack, custom_rule) validation pair.
 
     Keyed per-rule so adding a new rule to a package does not invalidate the
-    cache for rules that did not change.
+    cache for rules that did not change. Phase 2 folds in the resolved
+    config hash so an org-level rule edit busts dependent slots cleanly.
     """
     parts = (
         stack_content_hash
@@ -116,6 +139,7 @@ def compute_validate_rule_cache_key(
         + "|" + version_info["validator_model"]
         + "|" + version_info["validate_prompt_hash"]
         + "|" + version_info["validate_schema_hash"]
+        + "|" + effective_config_hash
     )
     return hashlib.sha256(parts.encode("utf-8")).hexdigest()
 
@@ -155,6 +179,8 @@ def compute_extract_cache_key(
     stack_content_hash: str,
     requested_fields: list[str],
     version_info: dict[str, Any],
+    *,
+    effective_config_hash: str = "",
 ) -> str:
     """Cache key for a single stack's extraction call.
 
@@ -169,6 +195,13 @@ def compute_extract_cache_key(
         + "|" + version_info.get("validator_model", "")
         + "|" + version_info.get("extract_prompt_hash", "")
         + "|" + version_info.get("extract_schema_hash", "")
+        # Phase 1 day-1: fold grounding contract version into the cache key
+        # so stale extractions from the pre-v2 text-only extractor never
+        # surface again, even before the new extractor agent ships.
+        + "|" + version_info.get("grounding_contract_version", "")
+        # Phase 2: resolved org/profile/loan config — any tighten of
+        # min_confidence or addition of an alias busts dependent slots.
+        + "|" + effective_config_hash
     )
     return hashlib.sha256(parts.encode("utf-8")).hexdigest()
 
@@ -176,6 +209,8 @@ def compute_extract_cache_key(
 def compute_reason_cache_key(
     package_summary_hash: str,
     version_info: dict[str, Any],
+    *,
+    effective_config_hash: str = "",
 ) -> str:
     """Cache key for the review (ReasoningAgent) call."""
     parts = (
@@ -184,6 +219,8 @@ def compute_reason_cache_key(
         + "|" + version_info["reason_prompt_hash"]
         + "|" + version_info["reason_schema_hash"]
         + "|" + version_info["rules_version"]
+        + "|" + version_info.get("grounding_contract_version", "")
+        + "|" + effective_config_hash
     )
     return hashlib.sha256(parts.encode("utf-8")).hexdigest()
 
@@ -222,7 +259,8 @@ def collect_version_info(settings: Settings) -> dict[str, Any]:
 
     cache_key = (
         f"{ai_platform}|{classifier_model}|{validator_model}|"
-        f"{reasoner_model}|{pipeline_backend}|{RULES_VERSION}"
+        f"{reasoner_model}|{pipeline_backend}|{RULES_VERSION}|"
+        f"{GROUNDING_CONTRACT_VERSION}"
     )
     if _cached_version_info is not None and _cached_version_key == cache_key:
         return _cached_version_info
@@ -269,6 +307,7 @@ def collect_version_info(settings: Settings) -> dict[str, Any]:
         "extract_prompt_hash": hash_string(EXTRACT_PROMPT),
         "extract_schema_hash": hash_json(EXTRACT_SCHEMA),
         "rules_version": RULES_VERSION,
+        "grounding_contract_version": GROUNDING_CONTRACT_VERSION,
         "confidence_weights_hash": confidence_weights_hash,
         "pipeline_backend": pipeline_backend,
     }

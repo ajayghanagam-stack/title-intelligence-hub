@@ -4,7 +4,7 @@ from sqlalchemy import String, Integer, Text, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TenantMixin, TimestampMixin
-from app.models.compat import UUID
+from app.models.compat import UUID, JSONB
 
 
 class LOPage(Base, TenantMixin, TimestampMixin):
@@ -44,5 +44,17 @@ class LOPage(Base, TenantMixin, TimestampMixin):
     # ingested before this column existed; classify treats NULL as "text" when
     # text_length crosses the threshold, else "blank".
     content_signal: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    # Phase 1 (vision-grounded extraction) — tokenized OCR output for the
+    # page, persisted at ingest time and consumed by the v2 extractor.
+    # Shape: list[OcrWord] (see schemas/grounding.py) serialized as JSON.
+    # Bboxes are normalized to 0..1. Nullable for rows ingested before
+    # this column existed; the extract stage triggers a JIT OCR pass when
+    # null. See docs/phase0/grounding-contract.md §2.1.
+    ocr_words: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # OCR engine used: "tesseract" | "gemini_vision" | None (not run).
+    # Folded into the stack content hash so a re-OCR via a different
+    # engine produces a fresh extract cache slot.
+    ocr_engine: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     package = relationship("LOPackage", back_populates="pages", lazy="noload")

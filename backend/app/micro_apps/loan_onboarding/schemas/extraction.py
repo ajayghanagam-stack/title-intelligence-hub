@@ -13,17 +13,42 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 # ── Field record ───────────────────────────────────────────────────────
-# `located` — the agent found the field with usable confidence
-# `low_confidence` — found but below the dashboard threshold
-# `missing` — explicitly searched for and could not be located
-FieldStatus = Literal["located", "low_confidence", "missing"]
+# Status taxonomy after Phase 1 vision-grounding refactor:
+#   `located`    — value extracted + grounded bbox (passes every validation
+#                  gate check + confidence ≥ 0.85)
+#   `tentative`  — value extracted + grounded bbox, confidence 0.65..0.85
+#                  (UI renders dashed orange outline)
+#   `ungrounded` — value extracted but evidence cite failed (no bbox).
+#                  UI renders "Click to locate" CTA.
+#   `missing`    — explicitly searched for and could not be located.
+#
+# `low_confidence` is retained as an alias for `tentative` for one
+# release of API back-compat; new writes use `tentative`. See
+# docs/phase0/grounding-contract.md §8 for the full transition table.
+FieldStatus = Literal[
+    "located",
+    "tentative",
+    "ungrounded",
+    "missing",
+    "low_confidence",  # deprecated alias for tentative; do not write
+]
 
 
 class FieldLocation(BaseModel):
-    """Optional citation tying an extracted value back to a page."""
+    """Citation tying an extracted value back to a page + bbox.
+
+    After Phase 1, ``bbox`` is computed server-side from
+    ``evidence_token_indices`` rather than echoed from the model. The
+    indices are persisted alongside so the UI can re-derive a tighter
+    bbox if image DPI changes between extraction and render.
+    """
     model_config = ConfigDict(extra="forbid")
     page: int = Field(ge=1)
     bbox: list[float] = Field(min_length=4, max_length=4)
+    # Phase 1 additions — empty / None on legacy rows persisted before
+    # the v2 extractor shipped.
+    evidence_token_indices: list[int] | None = Field(default=None)
+    ocr_word_count: int | None = Field(default=None, ge=0)
 
 
 class ExtractedField(BaseModel):
@@ -55,6 +80,11 @@ class ExtractionFieldOut(BaseModel):
     status: FieldStatus
     page: int | None = None
     bbox: list[float] | None = None
+    # Phase 1 — exposed so the operator UI can render the 3-state bbox
+    # layer (located / tentative / ungrounded) and re-derive a tighter
+    # box from the cited tokens if the page image is re-rendered.
+    evidence_token_indices: list[int] | None = None
+    ocr_word_count: int | None = None
 
 
 class StackExtractionOut(BaseModel):

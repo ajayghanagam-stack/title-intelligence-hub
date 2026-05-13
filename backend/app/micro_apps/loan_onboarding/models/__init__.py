@@ -14,6 +14,12 @@ from app.micro_apps.loan_onboarding.models.extraction_override import (
     LOExtractionOverride,
 )
 from app.micro_apps.loan_onboarding.models.compliance import LOComplianceRun
+from app.micro_apps.loan_onboarding.models.doc_type_catalog import LODocTypeCatalog
+from app.micro_apps.loan_onboarding.models.extraction_schema import LOExtractionSchema
+from app.micro_apps.loan_onboarding.models.validation_rule_org import LOValidationRuleOrg
+from app.micro_apps.loan_onboarding.models.program_profile import LOProgramProfile
+from app.micro_apps.loan_onboarding.models.hard_stop_override import LOHardStopOverride
+from app.micro_apps.loan_onboarding.models.global_settings import LOGlobalSettings
 
 __all__ = [
     "LOPackage",
@@ -30,4 +36,13 @@ __all__ = [
     "LOExtraction",
     "LOExtractionOverride",
     "LOComplianceRun",
+    # Phase 2 — org-config resolver layer
+    "LODocTypeCatalog",
+    "LOExtractionSchema",
+    "LOValidationRuleOrg",
+    "LOProgramProfile",
+    # Phase 3 — supervisor overrides
+    "LOHardStopOverride",
+    # Phase 5.3 — admin global settings
+    "LOGlobalSettings",
 ]

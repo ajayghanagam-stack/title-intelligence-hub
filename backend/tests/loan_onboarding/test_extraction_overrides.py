@@ -37,7 +37,7 @@ async def test_upsert_inserts_new_row(sample_package, db_session: AsyncSession):
         db_session,
         TEST_ORG_ID,
         TEST_PACKAGE_ID,
-        doc_type="URLA_1003",
+        doc_type="urla_1003",
         field_name="borrower_name",
         stack_id=str(uuid.uuid4()),
         value="Jane A. Smith",
@@ -59,7 +59,7 @@ async def test_upsert_updates_existing_row_in_place(
         db_session,
         TEST_ORG_ID,
         TEST_PACKAGE_ID,
-        doc_type="URLA_1003",
+        doc_type="urla_1003",
         field_name="loan_amount",
         stack_id=stack_id,
         value="350000",
@@ -72,7 +72,7 @@ async def test_upsert_updates_existing_row_in_place(
         db_session,
         TEST_ORG_ID,
         TEST_PACKAGE_ID,
-        doc_type="URLA_1003",
+        doc_type="urla_1003",
         field_name="loan_amount",
         stack_id=stack_id,
         value="375000",
@@ -101,7 +101,7 @@ async def test_upsert_accepts_placeholder_stack_id(
         db_session,
         TEST_ORG_ID,
         TEST_PACKAGE_ID,
-        doc_type="W2",
+        doc_type="w2",
         field_name="employer_name",
         stack_id="placeholder-W2",
         value="Acme Corp",
@@ -118,12 +118,12 @@ async def test_list_returns_saved_overrides(
     sid = str(uuid.uuid4())
     await extraction_override_service.upsert_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID,
-        doc_type="URLA_1003", field_name="borrower_name", stack_id=sid,
+        doc_type="urla_1003", field_name="borrower_name", stack_id=sid,
         value="Jane Smith", edited_by_id=TEST_USER_ID,
     )
     await extraction_override_service.upsert_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID,
-        doc_type="W2", field_name="wages", stack_id="placeholder-W2",
+        doc_type="w2", field_name="wages", stack_id="placeholder-W2",
         value="85000", edited_by_id=TEST_USER_ID,
     )
     await db_session.commit()
@@ -133,8 +133,8 @@ async def test_list_returns_saved_overrides(
     )
     assert len(rows) == 2
     # Sorted by (doc_type, field_name, stack_id)
-    assert rows[0].doc_type == "URLA_1003"
-    assert rows[1].doc_type == "W2"
+    assert rows[0].doc_type == "urla_1003"
+    assert rows[1].doc_type == "w2"
 
 
 @pytest.mark.asyncio
@@ -142,14 +142,14 @@ async def test_delete_removes_row(sample_package, db_session: AsyncSession):
     sid = str(uuid.uuid4())
     await extraction_override_service.upsert_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID,
-        doc_type="URLA_1003", field_name="borrower_name", stack_id=sid,
+        doc_type="urla_1003", field_name="borrower_name", stack_id=sid,
         value="Jane", edited_by_id=TEST_USER_ID,
     )
     await db_session.commit()
 
     removed = await extraction_override_service.delete_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID,
-        doc_type="URLA_1003", field_name="borrower_name", stack_id=sid,
+        doc_type="urla_1003", field_name="borrower_name", stack_id=sid,
     )
     await db_session.commit()
     assert removed is True
@@ -167,7 +167,7 @@ async def test_delete_noop_returns_false(
     """The Reset button calls delete unconditionally — no-op must succeed."""
     removed = await extraction_override_service.delete_override(
         db_session, TEST_ORG_ID, TEST_PACKAGE_ID,
-        doc_type="URLA_1003", field_name="borrower_name",
+        doc_type="urla_1003", field_name="borrower_name",
         stack_id="never-existed",
     )
     await db_session.commit()
@@ -186,7 +186,7 @@ async def test_put_route_creates_override(
         f"{BASE}/packages/{TEST_PACKAGE_ID}/extractions/overrides",
         headers=HEADERS,
         json={
-            "doc_type": "URLA_1003",
+            "doc_type": "urla_1003",
             "field_name": "borrower_name",
             "stack_id": sid,
             "value": "Jane Smith",
@@ -194,7 +194,7 @@ async def test_put_route_creates_override(
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["doc_type"] == "URLA_1003"
+    assert body["doc_type"] == "urla_1003"
     assert body["field_name"] == "borrower_name"
     assert body["stack_id"] == sid
     assert body["value"] == "Jane Smith"
@@ -207,7 +207,7 @@ async def test_put_route_updates_existing_override(
 ):
     sid = str(uuid.uuid4())
     payload = {
-        "doc_type": "URLA_1003",
+        "doc_type": "urla_1003",
         "field_name": "loan_amount",
         "stack_id": sid,
         "value": "350000",
@@ -238,7 +238,7 @@ async def test_get_route_lists_overrides(
         f"{BASE}/packages/{TEST_PACKAGE_ID}/extractions/overrides",
         headers=HEADERS,
         json={
-            "doc_type": "URLA_1003", "field_name": "borrower_name",
+            "doc_type": "urla_1003", "field_name": "borrower_name",
             "stack_id": sid, "value": "Jane",
         },
     )
@@ -261,7 +261,7 @@ async def test_delete_route_removes_override(
         f"{BASE}/packages/{TEST_PACKAGE_ID}/extractions/overrides",
         headers=HEADERS,
         json={
-            "doc_type": "URLA_1003", "field_name": "borrower_name",
+            "doc_type": "urla_1003", "field_name": "borrower_name",
             "stack_id": sid, "value": "Jane",
         },
     )
@@ -270,7 +270,7 @@ async def test_delete_route_removes_override(
         f"{BASE}/packages/{TEST_PACKAGE_ID}/extractions/overrides",
         headers=HEADERS,
         json={
-            "doc_type": "URLA_1003", "field_name": "borrower_name",
+            "doc_type": "urla_1003", "field_name": "borrower_name",
             "stack_id": sid,
         },
     )
@@ -296,7 +296,7 @@ async def test_delete_route_idempotent_no_op(
         f"{BASE}/packages/{TEST_PACKAGE_ID}/extractions/overrides",
         headers=HEADERS,
         json={
-            "doc_type": "URLA_1003", "field_name": "borrower_name",
+            "doc_type": "urla_1003", "field_name": "borrower_name",
             "stack_id": "never-existed",
         },
     )

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_member, get_db, get_org_id
 from app.micro_apps.loan_onboarding.models.classification import LOClassification
+from app.micro_apps.loan_onboarding.models.extraction import LOExtraction
 from app.micro_apps.loan_onboarding.models.package_file import LOPackageFile
 from app.micro_apps.loan_onboarding.models.page import LOPage
 from app.micro_apps.loan_onboarding.models.stack import LOStack
@@ -526,6 +527,17 @@ async def list_stacks(
     page_id_by_number = {p.page_number: p.id for p in pages}
     content_signal_by_number = {p.page_number: p.content_signal for p in pages}
 
+    # Per-stack extraction snapshot — used to derive `extraction_status`
+    # below. Fetched in one query for the whole package rather than N
+    # round-trips. Stacks without an LOExtraction row map to None.
+    extractions = (await db.execute(
+        select(LOExtraction).where(
+            LOExtraction.package_id == package_id,
+            LOExtraction.org_id == org_id,
+        )
+    )).scalars().all()
+    extraction_by_stack = {e.stack_id: e for e in extractions}
+
     out = []
     for s in stacks:
         pages_payload = []
@@ -551,6 +563,76 @@ async def list_stacks(
             "overall_confidence": s.overall_confidence,
             "status": s.status,
             "requires_hitl": s.requires_hitl,
+            "classification_status": _derive_classification_status(s),
+            "extraction_status": _derive_extraction_status(
+                s, extraction_by_stack.get(s.id),
+            ),
             "pages": pages_payload,
         })
     return out
+
+
+# ── Per-stack status derivation for the LogikIntake doc-grid pills ──────
+#
+# The Phase-5 prototype shows each stack with two orthogonal pills —
+# "Classified ✓"/"Classify — Review" and "Extracting…"/"Extracted ✓"/etc.
+# Backend persistence only tracks a single composite `status` on LOStack
+# (pending → classified → validated → needs_review | accepted | rejected),
+# so the operator-facing pills are derived. Kept here (not on the model)
+# because the rules are purely a UI concern — pushing them into the
+# pipeline would force a migration + backfill for zero behavior change.
+
+
+def _derive_classification_status(stack: LOStack) -> str:
+    """Return one of: ``classified``, ``needs_review``, ``unclassifiable``,
+    or ``pending``.
+
+    ``needs_review`` only fires when the stack is genuinely flagged for
+    HITL classification review (status=needs_review *and* requires_hitl).
+    A stack that downstream stages (validate/extract) flagged is still
+    "classified" from the operator's POV — those flags show up under
+    extraction/validation pills, not classification.
+    """
+    # Reserved bucket for pages the classifier couldn't match to any
+    # configured doc type. Always surfaced as "unclassifiable" so the
+    # operator knows to remediate via Move-to or re-upload.
+    if stack.doc_type == "Others":
+        return "unclassifiable"
+    if stack.status == "needs_review" and stack.requires_hitl:
+        return "needs_review"
+    if stack.status == "pending":
+        return "pending"
+    return "classified"
+
+
+def _derive_extraction_status(
+    stack: LOStack, extraction: LOExtraction | None,
+) -> str:
+    """Return one of: ``not_started``, ``extracting``, ``extracted``,
+    ``needs_review``, or ``confirmed``.
+
+    Derivation prefers explicit signals (an LOExtraction row, the
+    accepted terminal status) over time-based guesses. ``extracting``
+    isn't currently emitted because the extract stage doesn't persist a
+    partial row — added for forward compatibility once the stage writes
+    progress as it runs.
+    """
+    # Operator-confirmed extraction is a terminal pill regardless of how
+    # the underlying fields look — once a reviewer accepts the stack,
+    # we trust their decision.
+    if stack.status == "accepted":
+        return "confirmed"
+    if extraction is None:
+        # No extraction row → either the extract stage hasn't run yet
+        # for this stack, or the stack is HITL-flagged at classify and
+        # the extract stage skipped it.
+        return "not_started"
+    # Surface "needs_review" when any field came back missing or
+    # low-confidence so the operator knows to drill into the extract
+    # page. The Phase-4 confidence_breakdown is the source of truth for
+    # the overall pill — fields[] is what the pill summarises.
+    for f in extraction.fields or []:
+        status = f.get("status") if isinstance(f, dict) else None
+        if status in ("missing", "low_confidence"):
+            return "needs_review"
+    return "extracted"

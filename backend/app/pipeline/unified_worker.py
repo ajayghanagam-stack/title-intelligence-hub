@@ -60,9 +60,19 @@ from app.micro_apps.loan_onboarding.pipeline.temporal_activities import (
     lo_activity_review,
     lo_activity_mark_completed,
     lo_activity_mark_failed,
+    # Phase 3.2 — Variant A remediation activities
+    lo_activity_classify_single_doc,
+    lo_activity_doc_validation_recheck,
+    lo_activity_extract_single_doc,
+    lo_activity_data_validation_partial,
+    # Phase 3.3 — Variant B remediation activities
+    lo_activity_append_pages,
+    lo_activity_classify_recheck,
 )
 from app.micro_apps.loan_onboarding.pipeline.temporal_workflows import (
     ProcessLoanWorkflow,
+    RemediateMissingDocWorkflow,
+    RemediateMissingPagesWorkflow,
 )
 
 logger = logging.getLogger(__name__)
@@ -101,6 +111,14 @@ LO_ACTIVITIES = [
     lo_activity_review,
     lo_activity_mark_completed,
     lo_activity_mark_failed,
+    # Phase 3.2 — Variant A remediation activities
+    lo_activity_classify_single_doc,
+    lo_activity_doc_validation_recheck,
+    lo_activity_extract_single_doc,
+    lo_activity_data_validation_partial,
+    # Phase 3.3 — Variant B remediation activities
+    lo_activity_append_pages,
+    lo_activity_classify_recheck,
 ]
 
 
@@ -148,7 +166,11 @@ async def run_worker():
     lo_worker = Worker(
         client,
         task_queue=settings.LO_TEMPORAL_TASK_QUEUE,
-        workflows=[ProcessLoanWorkflow],
+        workflows=[
+            ProcessLoanWorkflow,
+            RemediateMissingDocWorkflow,
+            RemediateMissingPagesWorkflow,
+        ],
         activities=LO_ACTIVITIES,
         max_concurrent_activities=10,
         max_concurrent_workflow_tasks=5,

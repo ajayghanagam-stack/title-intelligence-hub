@@ -35,6 +35,13 @@ _UPLOAD_TIMING_PATH = re.compile(
 )
 
 
+# Phase 4 Batch 4.9 — when LO_LEGACY_REDIRECT_ENABLED, the legacy
+# ``/api/v1/apps/loan-onboarding/packages/...`` paths return ``301`` to the
+# corresponding ``/loans/...`` route. The collection roots
+# ``/packages`` and ``/packages/`` are handled too.
+_LO_LEGACY_PATH_PREFIX = "/api/v1/apps/loan-onboarding/packages"
+
+
 # Paths that don't require tenant context
 PUBLIC_PATHS = {"/api/v1/health", "/api/v1/health/ready", "/api/v1/metrics", "/docs", "/openapi.json", "/redoc"}
 # Prefixes that don't require tenant context
@@ -235,6 +242,55 @@ class TenantContextMiddleware:
                 return await _send_json_error(send, 400, "Invalid X-Org-Id header")
 
         await self.app(scope, receive, send)
+
+
+class LOLegacyRedirectMiddleware:
+    """Phase 4 Batch 4.9 — 301-redirects ``/packages/*`` LO paths to ``/loans/*``.
+
+    Activated only when ``settings.LO_LEGACY_REDIRECT_ENABLED`` is True.
+    The flag defaults to False so the existing frontend keeps working
+    unchanged. Flip it to True only after Phase 5 ports the UI fully to
+    ``/loans/*``.
+
+    Strict 1:1 path swap (``packages`` → ``loans``). Endpoints that do not
+    have a ``/loans/*`` analogue (e.g. ``/packages/{id}/stacks`` whose
+    LogikIntake equivalent is ``/loans/{id}/documents``) will redirect to
+    a 404 — that's intentional, those paths are no longer reachable from
+    the new frontend so emitting a 301 is correct from a cache-invalidation
+    standpoint.
+    """
+
+    def __init__(self, app, enabled: bool):
+        self.app = app
+        self.enabled = enabled
+
+    async def __call__(self, scope, receive, send):
+        if not self.enabled or scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        path: str = scope.get("path", "")
+        if not path.startswith(_LO_LEGACY_PATH_PREFIX):
+            return await self.app(scope, receive, send)
+
+        # Compute the /loans/... path. Handles both the bare collection
+        # (``/packages`` or ``/packages/``) and any nested resource.
+        suffix = path[len(_LO_LEGACY_PATH_PREFIX):]
+        new_path = "/api/v1/apps/loan-onboarding/loans" + suffix
+
+        query = scope.get("query_string") or b""
+        location = new_path.encode("ascii")
+        if query:
+            location += b"?" + query
+
+        await send({
+            "type": "http.response.start",
+            "status": 301,
+            "headers": [
+                (b"location", location),
+                (b"content-length", b"0"),
+            ],
+        })
+        await send({"type": "http.response.body", "body": b""})
 
 
 class MicroAppAccessMiddleware:

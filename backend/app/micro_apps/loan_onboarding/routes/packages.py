@@ -1,5 +1,15 @@
 """FastAPI routes for Loan Onboarding packages.
 
+Phase 6 cutover (2026-05-10) — this module is **no longer mounted as a
+public router**. The legacy `/packages/*` URLs return 404 once the
+LogikIntake `/loans/*` surface is the canonical operator path. We keep the
+file on disk because `routes/loans.py` imports it as `_packages` and
+delegates create/list/get/upload/process/final-packet/per-stack-zip to
+the handlers defined here. A follow-up PR will move those handlers into
+`services/loan_file_ops.py` and delete this file outright; until then,
+the `@router.*` decorators below decorate a router that is intentionally
+never `include_router()`'d.
+
 All endpoints are tenant-scoped via `get_org_id` (set by TenantContextMiddleware).
 """
 import logging

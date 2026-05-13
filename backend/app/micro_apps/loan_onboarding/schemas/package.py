@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.micro_apps.loan_onboarding.schemas.compliance import LoanContextIn
 
@@ -16,6 +16,16 @@ class DocTypeSpec(BaseModel):
     required: bool = False
     # Optional structured hint for the classifier ("W-2", "Form 1040", etc.)
     description: str | None = None
+
+    @field_validator("key", mode="before")
+    @classmethod
+    def _canonicalize_key(cls, v: object) -> object:
+        # Doc-type keys are stored lower-snake-case in the catalog. Inbound
+        # payloads (frontend modal, admin imports) may still send the legacy
+        # UPPER_SNAKE form — normalize at the schema boundary so every layer
+        # below sees the canonical form. Non-string values fall through and
+        # the regular validator will reject them.
+        return v.strip().lower() if isinstance(v, str) else v
 
 
 RuleSource = Literal["preset", "custom"]

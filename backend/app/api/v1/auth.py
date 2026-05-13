@@ -47,19 +47,24 @@ async def login(
 
     token = create_access_token(user.id, user.email, settings)
 
-    # Get all orgs the user belongs to
+    # Get all orgs the user belongs to, projected with the user's per-org role.
+    # `User` has one row per (auth_user_id, org_id) so the join yields one
+    # (org, role) tuple per membership.
     result = await db.execute(
-        select(Organization)
+        select(Organization, User.role)
         .join(User, User.org_id == Organization.id)
         .where(User.auth_user_id == user.auth_user_id, User.is_active == True)
     )
-    orgs = result.scalars().all()
+    org_rows = result.all()
 
     return {
         "access_token": token,
         "token_type": "bearer",
         "user": UserInfo(id=str(user.id), email=user.email, full_name=user.full_name),
-        "orgs": [OrgInfo(id=str(o.id), name=o.name, slug=o.slug, logo_url=o.logo_url) for o in orgs],
+        "orgs": [
+            OrgInfo(id=str(o.id), name=o.name, slug=o.slug, logo_url=o.logo_url, role=role)
+            for (o, role) in org_rows
+        ],
         "is_platform_admin": user.is_platform_admin,
     }
 
@@ -79,17 +84,20 @@ async def me(
         # JWT is valid but user was deleted/deactivated — treat as invalid session
         raise AuthenticationError("User account no longer exists")
 
-    # Get all orgs
+    # Get all orgs with per-org role (see /login for why this projects role).
     result = await db.execute(
-        select(Organization)
+        select(Organization, User.role)
         .join(User, User.org_id == Organization.id)
         .where(User.auth_user_id == auth_user.auth_user_id, User.is_active == True)
     )
-    orgs = result.scalars().all()
+    org_rows = result.all()
 
     return {
         "user": UserInfo(id=str(user.id), email=user.email, full_name=user.full_name),
-        "orgs": [OrgInfo(id=str(o.id), name=o.name, slug=o.slug, logo_url=o.logo_url) for o in orgs],
+        "orgs": [
+            OrgInfo(id=str(o.id), name=o.name, slug=o.slug, logo_url=o.logo_url, role=role)
+            for (o, role) in org_rows
+        ],
         "is_platform_admin": user.is_platform_admin,
     }
 

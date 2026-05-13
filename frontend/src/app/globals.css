@@ -6,58 +6,69 @@
   :root {
     --radius: 0.625rem;
 
-    /* Logikality brand palette — derived from logo:
-       Amber/Gold circle, Magenta arrows, Charcoal text */
-    --background: oklch(0.985 0.002 90);
-    --foreground: oklch(0.160 0.006 49);
-    --card: oklch(0.998 0.001 90);
-    --card-foreground: oklch(0.160 0.006 49);
-    --popover: oklch(0.998 0.001 90);
-    --popover-foreground: oklch(0.160 0.006 49);
-    --primary: oklch(0.666 0.179 58.318);
-    --primary-foreground: oklch(0.998 0 0);
-    --secondary: oklch(0.968 0.004 90);
-    --secondary-foreground: oklch(0.220 0.006 56);
-    --muted: oklch(0.960 0.004 90);
-    --muted-foreground: oklch(0.520 0.014 58);
-    --accent: oklch(0.960 0.004 90);
-    --accent-foreground: oklch(0.220 0.006 56);
-    --destructive: oklch(0.577 0.245 27.325);
-    --destructive-foreground: oklch(0.998 0 0);
-    --border: oklch(0.920 0.008 80);
-    --input: oklch(0.920 0.008 80);
-    --ring: oklch(0.666 0.179 58.318);
+    /* Phase 5.1 — Logikality brand palette (Refactoring §1.1).
+       Locked tokens. Anything off-palette is a regression caught by
+       the no-restricted-syntax ESLint rule on hex literals. The old
+       amber/magenta names are kept here pointing at the new palette
+       so any straggler `var(--brand-amber)` references stay valid
+       through the codemod sweep. */
+    --brand-teal: #01BAED;       /* Primary brand · CTAs · active */
+    --brand-purple: #BD33A4;     /* Accents · active rail step */
+    --brand-orange: #FCAE1E;     /* Soft flags · review band */
+    --brand-charcoal: #1A1A2E;   /* Dark bg · headings on light */
+    --brand-gray: #53585F;       /* Body text · muted labels */
+    --brand-white: #FFFFFF;      /* Card surfaces · contrast */
+    /* Compat aliases (will be phased out during 5.2 token sweep) */
+    --brand-amber: var(--brand-orange);
+    --brand-magenta: var(--brand-purple);
 
-    /* Clean white sidebar with brand accents */
-    --sidebar: oklch(0.998 0 0);
-    --sidebar-foreground: oklch(0.250 0.010 50);
-    --sidebar-primary: oklch(0.666 0.179 58.318);
-    --sidebar-primary-foreground: oklch(0.998 0 0);
-    --sidebar-accent: oklch(0.965 0.015 80);
-    --sidebar-accent-foreground: oklch(0.250 0.010 50);
-    --sidebar-border: oklch(0.925 0.008 80);
-    --sidebar-ring: oklch(0.666 0.179 58.318);
-    --sidebar-muted: oklch(0.960 0.004 90);
-    --sidebar-muted-foreground: oklch(0.520 0.014 58);
+    /* Surface tokens — neutralized to brand-charcoal/gray/white. */
+    --background: #F8F9FB;
+    --foreground: var(--brand-charcoal);
+    --card: var(--brand-white);
+    --card-foreground: var(--brand-charcoal);
+    --popover: var(--brand-white);
+    --popover-foreground: var(--brand-charcoal);
+    --primary: var(--brand-teal);
+    --primary-foreground: var(--brand-white);
+    --secondary: #F1F3F6;
+    --secondary-foreground: var(--brand-charcoal);
+    --muted: #F1F3F6;
+    --muted-foreground: var(--brand-gray);
+    --accent: #F1F3F6;
+    --accent-foreground: var(--brand-charcoal);
+    --destructive: #DC2626;       /* Hard-stop red — retained from prototype */
+    --destructive-foreground: var(--brand-white);
+    --border: #E2E5EA;
+    --input: #E2E5EA;
+    --ring: var(--brand-teal);
 
-    /* Brand palette */
-    --brand-amber: oklch(0.750 0.170 65);
-    --brand-magenta: oklch(0.560 0.230 340);
-    --brand-purple: oklch(0.480 0.200 300);
-    --brand-charcoal: oklch(0.178 0.010 50);
+    /* Sidebar — clean white surface, brand-teal active accents. */
+    --sidebar: var(--brand-white);
+    --sidebar-foreground: var(--brand-charcoal);
+    --sidebar-primary: var(--brand-teal);
+    --sidebar-primary-foreground: var(--brand-white);
+    --sidebar-accent: #F1F3F6;
+    --sidebar-accent-foreground: var(--brand-charcoal);
+    --sidebar-border: #E2E5EA;
+    --sidebar-ring: var(--brand-teal);
+    --sidebar-muted: #F1F3F6;
+    --sidebar-muted-foreground: var(--brand-gray);
 
-    /* Success / Warning */
-    --success: oklch(0.600 0.180 145);
-    --success-foreground: oklch(0.998 0 0);
-    --warning: oklch(0.750 0.160 70);
-    --warning-foreground: oklch(0.998 0 0);
+    /* Success / Warning — kept off-palette; brand orange is reserved
+       for soft flags so warning shouldn't collide with it visually. */
+    --success: #16A34A;
+    --success-foreground: var(--brand-white);
+    --warning: var(--brand-orange);
+    --warning-foreground: var(--brand-charcoal);
 
-    /* Chart colors */
-    --chart-1: oklch(0.750 0.170 65);
-    --chart-2: oklch(0.560 0.230 340);
-    --chart-3: oklch(0.480 0.200 300);
-    --chart-4: oklch(0.828 0.189 84.429);
-    --chart-5: oklch(0.600 0.180 145);
+    /* Chart colors — sequence brand → red so palettes stay legible
+       across categorical legends. */
+    --chart-1: var(--brand-teal);
+    --chart-2: var(--brand-purple);
+    --chart-3: var(--brand-orange);
+    --chart-4: var(--brand-charcoal);
+    --chart-5: #DC2626;
   }
 }
 
@@ -76,17 +87,19 @@
 }
 
 @layer components {
-  /* CTA button — brand amber with magenta hover shift */
+  /* CTA button — Logikality brand teal, charcoal text on hover-shift.
+     Refactoring §1.2: brand-teal is the only acceptable primary CTA
+     color; gradient is teal → 85% teal so it reads as a single tone. */
   .btn-cta {
-    background: linear-gradient(135deg, oklch(0.750 0.170 65) 0%, oklch(0.680 0.190 55) 100%);
-    color: white;
+    background: linear-gradient(135deg, var(--brand-teal) 0%, color-mix(in srgb, var(--brand-teal) 85%, black) 100%);
+    color: var(--brand-white);
     transition: all 0.2s ease;
     @apply inline-flex items-center justify-center rounded-lg px-5 py-2.5 text-sm font-semibold shadow-md;
   }
   .btn-cta:hover {
-    background: linear-gradient(135deg, oklch(0.720 0.175 62) 0%, oklch(0.650 0.200 50) 100%);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--brand-teal) 92%, black) 0%, color-mix(in srgb, var(--brand-teal) 75%, black) 100%);
     transform: translateY(-1px);
-    box-shadow: 0 6px 20px oklch(0.750 0.170 65 / 0.30);
+    box-shadow: 0 6px 20px color-mix(in srgb, var(--brand-teal) 30%, transparent);
   }
   .btn-cta:active {
     transform: translateY(0);
@@ -121,20 +134,20 @@
   .card-warm {
     background: var(--card);
     box-shadow:
-      0 1px 3px oklch(0.50 0.01 50 / 0.06),
-      0 1px 2px oklch(0.50 0.01 50 / 0.04);
+      0 1px 3px color-mix(in srgb, var(--brand-charcoal) 6%, transparent),
+      0 1px 2px color-mix(in srgb, var(--brand-charcoal) 4%, transparent);
     transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
     @apply rounded-xl border;
   }
   .card-warm:hover {
     box-shadow:
-      0 8px 25px -5px oklch(0.50 0.01 50 / 0.08),
-      0 4px 10px -5px oklch(0.50 0.01 50 / 0.04);
+      0 8px 25px -5px color-mix(in srgb, var(--brand-charcoal) 8%, transparent),
+      0 4px 10px -5px color-mix(in srgb, var(--brand-charcoal) 4%, transparent);
   }
 
   /* Glass card — frosted effect */
   .card-glass {
-    background: oklch(0.998 0.001 90 / 0.7);
+    background: color-mix(in srgb, var(--brand-white) 70%, transparent);
     backdrop-filter: blur(16px);
     @apply rounded-xl border border-white/60 shadow-sm;
   }
@@ -142,7 +155,7 @@
   /* Section card — for content sections */
   .section-card {
     background: var(--card);
-    box-shadow: 0 1px 3px oklch(0.50 0.01 50 / 0.05);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--brand-charcoal) 5%, transparent);
     @apply rounded-xl border p-5;
   }
 
@@ -152,45 +165,46 @@
     to { stroke-dashoffset: var(--offset); }
   }
 
-  /* Pulse glow for processing states — brand amber */
+  /* Pulse glow — brand teal aura on processing states. */
   @keyframes pulse-glow {
-    0%, 100% { box-shadow: 0 0 0 0 oklch(0.750 0.170 65 / 0.30); }
-    50% { box-shadow: 0 0 0 8px oklch(0.750 0.170 65 / 0); }
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand-teal) 30%, transparent); }
+    50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--brand-teal) 0%, transparent); }
   }
   .pulse-glow {
     animation: pulse-glow 2s ease-in-out infinite;
   }
 
-  /* Brand gradient text — amber to magenta */
+  /* Brand gradient text — teal → purple. Used for accent headings. */
   .text-gradient {
-    background: linear-gradient(135deg, oklch(0.750 0.170 65), oklch(0.560 0.230 340));
+    background: linear-gradient(135deg, var(--brand-teal), var(--brand-purple));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
-  /* OCR text overlay */
+  /* OCR text overlay — teal selection so highlights match the brand. */
   .ocr-text-overlay ::selection {
-    background: oklch(0.750 0.170 65 / 0.30);
+    background: color-mix(in srgb, var(--brand-teal) 30%, transparent);
     color: transparent;
   }
 
-  /* Smooth section divider */
+  /* Smooth section divider — neutral border. */
   .divider-gradient {
     height: 1px;
-    background: linear-gradient(to right, transparent, oklch(0.920 0.008 80), transparent);
+    background: linear-gradient(to right, transparent, var(--border), transparent);
   }
 
-  /* Brand divider — amber through center */
+  /* Brand divider — teal through center for emphasized section breaks. */
   .divider-brand {
     height: 1px;
-    background: linear-gradient(to right, transparent, oklch(0.750 0.170 65 / 0.4), transparent);
+    background: linear-gradient(to right, transparent, color-mix(in srgb, var(--brand-teal) 40%, transparent), transparent);
   }
 
-  /* Sidebar nav active state — amber on white */
+  /* Sidebar nav active state — teal accent on white. */
   .sidebar-nav-active {
-    border-left: 3px solid oklch(0.750 0.170 65);
-    @apply bg-amber-50 text-amber-800;
+    border-left: 3px solid var(--brand-teal);
+    background: color-mix(in srgb, var(--brand-teal) 10%, var(--brand-white));
+    color: var(--brand-charcoal);
   }
 
   /* Sidebar nav hover state — subtle warm */

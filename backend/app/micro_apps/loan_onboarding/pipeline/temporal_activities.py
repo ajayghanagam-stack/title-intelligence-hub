@@ -187,3 +187,151 @@ async def lo_activity_mark_failed(
             pipeline_stage=failed_stage,
             pipeline_error=error_msg[:500],
         )
+
+
+# ── Phase 3.2: Variant A remediation activities ──────────────────────
+#
+# These wrap ``services/remediation_service.py``. They are short-lived
+# (each step ~0.5-3s per the PRD) and operate on a single file or stack.
+# They run as activities of ``RemediateMissingDocWorkflow`` (a child
+# workflow kicked off by ``POST /loans/{id}/remediate-missing-doc``).
+#
+# Three of the four are skeletons in this batch; see remediation_service
+# module docstring for what's deferred to Batch 3.2b/c.
+
+
+async def _run_remediation_step(
+    fn,  # async callable taking (db, *args)
+    package_id: str,
+    org_id: str,
+    *fn_args,
+):
+    """Open one session, dispatch the helper, commit, return the result.
+
+    Mirrors ``_run_stage`` but without the package-wide pipeline_status
+    update — remediation MUST NOT rewind ``loan.pipeline_stage`` per the
+    spec's monotonic-advance contract (§3.5).
+    """
+    sf, _ = _require_config()
+    org_uuid = uuid.UUID(org_id)
+    package_uuid = uuid.UUID(package_id)
+    async with sf() as db:
+        result = await fn(db, org_uuid, package_uuid, *fn_args)
+        await db.commit()
+    return result
+
+
+def _result_to_dict(result: Any) -> dict:
+    """Coerce a frozen dataclass result to a JSON-serializable dict.
+
+    Temporal activities' return values cross the activity boundary as
+    JSON, so the dataclass must be flattened. UUIDs become strings.
+    """
+    out = {}
+    for key, value in result.__dict__.items():
+        if isinstance(value, uuid.UUID):
+            out[key] = str(value)
+        else:
+            out[key] = value
+    return out
+
+
+@activity.defn(name="lo_activity_classify_single_doc")
+async def lo_activity_classify_single_doc(
+    package_id: str, org_id: str, file_id: str,
+) -> dict:
+    from app.micro_apps.loan_onboarding.services import remediation_service
+    _, storage = _require_config()
+    activity.heartbeat("classify_single_doc:start") if activity.in_activity() else None
+    result = await _run_remediation_step(
+        remediation_service.classify_single_doc,
+        package_id, org_id,
+        uuid.UUID(file_id), storage,
+    )
+    return _result_to_dict(result)
+
+
+@activity.defn(name="lo_activity_doc_validation_recheck")
+async def lo_activity_doc_validation_recheck(
+    package_id: str, org_id: str, stack_id: str,
+) -> dict:
+    from app.micro_apps.loan_onboarding.services import remediation_service
+    activity.heartbeat("doc_validation_recheck:start") if activity.in_activity() else None
+    result = await _run_remediation_step(
+        remediation_service.doc_validation_recheck,
+        package_id, org_id,
+        uuid.UUID(stack_id),
+    )
+    return _result_to_dict(result)
+
+
+@activity.defn(name="lo_activity_extract_single_doc")
+async def lo_activity_extract_single_doc(
+    package_id: str, org_id: str, stack_id: str,
+) -> dict:
+    from app.micro_apps.loan_onboarding.services import remediation_service
+    _, storage = _require_config()
+    activity.heartbeat("extract_single_doc:start") if activity.in_activity() else None
+    result = await _run_remediation_step(
+        remediation_service.extract_single_doc,
+        package_id, org_id,
+        uuid.UUID(stack_id), storage,
+    )
+    return _result_to_dict(result)
+
+
+@activity.defn(name="lo_activity_data_validation_partial")
+async def lo_activity_data_validation_partial(
+    package_id: str, org_id: str, stack_id: str,
+) -> dict:
+    from app.micro_apps.loan_onboarding.services import remediation_service
+    activity.heartbeat("data_validation_partial:start") if activity.in_activity() else None
+    result = await _run_remediation_step(
+        remediation_service.data_validation_partial,
+        package_id, org_id,
+        uuid.UUID(stack_id),
+    )
+    return _result_to_dict(result)
+
+
+# ── Phase 3.3: Variant B remediation activities ──────────────────────
+#
+# Variant B extends an existing stack with appended pages instead of
+# creating a new one. Activities 3 / 4 / 5 of the workflow reuse the
+# Variant A activities (``doc_validation_recheck``,
+# ``extract_single_doc``, ``data_validation_partial``) — only the first
+# two steps are new.
+
+
+@activity.defn(name="lo_activity_append_pages")
+async def lo_activity_append_pages(
+    package_id: str, org_id: str, target_stack_id: str, file_id: str,
+) -> dict:
+    from app.micro_apps.loan_onboarding.services import remediation_service
+    _, storage = _require_config()
+    activity.heartbeat("append_pages:start") if activity.in_activity() else None
+    result = await _run_remediation_step(
+        remediation_service.append_pages,
+        package_id, org_id,
+        uuid.UUID(target_stack_id), uuid.UUID(file_id), storage,
+    )
+    return _result_to_dict(result)
+
+
+@activity.defn(name="lo_activity_classify_recheck")
+async def lo_activity_classify_recheck(
+    package_id: str,
+    org_id: str,
+    target_stack_id: str,
+    file_id: str,
+    snapshot: dict,
+) -> dict:
+    from app.micro_apps.loan_onboarding.services import remediation_service
+    _, storage = _require_config()
+    activity.heartbeat("classify_recheck:start") if activity.in_activity() else None
+    result = await _run_remediation_step(
+        remediation_service.classify_recheck,
+        package_id, org_id,
+        uuid.UUID(target_stack_id), uuid.UUID(file_id), storage, snapshot,
+    )
+    return _result_to_dict(result)

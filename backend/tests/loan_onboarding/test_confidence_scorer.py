@@ -19,7 +19,7 @@ from app.micro_apps.loan_onboarding.services.validation_presets import (
 def _stack(roles: list[str]) -> StackFacts:
     return StackFacts(
         stack_id="s",
-        doc_type="URLA_1003",
+        doc_type="urla_1003",
         pages=tuple(
             StackPageFacts(
                 page_number=i + 1,
