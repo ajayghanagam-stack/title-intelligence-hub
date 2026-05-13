@@ -54,6 +54,15 @@ blob-report/
 # Local dev storage (uploaded PDFs, OCR output, AI cache, thumbnails)
 backend/storage/
 
+# Local SQLite test DB (created/mutated by pytest, not a source artifact)
+backend/test.db
+
+# Local eval / benchmark reports (generated, not committed)
+backend/eval_reports/
+
+# Local prototype / reference material (not shipped)
+prototype/
+
 # GCP service account keys (sensitive)
 gcp-sa-key.json
 frontend/tsconfig.tsbuildinfo
