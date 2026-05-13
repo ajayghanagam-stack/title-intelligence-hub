@@ -468,6 +468,19 @@ The third micro app. Processes mortgage loan packages (mixed PDFs: 1003, paystub
 - `pipeline/temporal_activities.py` — `configure_lo_activities()` wires the session factory + storage at worker startup
 - `tests/loan_onboarding/test_determinism.py` — golden-set regression tests for stacking + presets + confidence blend
 
+**Operator Review UI** (`frontend/src/app/(platform)/apps/loan-onboarding/`):
+- **Per-doc routing**: Classification Review and Extraction Review pages live at `loans/[loanId]/classify/[docId]` and `loans/[loanId]/extract/[docId]`. `[docId]` is the `LOStack.id` (one row per contiguous same-doc-type group), NOT the package or file id.
+- **Sidebar target resolution** (`src/components/sidebar.tsx`): Each review-stage link picks a target stack via `pickClassifyDoc()` / `pickExtractDoc()` (first HITL stack). When the user is already on a per-doc URL, the sidebar derives `activeDocId` from `pathname` so both links stay anchored to the doc currently being reviewed instead of jumping back to the first HITL stack. Each stage link also renders a `sublabel` showing the target `doc_type` so the operator can see where the link will navigate before clicking.
+- **Cache isolation**: React Query keys for the extract/classify pages include `docId` so navigating between docs of the same type does not reuse the first doc's payload. The page component is also keyed via `<ExtractDocPageBody key={docId} ... />` to force remount on doc change.
+- **Extraction Review rendering** (`extract/[docId]/page.tsx`): Renders both **filled** and **missing** fields in one list — there is no filter that hides filled rows. `missingCount` / `lowCount` at the top of the page are header counters only. A row's `status="missing"` (or empty value) only suppresses the colored confidence dot; the row itself still renders, styled grey.
+- **Backend row composition** (`routes/loans_operator.py`, the `GET .../extract/{stack_id}` handler):
+  1. Loops every field in the **resolved schema** (`LODocTypeConfig.resolved_schema`) and emits a row per schema field — filled if the AI extracted it, missing (`value=""`, `status="missing"`) otherwise.
+  2. Tail loop appends any AI-extracted fields that no longer appear in the schema (renamed/removed) so nothing is silently dropped.
+  3. `_apply_override()` overlays operator edits from `lo_extraction_overrides` before returning.
+- **Override table semantics**: `lo_extraction_overrides` (one row per `(stack_id, field_name)`) holds operator edits. The original `LOExtraction.fields` blob is **never mutated** — it preserves the raw AI output for re-runs and auditability. Edits are saved on field `onBlur` via `PATCH .../fields/{field_id}`, not by clicking "Confirm & Save Extraction" (that button only `router.push()`-es to the next doc).
+- **Empty-field root cause**: When every field of a doc renders as missing, the source PDF is usually a blank template (e.g., a blank Form 1005 page) — the classifier writes only the form's printed labels into `detected_fields` because there are no filled-in values to extract. This is not a rendering bug.
+- **`extraction_status="not_started"` ambiguity**: Means either "extract stage hasn't run yet" OR "extraction was skipped" (no schema for this doc_type, `extraction_enabled=False`, or Others bucket). `deriveDocStage()` in `loans/[loanId]/page.tsx` disambiguates by checking `pipelineFinished` — only show "Extracting…" if the pipeline is still in flight.
+
 **Config**:
 | Setting | Default | Purpose |
 |---------|---------|---------|
